@@ -67,7 +67,7 @@ impl PartStore {
 
     pub fn insert(&mut self, part: Part) -> Result<&Part> {
         if self.by_name.contains_key(part.name()) {
-            return Err(Error::duplicate_part(format!(
+            return Err(Error::unsupported_package(format!(
                 "Package contains more than one part named {}.",
                 part.name()
             )));

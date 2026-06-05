@@ -86,7 +86,7 @@ where
         reject_unsafe_entry(&entry_name)?;
         let normalized_name = normalize_entry_name(&entry_name, entry.is_dir())?;
         if !names.insert(normalized_name.clone()) {
-            return Err(Error::duplicate_part(format!(
+            return Err(Error::unsupported_package(format!(
                 "Package contains more than one ZIP entry normalized to {normalized_name}."
             )));
         }

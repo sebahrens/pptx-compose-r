@@ -208,7 +208,7 @@ mod tests {
             .insert_zip_entry("/ppt/slides/slide1.xml", Vec::new())
             .expect_err("duplicate rejected");
 
-        assert_eq!(error.code(), ErrorCode::DuplicatePart);
+        assert_eq!(error.code(), ErrorCode::UnsupportedPackage);
     }
 
     #[test]

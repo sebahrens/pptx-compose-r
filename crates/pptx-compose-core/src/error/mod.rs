@@ -1,72 +1,93 @@
-#![allow(clippy::module_name_repetitions)]
+pub mod code;
 
 use std::{error, fmt, io};
 
+use serde::{Deserialize, Serialize};
+
+pub use code::ErrorCode;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ErrorCode {
-    InvalidInput,
-    UnsafePath,
-    DuplicatePart,
-    ResourceLimitExceeded,
-    UnsupportedPackage,
-    UnsupportedEdit,
-    UnsupportedMediaType,
-    InvalidBounds,
-    ParseError,
-    ValidationFailed,
-    StalePatch,
-    SelectorNotFound,
-    SelectorAmbiguous,
-    SelectorGuardFailed,
-    MissingMediaRef,
-    MediaChecksumMismatch,
-    PermissionDenied,
-    WriteFailed,
-    InternalError,
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorSeverity {
+    Info,
+    Warning,
+    Error,
+    Fatal,
 }
 
-impl ErrorCode {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::InvalidInput => "invalid_input",
-            Self::UnsafePath => "unsafe_path",
-            Self::DuplicatePart => "duplicate_part",
-            Self::ResourceLimitExceeded => "resource_limit_exceeded",
-            Self::UnsupportedPackage => "unsupported_package",
-            Self::UnsupportedEdit => "unsupported_edit",
-            Self::UnsupportedMediaType => "unsupported_media_type",
-            Self::InvalidBounds => "invalid_bounds",
-            Self::ParseError => "parse_error",
-            Self::ValidationFailed => "validation_failed",
-            Self::StalePatch => "stale_patch",
-            Self::SelectorNotFound => "selector_not_found",
-            Self::SelectorAmbiguous => "selector_ambiguous",
-            Self::SelectorGuardFailed => "selector_guard_failed",
-            Self::MissingMediaRef => "missing_media_ref",
-            Self::MediaChecksumMismatch => "media_checksum_mismatch",
-            Self::PermissionDenied => "permission_denied",
-            Self::WriteFailed => "write_failed",
-            Self::InternalError => "internal_error",
-        }
-    }
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCategory {
+    Input,
+    Path,
+    Resource,
+    Package,
+    Edit,
+    Media,
+    Bounds,
+    Parse,
+    Validation,
+    Patch,
+    Selector,
+    Permission,
+    Write,
+    Internal,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ErrorLocation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub io_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zip_entry: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub part: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relationship_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slide_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
 }
 
 #[derive(Debug)]
 pub struct Error {
-    code: ErrorCode,
-    message: String,
+    details: Box<ErrorDetails>,
     source: Option<Box<dyn error::Error + Send + Sync + 'static>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ErrorDetails {
+    pub code: ErrorCode,
+    pub message: String,
+    pub severity: ErrorSeverity,
+    pub category: ErrorCategory,
+    pub retryable: bool,
+    pub state_changed: bool,
+    pub location: ErrorLocation,
+    pub suggestions: Vec<String>,
 }
 
 impl Error {
     #[must_use]
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
-            code,
-            message: message.into(),
+            details: Box::new(ErrorDetails {
+                code,
+                message: message.into(),
+                severity: ErrorSeverity::Error,
+                category: code.default_category(),
+                retryable: false,
+                state_changed: false,
+                location: ErrorLocation::default(),
+                suggestions: Vec::new(),
+            }),
             source: None,
         }
     }
@@ -78,8 +99,16 @@ impl Error {
         source: impl error::Error + Send + Sync + 'static,
     ) -> Self {
         Self {
-            code,
-            message: message.into(),
+            details: Box::new(ErrorDetails {
+                code,
+                message: message.into(),
+                severity: ErrorSeverity::Error,
+                category: code.default_category(),
+                retryable: false,
+                state_changed: false,
+                location: ErrorLocation::default(),
+                suggestions: Vec::new(),
+            }),
             source: Some(Box::new(source)),
         }
     }
@@ -92,11 +121,6 @@ impl Error {
     #[must_use]
     pub fn unsafe_path(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::UnsafePath, message)
-    }
-
-    #[must_use]
-    pub fn duplicate_part(message: impl Into<String>) -> Self {
-        Self::new(ErrorCode::DuplicatePart, message)
     }
 
     #[must_use]
@@ -114,18 +138,40 @@ impl Error {
 
     #[must_use]
     pub const fn code(&self) -> ErrorCode {
-        self.code
+        self.details.code
     }
 
     #[must_use]
     pub fn message(&self) -> &str {
-        &self.message
+        &self.details.message
+    }
+
+    #[must_use]
+    pub fn details(&self) -> &ErrorDetails {
+        &self.details
+    }
+
+    #[must_use]
+    pub fn with_location(mut self, location: ErrorLocation) -> Self {
+        self.details.location = location;
+        self
+    }
+
+    #[must_use]
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.details.suggestions.push(suggestion.into());
+        self
     }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.code.as_str(), self.message)
+        write!(
+            formatter,
+            "{}: {}",
+            self.details.code.as_str(),
+            self.details.message
+        )
     }
 }
 
@@ -137,8 +183,42 @@ impl error::Error for Error {
     }
 }
 
+impl Serialize for Error {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.details.serialize(serializer)
+    }
+}
+
 impl From<io::Error> for Error {
     fn from(source: io::Error) -> Self {
         Self::parse_error("Could not read package bytes.", source)
+    }
+}
+
+impl ErrorCode {
+    #[must_use]
+    pub const fn default_category(self) -> ErrorCategory {
+        match self {
+            Self::InvalidInput => ErrorCategory::Input,
+            Self::UnsafePath => ErrorCategory::Path,
+            Self::ResourceLimitExceeded => ErrorCategory::Resource,
+            Self::UnsupportedPackage => ErrorCategory::Package,
+            Self::UnsupportedEdit => ErrorCategory::Edit,
+            Self::UnsupportedMediaType => ErrorCategory::Media,
+            Self::InvalidBounds => ErrorCategory::Bounds,
+            Self::ParseError => ErrorCategory::Parse,
+            Self::ValidationFailed => ErrorCategory::Validation,
+            Self::StalePatch => ErrorCategory::Patch,
+            Self::SelectorNotFound | Self::SelectorAmbiguous | Self::SelectorGuardFailed => {
+                ErrorCategory::Selector
+            }
+            Self::MissingMediaRef | Self::MediaChecksumMismatch => ErrorCategory::Media,
+            Self::PermissionDenied => ErrorCategory::Permission,
+            Self::WriteFailed => ErrorCategory::Write,
+            Self::InternalError => ErrorCategory::Internal,
+        }
     }
 }
