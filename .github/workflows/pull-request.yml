@@ -1,0 +1,32 @@
+name: Pull Request
+
+on:
+  pull_request:
+
+jobs:
+  rust-workspace:
+    name: Rust workspace validation
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+
+      - name: Validate workspace metadata
+        run: cargo metadata --locked --format-version 1
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Test workspace
+        run: cargo test --workspace
+
+      - name: Lint workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
