@@ -29,6 +29,11 @@ Every compatibility decision should be labeled:
 | `intentionally-different` | Changed deliberately; document migration impact. |
 | `unsupported` | Not implemented; return clear diagnostics. |
 
+The V1 compatibility decision log lives at
+[_planning/compatibility-decisions.md](_planning/compatibility-decisions.md).
+Update it before closing any compatibility bead so legacy behavior remains
+explicitly classified and separate from core correctness requirements.
+
 ## Review Checklist
 
 - Does the spec describe behavior rather than old implementation details?

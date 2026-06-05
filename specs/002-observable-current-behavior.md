@@ -72,3 +72,9 @@ The Rust rewrite should distinguish these tiers:
 - `should-match`: ability to export a legacy JSON-like view.
 - `intentionally-different`: safer path resolution, useful return values for file writes, real CLI flags, validation, explicit binary encoding.
 - `unsupported`: exact JSZip and `xml2js` internal quirks unless a separate compatibility mode is required.
+
+The V1 compatibility checklist is maintained in the
+[compatibility decision register](_planning/compatibility-decisions.md). Before
+closing compatibility implementation beads, every behavior relied on by this spec
+and the compatibility tests in [080](080-testing-and-fixtures.md#compatibility-tests)
+must be represented there with a tier, Rust decision, links, and owner bead.

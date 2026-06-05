@@ -89,6 +89,9 @@ See [cleanroom process](specs/003-cleanroom-process.md).
 | [081-agent-runtime-evals.md](specs/081-agent-runtime-evals.md) | Defines CLI/MCP evals proving agents can use the runtime contract. |
 | [090-known-risks-and-non-goals.md](specs/090-known-risks-and-non-goals.md) | Captures risks, guardrails, and deliberately unsupported work. |
 
+Compatibility decisions for observable legacy behavior are tracked separately in
+[specs/_planning/compatibility-decisions.md](specs/_planning/compatibility-decisions.md).
+
 ## Architecture Summary
 
 ```text
