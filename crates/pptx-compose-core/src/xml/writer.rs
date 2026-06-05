@@ -15,7 +15,7 @@ pub struct WriteOptions {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum WriteMode {
     #[default]
-    Compact,
+    Preserve,
     Deterministic,
 }
 

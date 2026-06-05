@@ -5,7 +5,11 @@ use quick_xml::{
 
 use crate::error::{Error, Result};
 
-use super::{namespaces::NamespaceTable, parser};
+use super::{
+    namespaces::NamespaceTable,
+    parser,
+    writer::{self as xml_writer, WriteMode, WriteOptions},
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QualifiedName {
@@ -145,6 +149,22 @@ impl XmlPart {
 
     pub const fn mark_dirty(&mut self) {
         self.dirty = true;
+    }
+
+    pub fn to_bytes(&self, mode: WriteMode) -> Result<Vec<u8>> {
+        if !self.dirty {
+            return Ok(self.raw.clone());
+        }
+
+        let parsed;
+        let document = if let Some(document) = &self.parsed {
+            document
+        } else {
+            parsed = parser::parse_document(&self.raw)?;
+            &parsed
+        };
+
+        xml_writer::write_document(document, &WriteOptions { mode })
     }
 
     /// Replace this XML part with raw bytes after a basic well-formedness scan.
@@ -311,4 +331,47 @@ fn raw_escape_hatch() {
     assert_eq!(part.raw, raw_before_malformed);
     assert_eq!(part.is_dirty(), dirty_before_malformed);
     assert_eq!(part.parsed, parsed_before_malformed);
+}
+
+#[cfg(test)]
+#[test]
+fn clean_part_byte_identical() {
+    use super::writer::WriteMode;
+
+    let raw = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:p="urn:p" data-z="9" data-a="1"><p:cSld><p:spTree/></p:cSld></p:sld>"#.to_vec();
+    let mut part = XmlPart::from_raw(raw.clone());
+
+    part.parse().expect("xml parses");
+
+    assert_eq!(
+        part.to_bytes(WriteMode::Preserve).expect("preserve writes"),
+        raw
+    );
+    assert_eq!(
+        part.to_bytes(WriteMode::Deterministic)
+            .expect("deterministic writes"),
+        raw
+    );
+
+    let document = part.parsed.as_mut().expect("document was parsed");
+    let root = document
+        .nodes
+        .iter_mut()
+        .find_map(|node| match node {
+            XmlNode::Element(element) => Some(element),
+            _ => None,
+        })
+        .expect("root element exists");
+    root.attributes.push(XmlAttribute {
+        name: QualifiedName::from_raw("data-added"),
+        value: "true".to_owned(),
+        namespace_declaration: false,
+    });
+    part.mark_dirty();
+
+    assert_ne!(
+        part.to_bytes(WriteMode::Preserve)
+            .expect("dirty preserve writes"),
+        raw
+    );
 }
