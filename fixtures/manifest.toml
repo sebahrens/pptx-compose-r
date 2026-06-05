@@ -1,0 +1,7 @@
+[[entries]]
+path = "legacy/sample.pptx"
+source_app = "legacy"
+features = ["legacy-smoke", "minimal-package"]
+expected_warnings = []
+invariants = ["contains-presentation-part"]
+consuming_test = "fixture_manifest::manifest::every_entry_file_exists"
