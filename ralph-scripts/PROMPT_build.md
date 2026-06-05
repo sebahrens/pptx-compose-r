@@ -138,3 +138,8 @@ git commit -m "[<id>] Brief description of change"
 Find the next ready task, implement it in Rust, and **stop**. Do exactly ONE task
 per invocation — after closing the bead and committing, you are done. Do not look
 for more work.
+
+> **Stopping means: end your turn.** Just finish your response. The orchestrator
+> loop owns iteration control. Do **NOT** create, touch, or write a `.ralph-exit`
+> file (or any other loop-control file) — that is the plan-mode/user stop signal,
+> not yours. Writing it in build mode wrongly kills the whole loop after one task.

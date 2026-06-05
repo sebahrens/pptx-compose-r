@@ -511,6 +511,17 @@ while true; do
     else
         PROMPT_FILE="$SCRIPT_DIR/PROMPT_build.md"
     fi
+    PIVOTED_TO_PLAN=false
+
+    # Snapshot whether .ralph-exit exists BEFORE the agent runs. Only a file that
+    # was already present (a deliberate user `touch`, or one left by a prior plan
+    # round) counts as a real stop signal. A build agent has full repo access and
+    # can mistake the documented exit mechanism for "how to stop" — so an exit file
+    # that materializes DURING a pure build iteration is treated as spurious and
+    # ignored (see the exit check below). This is the fix for the loop quitting
+    # after iteration 1 because the agent wrote .ralph-exit itself.
+    EXIT_PRESENT_BEFORE=false
+    [ -f "$PROJECT_DIR/.ralph-exit" ] && EXIT_PRESENT_BEFORE=true
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -543,6 +554,7 @@ while true; do
                 echo "⚠ No buildable task ready (ready=$READY_TOTAL of which epics=$READY_EPICS)."
                 echo "  Pivoting this iteration to PLAN mode to decompose into atomic tasks."
                 PROMPT_FILE="$SCRIPT_DIR/PROMPT_plan.md"
+                PIVOTED_TO_PLAN=true
                 if [ ! -f "$PROMPT_FILE" ]; then
                     echo "  ⚠ Plan prompt missing; skipping iteration." ; continue
                 fi
@@ -674,11 +686,27 @@ $CARGO_TAIL" 2>/dev/null || true
         fi
     fi
 
-    # Check for explicit exit signal (file-based)
+    # Check for explicit exit signal (file-based).
+    # Honor it only when it represents a real stop request:
+    #   - it was already present before this iteration's agent ran (a deliberate
+    #     user `touch`, possibly between rounds), OR
+    #   - this was a plan round / a build->plan pivot, where the plan agent is
+    #     *meant* to write .ralph-exit once the backlog is fully decomposed.
+    # A .ralph-exit that a pure BUILD agent created during its own run is spurious
+    # (it confused the documented exit mechanism for "how to stop one task") — we
+    # delete it and keep iterating, so the loop honors the iteration cap instead of
+    # quitting after a single task.
     if [ -f "$PROJECT_DIR/.ralph-exit" ]; then
-        echo "Exit signal detected (.ralph-exit file found)"
-        rm -f "$PROJECT_DIR/.ralph-exit"
-        break
+        if [ "$EXIT_PRESENT_BEFORE" = true ] || [ "$MODE" = "plan" ] || [ "$PIVOTED_TO_PLAN" = true ]; then
+            echo "Exit signal detected (.ralph-exit file found)"
+            rm -f "$PROJECT_DIR/.ralph-exit"
+            break
+        else
+            echo "  ⚠ Ignoring .ralph-exit written by the build agent (build mode never self-stops)."
+            echo "    To stop a build loop: Ctrl-C, pass an iteration cap (e.g. './loop.sh codex 5'),"
+            echo "    or 'touch .ralph-exit' yourself between rounds."
+            rm -f "$PROJECT_DIR/.ralph-exit"
+        fi
     fi
 
     # Check iteration limit
