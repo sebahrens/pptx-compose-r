@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
+
 use crate::{
-    error::{Error, Result},
+    error::{Error, ErrorCode, Result},
     opc::part_name::PartName,
+    xml::{document::XmlElement, parser::parse_document},
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum RelationshipSource {
     Package,
     Part(PartName),
@@ -31,7 +34,9 @@ pub struct Relationship {
     pub id: String,
     pub rel_type: String,
     pub target: String,
+    pub mode: TargetMode,
     pub target_mode: TargetMode,
+    pub resolved_target: Option<PartName>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,7 +60,9 @@ impl Relationship {
             id: id.into(),
             rel_type: rel_type.into(),
             target: target.into(),
+            mode: TargetMode::Internal,
             target_mode: TargetMode::Internal,
+            resolved_target: None,
         }
     }
 
@@ -71,14 +78,65 @@ impl Relationship {
             id: id.into(),
             rel_type: rel_type.into(),
             target: target.into(),
+            mode: TargetMode::External,
             target_mode: TargetMode::External,
+            resolved_target: None,
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelationshipSet {
+    pub source: PartName,
+    pub rels: Vec<Relationship>,
+}
+
+impl RelationshipSet {
+    pub fn parse(source_part: &PartName, raw: &[u8]) -> Result<Self> {
+        let document = parse_document(raw).map_err(|source| {
+            Error::with_source(
+                ErrorCode::UnsupportedPackage,
+                format!("Could not parse relationship part for {source_part}."),
+                source,
+            )
+        })?;
+        let root = document.root_element().ok_or_else(|| {
+            Error::unsupported_package(format!(
+                "Relationship part for {source_part} has no root element."
+            ))
+        })?;
+
+        if root.name.local_name != "Relationships" {
+            return Err(Error::unsupported_package(format!(
+                "Relationship part for {source_part} root element is not Relationships."
+            )));
+        }
+
+        let mut rels = Vec::new();
+        for child in root.children.iter().filter_map(|node| node.as_element()) {
+            if child.name.local_name != "Relationship" {
+                continue;
+            }
+
+            rels.push(parse_relationship(source_part, child)?);
+        }
+
+        Ok(Self {
+            source: source_part.clone(),
+            rels,
+        })
+    }
+
+    #[must_use]
+    pub fn get(&self, id: &str) -> Option<&Relationship> {
+        self.rels.iter().find(|relationship| relationship.id == id)
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RelationshipGraph {
     relationships: Vec<Relationship>,
+    sets: BTreeMap<PartName, RelationshipSet>,
 }
 
 impl RelationshipGraph {
@@ -88,7 +146,32 @@ impl RelationshipGraph {
     }
 
     pub fn push(&mut self, relationship: Relationship) {
+        if let RelationshipSource::Part(source) = &relationship.source {
+            let set = self
+                .sets
+                .entry(source.clone())
+                .or_insert_with(|| RelationshipSet {
+                    source: source.clone(),
+                    rels: Vec::new(),
+                });
+            set.rels.push(relationship.clone());
+        }
         self.relationships.push(relationship);
+    }
+
+    pub fn insert_set(&mut self, set: RelationshipSet) {
+        self.relationships.extend(set.rels.iter().cloned());
+        self.sets.insert(set.source.clone(), set);
+    }
+
+    #[must_use]
+    pub fn set_for(&self, source: &PartName) -> Option<&RelationshipSet> {
+        self.sets.get(source)
+    }
+
+    #[must_use]
+    pub fn resolve(&self, source: &PartName, r_id: &str) -> Option<&PartName> {
+        self.set_for(source)?.get(r_id)?.resolved_target.as_ref()
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &Relationship> {
@@ -139,6 +222,52 @@ pub fn resolve_internal_target(source: &RelationshipSource, target: &str) -> Res
     PartName::from_zip_entry(segments.join("/").as_str())
 }
 
+fn parse_relationship(source_part: &PartName, element: &XmlElement) -> Result<Relationship> {
+    let id = required_attr(element, "Id")?;
+    let rel_type = required_attr(element, "Type")?;
+    let target = required_attr(element, "Target")?;
+    let mode = match optional_attr(element, "TargetMode") {
+        None | Some("Internal") => TargetMode::Internal,
+        Some("External") => TargetMode::External,
+        Some(other) => {
+            return Err(Error::unsupported_package(format!(
+                "Relationship {id} has unsupported TargetMode {other}."
+            )));
+        }
+    };
+    let source = RelationshipSource::Part(source_part.clone());
+    let resolved_target = match mode {
+        TargetMode::Internal => Some(resolve_internal_target(&source, target)?),
+        TargetMode::External => None,
+    };
+
+    Ok(Relationship {
+        source,
+        id: id.to_owned(),
+        rel_type: rel_type.to_owned(),
+        target: target.to_owned(),
+        mode,
+        target_mode: mode,
+        resolved_target,
+    })
+}
+
+fn required_attr<'a>(element: &'a XmlElement, name: &str) -> Result<&'a str> {
+    optional_attr(element, name).ok_or_else(|| {
+        Error::unsupported_package(format!(
+            "Relationship element is missing required attribute {name}."
+        ))
+    })
+}
+
+fn optional_attr<'a>(element: &'a XmlElement, name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.local_name == name)
+        .map(|attribute| attribute.value.as_str())
+}
+
 fn split_part_segments(part_name: &PartName) -> Vec<String> {
     part_name
         .as_str()
@@ -146,4 +275,44 @@ fn split_part_segments(part_name: &PartName) -> Vec<String> {
         .split('/')
         .map(str::to_owned)
         .collect()
+}
+
+#[cfg(test)]
+#[test]
+fn parse_and_resolve() {
+    let source = PartName::from_zip_entry("/ppt/presentation.xml").expect("valid source");
+    let raw = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.test/image.png?a=1&amp;b=2" TargetMode="External"/></Relationships>"#;
+
+    let set = RelationshipSet::parse(&source, raw).expect("relationships parse");
+
+    assert_eq!(set.source, source);
+    assert_eq!(set.rels.len(), 2);
+    assert_eq!(set.rels[0].id, "rId1");
+    assert_eq!(set.rels[0].mode, TargetMode::Internal);
+    assert_eq!(set.rels[0].target, "slides/slide1.xml");
+    assert_eq!(
+        set.rels[0]
+            .resolved_target
+            .as_ref()
+            .expect("internal target resolved")
+            .as_str(),
+        "/ppt/slides/slide1.xml"
+    );
+    assert_eq!(set.rels[1].mode, TargetMode::External);
+    assert_eq!(
+        set.rels[1].target,
+        "https://example.test/image.png?a=1&amp;b=2"
+    );
+    assert!(set.rels[1].resolved_target.is_none());
+
+    let mut graph = RelationshipGraph::new();
+    graph.insert_set(set);
+    assert_eq!(
+        graph
+            .resolve(&source, "rId1")
+            .expect("graph resolves relationship")
+            .as_str(),
+        "/ppt/slides/slide1.xml"
+    );
+    assert!(graph.resolve(&source, "rId2").is_none());
 }
