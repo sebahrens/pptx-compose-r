@@ -1,0 +1,1421 @@
+{
+  "nodes": [
+    {
+      "key": "pc-e1",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "OPC + ZIP core (lossless package I/O)",
+      "description": "core opc/ + zip/. Specs 010, 011, 050."
+    },
+    {
+      "key": "pc-e2",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "Content types & relationships",
+      "description": "core opc/content_types + relationships. Spec 012."
+    },
+    {
+      "key": "pc-e3",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "XML model, dirty-tracking & round-trip",
+      "description": "core xml/. Specs 020, 050."
+    },
+    {
+      "key": "pc-e4",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "Provenance & hashing",
+      "description": "core pptx/ids + opc. Spec 046."
+    },
+    {
+      "key": "pc-e5",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "PPTX domain model",
+      "description": "core pptx/. Specs 030-033."
+    },
+    {
+      "key": "pc-e6",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "Agent JSON view",
+      "description": "json agent_view + schemas. Specs 040, 042."
+    },
+    {
+      "key": "pc-e7",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "Edit & patch engine",
+      "description": "edit selectors/operations/patch. Specs 041,042,047,050. BLOCKED on Phase-B registries."
+    },
+    {
+      "key": "pc-e8",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "Media staging & refs",
+      "description": "edit media_inputs + core media. Specs 032, 043."
+    },
+    {
+      "key": "pc-e9",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "Results, validation & errors",
+      "description": "core validation/ + error/. Specs 044,045,050. BLOCKED on Phase-B registries."
+    },
+    {
+      "key": "pc-e10",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "CLI",
+      "description": "cli/. Specs 070, 071. BLOCKED on Phase-B."
+    },
+    {
+      "key": "pc-e11",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "MCP server",
+      "description": "mcp/. Specs 072, 073. BLOCKED on Phase-B."
+    },
+    {
+      "key": "pc-e12",
+      "type": "epic",
+      "priority": 1,
+      "labels": [
+        "tier:epic",
+        "v1"
+      ],
+      "title": "Testing, fixtures & evals",
+      "description": "tests + fixtures. Specs 080, 081."
+    },
+    {
+      "key": "pc-e1-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:011"
+      ],
+      "title": "ZIP reader: entries, raw uncompressed bytes, ZipEntryMetadata",
+      "description": "ZIP reader: entries, raw uncompressed bytes, ZipEntryMetadata. Specs: 011,010. Parent pc-e1."
+    },
+    {
+      "key": "pc-e1-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:011"
+      ],
+      "title": "Pre-ZIP format sniff: CFBF + EncryptionInfo/EncryptedPackage -> unsupported_package/exit11",
+      "description": "Pre-ZIP format sniff: CFBF + EncryptionInfo/EncryptedPackage -> unsupported_package/exit11. Specs: 011. Parent pc-e1."
+    },
+    {
+      "key": "pc-e1-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:011"
+      ],
+      "title": "Streaming resource-limit enforcement: 8 limits + 200:1 ratio -> resource_limit_exceeded/exit12",
+      "description": "Streaming resource-limit enforcement: 8 limits + 200:1 ratio -> resource_limit_exceeded/exit12. Specs: 011. Parent pc-e1."
+    },
+    {
+      "key": "pc-e1-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:011"
+      ],
+      "title": "Path-traversal/absolute-path rejection independent of zip crate (CVE-2025-29787)",
+      "description": "Path-traversal/absolute-path rejection independent of zip crate (CVE-2025-29787). Specs: 011,010. Parent pc-e1."
+    },
+    {
+      "key": "pc-e1-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:010"
+      ],
+      "title": "PartStore + canonical PartName (normalize, reject dup/traversal, case-sensitive segments)",
+      "description": "PartStore + canonical PartName (normalize, reject dup/traversal, case-sensitive segments). Specs: 010. Parent pc-e1."
+    },
+    {
+      "key": "pc-e1-t6",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:011"
+      ],
+      "title": "ZIP writer raw_copy_file passthrough for clean parts; preserve entry order",
+      "description": "ZIP writer raw_copy_file passthrough for clean parts; preserve entry order. Specs: 011,020. Parent pc-e1."
+    },
+    {
+      "key": "pc-e1-t7",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:011"
+      ],
+      "title": "Deterministic write mode: stable order/timestamps/compression, no clean re-serialize",
+      "description": "Deterministic write mode: stable order/timestamps/compression, no clean re-serialize. Specs: 011,070. Parent pc-e1."
+    },
+    {
+      "key": "pc-e2-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:012"
+      ],
+      "title": "Parse [Content_Types].xml into defaults+overrides",
+      "description": "Parse [Content_Types].xml into defaults+overrides. Specs: 012. Parent pc-e2."
+    },
+    {
+      "key": "pc-e2-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:012"
+      ],
+      "title": "Content-type resolution algorithm (Override -> Default case-insensitive ext -> untyped)",
+      "description": "Content-type resolution algorithm (Override -> Default case-insensitive ext -> untyped). Specs: 012,010. Parent pc-e2."
+    },
+    {
+      "key": "pc-e2-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:012"
+      ],
+      "title": "Parse .rels into RelationshipGraph; preserve Id/Type/Target/TargetMode; resolve internal",
+      "description": "Parse .rels into RelationshipGraph; preserve Id/Type/Target/TargetMode; resolve internal. Specs: 012,010. Parent pc-e2."
+    },
+    {
+      "key": "pc-e2-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:012"
+      ],
+      "title": "rId allocation policy (rId{max+1}, collision-safe, deterministic)",
+      "description": "rId allocation policy (rId{max+1}, collision-safe, deterministic). Specs: 012. Parent pc-e2."
+    },
+    {
+      "key": "pc-e2-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:012"
+      ],
+      "title": "Presentation discovery via OPC relationship graph",
+      "description": "Presentation discovery via OPC relationship graph. Specs: 012. Parent pc-e2."
+    },
+    {
+      "key": "pc-e2-t6",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:010"
+      ],
+      "title": "Package invariant checks: rel targets resolve, rel IDs unique, every part typed",
+      "description": "Package invariant checks: rel targets resolve, rel IDs unique, every part typed. Specs: 010,012,050. Parent pc-e2."
+    },
+    {
+      "key": "pc-e3-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:020"
+      ],
+      "title": "XmlPart over quick-xml: raw+lazy parse, prefix/unknown/mc:AlternateContent preservation",
+      "description": "XmlPart over quick-xml: raw+lazy parse, prefix/unknown/mc:AlternateContent preservation. Specs: 020. Parent pc-e3."
+    },
+    {
+      "key": "pc-e3-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:020"
+      ],
+      "title": "Dirty-tracking: clean on open, set only on successful mutating edit, per-part",
+      "description": "Dirty-tracking: clean on open, set only on successful mutating edit, per-part. Specs: 020. Parent pc-e3."
+    },
+    {
+      "key": "pc-e3-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:020"
+      ],
+      "title": "XML writer for dirty parts: well-formed, namespaces, deterministic profile",
+      "description": "XML writer for dirty parts: well-formed, namespaces, deterministic profile. Specs: 020. Parent pc-e3."
+    },
+    {
+      "key": "pc-e3-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:020"
+      ],
+      "title": "Preserve-mode write: clean parts byte-identical from raw",
+      "description": "Preserve-mode write: clean parts byte-identical from raw. Specs: 020,050. Parent pc-e3."
+    },
+    {
+      "key": "pc-e3-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:020"
+      ],
+      "title": "Raw escape hatch: replace bytes, mark dirty, run well-formedness+graph validation",
+      "description": "Raw escape hatch: replace bytes, mark dirty, run well-formedness+graph validation. Specs: 020. Parent pc-e3."
+    },
+    {
+      "key": "pc-e3-t6",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:050"
+      ],
+      "title": "No-edit round-trip test harness",
+      "description": "No-edit round-trip test harness. Specs: 050. Parent pc-e3."
+    },
+    {
+      "key": "pc-e4-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:046"
+      ],
+      "title": "part_checksum over raw stored bytes",
+      "description": "part_checksum over raw stored bytes. Specs: 046. Parent pc-e4."
+    },
+    {
+      "key": "pc-e4-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:046"
+      ],
+      "title": "Canonical Preimage JSON (CPJ) encoder",
+      "description": "Canonical Preimage JSON (CPJ) encoder. Specs: 046. Parent pc-e4."
+    },
+    {
+      "key": "pc-e4-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:046"
+      ],
+      "title": "document_id over sorted CPJ part manifest + content-types stream",
+      "description": "document_id over sorted CPJ part manifest + content-types stream. Specs: 046. Parent pc-e4."
+    },
+    {
+      "key": "pc-e4-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:046"
+      ],
+      "title": "revision lifecycle (1 on open, +1 per successful non-dry-run apply)",
+      "description": "revision lifecycle (1 on open, +1 per successful non-dry-run apply). Specs: 046. Parent pc-e4."
+    },
+    {
+      "key": "pc-e4-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:046"
+      ],
+      "title": "text_hash (NFC + whitespace normalization, a:br->\\n)",
+      "description": "text_hash (NFC + whitespace normalization, a:br->\\n). Specs: 046. Parent pc-e4."
+    },
+    {
+      "key": "pc-e4-t6",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:046"
+      ],
+      "title": "fingerprint CPJ {kind,part,sp_tree_path,group_path,cnvpr_id,text_hash}",
+      "description": "fingerprint CPJ {kind,part,sp_tree_path,group_path,cnvpr_id,text_hash}. Specs: 046. Parent pc-e4."
+    },
+    {
+      "key": "pc-e4-t7",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:046"
+      ],
+      "title": "view_id over {document_id,revision,mode,scope}",
+      "description": "view_id over {document_id,revision,mode,scope}. Specs: 046. Parent pc-e4."
+    },
+    {
+      "key": "pc-e4-t8",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:046"
+      ],
+      "title": "Agent ID derivation: slide-{n}, {kind_prefix}-{spTree path}, p{i}/r{j}",
+      "description": "Agent ID derivation: slide-{n}, {kind_prefix}-{spTree path}, p{i}/r{j}. Specs: 046. Parent pc-e4."
+    },
+    {
+      "key": "pc-e4-t9",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:046"
+      ],
+      "title": "Stability tests: no-edit + cross-run determinism + edit-locality",
+      "description": "Stability tests: no-edit + cross-run determinism + edit-locality. Specs: 046,050. Parent pc-e4."
+    },
+    {
+      "key": "pc-e5-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:030"
+      ],
+      "title": "Presentation + slide model; order from sldIdLst",
+      "description": "Presentation + slide model; order from sldIdLst. Specs: 030,031. Parent pc-e5."
+    },
+    {
+      "key": "pc-e5-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:031"
+      ],
+      "title": "Shape reading: id/name/kind/bounds/rot/flip/placeholder/alt",
+      "description": "Shape reading: id/name/kind/bounds/rot/flip/placeholder/alt. Specs: 031. Parent pc-e5."
+    },
+    {
+      "key": "pc-e5-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:031"
+      ],
+      "title": "Text reading: paragraphs/runs positional identity + normalized/plain",
+      "description": "Text reading: paragraphs/runs positional identity + normalized/plain. Specs: 031,042. Parent pc-e5."
+    },
+    {
+      "key": "pc-e5-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:032"
+      ],
+      "title": "Picture reading: r:embed->media, content-type, byte length, shared count, intrinsic size",
+      "description": "Picture reading: r:embed->media, content-type, byte length, shared count, intrinsic size. Specs: 032. Parent pc-e5."
+    },
+    {
+      "key": "pc-e5-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:046"
+      ],
+      "title": "spTree positional indexing (sp_tree_path/group_path)",
+      "description": "spTree positional indexing (sp_tree_path/group_path). Specs: 046,042. Parent pc-e5."
+    },
+    {
+      "key": "pc-e5-t6",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:033"
+      ],
+      "title": "Layouts/masters/themes preserve + minimal read",
+      "description": "Layouts/masters/themes preserve + minimal read. Specs: 033. Parent pc-e5."
+    },
+    {
+      "key": "pc-e6-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:042"
+      ],
+      "title": "schemars-derived schema-versioned agent_view/slide/element/text/image types",
+      "description": "schemars-derived schema-versioned agent_view/slide/element/text/image types. Specs: 042. Parent pc-e6."
+    },
+    {
+      "key": "pc-e6-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:040"
+      ],
+      "title": "View modes (deck_summary/slide_page/slide_detail/element_detail/media_metadata/validation_report)",
+      "description": "View modes (deck_summary/slide_page/slide_detail/element_detail/media_metadata/validation_report). Specs: 040. Parent pc-e6."
+    },
+    {
+      "key": "pc-e6-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:040"
+      ],
+      "title": "Opaque-cursor pagination + truncation + default-limit table",
+      "description": "Opaque-cursor pagination + truncation + default-limit table. Specs: 040,042. Parent pc-e6."
+    },
+    {
+      "key": "pc-e6-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:040"
+      ],
+      "title": "No-inline-binary rule; media-by-reference",
+      "description": "No-inline-binary rule; media-by-reference. Specs: 040. Parent pc-e6."
+    },
+    {
+      "key": "pc-e6-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:040"
+      ],
+      "title": "Legacy path-keyed JSON compat mode with $xml/$binary envelopes",
+      "description": "Legacy path-keyed JSON compat mode with $xml/$binary envelopes. Specs: 040. Parent pc-e6."
+    },
+    {
+      "key": "pc-e7-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:041",
+        "blocked:phase-b"
+      ],
+      "title": "Selector resolution + guard evaluation -> selector_guard_failed",
+      "description": "Selector resolution + guard evaluation -> selector_guard_failed. Specs: 041,042,046. Parent pc-e7."
+    },
+    {
+      "key": "pc-e7-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:041",
+        "blocked:phase-b"
+      ],
+      "title": "Patch envelope validation + stale-patch rejection",
+      "description": "Patch envelope validation + stale-patch rejection. Specs: 041,046. Parent pc-e7."
+    },
+    {
+      "key": "pc-e7-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:041",
+        "blocked:phase-b"
+      ],
+      "title": "Atomic apply (all-or-nothing) + operation reports",
+      "description": "Atomic apply (all-or-nothing) + operation reports. Specs: 041,044. Parent pc-e7."
+    },
+    {
+      "key": "pc-e7-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:041",
+        "blocked:phase-b"
+      ],
+      "title": "replace_text (whole_element, format_policy, \\n->a:p, newline_mapping)",
+      "description": "replace_text (whole_element, format_policy, \\n->a:p, newline_mapping). Specs: 041,047. Parent pc-e7."
+    },
+    {
+      "key": "pc-e7-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:047",
+        "blocked:phase-b"
+      ],
+      "title": "add_text_box (p:sp template, default style, style whitelist, invalid_bounds)",
+      "description": "add_text_box (p:sp template, default style, style whitelist, invalid_bounds). Specs: 047,041. Parent pc-e7."
+    },
+    {
+      "key": "pc-e7-t6",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:041",
+        "blocked:phase-b"
+      ],
+      "title": "move_resize_element (a:xfrm, kind matrix, preserve rot/flip)",
+      "description": "move_resize_element (a:xfrm, kind matrix, preserve rot/flip). Specs: 041,047. Parent pc-e7."
+    },
+    {
+      "key": "pc-e7-t7",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:041",
+        "blocked:phase-b"
+      ],
+      "title": "set_alt_text (cNvPr descr/title mapping)",
+      "description": "set_alt_text (cNvPr descr/title mapping). Specs: 041. Parent pc-e7."
+    },
+    {
+      "key": "pc-e7-t8",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:047",
+        "blocked:phase-b"
+      ],
+      "title": "add_image (p:pic template, rel URI, content-type, drawing-id, wiring)",
+      "description": "add_image (p:pic template, rel URI, content-type, drawing-id, wiring). Specs: 047,032,012. Parent pc-e7."
+    },
+    {
+      "key": "pc-e7-t9",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:032",
+        "blocked:phase-b"
+      ],
+      "title": "replace_image (retarget default, shared-media guard, r:link->unsupported_edit)",
+      "description": "replace_image (retarget default, shared-media guard, r:link->unsupported_edit). Specs: 032,041. Parent pc-e7."
+    },
+    {
+      "key": "pc-e7-t10",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:050",
+        "blocked:phase-b"
+      ],
+      "title": "Validation-on-write integration (block on error/fatal)",
+      "description": "Validation-on-write integration (block on error/fatal). Specs: 050. Parent pc-e7."
+    },
+    {
+      "key": "pc-e8-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:043"
+      ],
+      "title": "media_ref binding across Rust/CLI/MCP (manifest + inline)",
+      "description": "media_ref binding across Rust/CLI/MCP (manifest + inline). Specs: 043. Parent pc-e8."
+    },
+    {
+      "key": "pc-e8-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:032"
+      ],
+      "title": "Magic-byte content-type verification PNG/JPEG/GIF",
+      "description": "Magic-byte content-type verification PNG/JPEG/GIF. Specs: 032,043. Parent pc-e8."
+    },
+    {
+      "key": "pc-e8-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:043"
+      ],
+      "title": "Checksum handling + media_checksum_mismatch before mutation",
+      "description": "Checksum handling + media_checksum_mismatch before mutation. Specs: 043,044. Parent pc-e8."
+    },
+    {
+      "key": "pc-e8-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:032"
+      ],
+      "title": "Deterministic media part naming + opt-in dedup",
+      "description": "Deterministic media part naming + opt-in dedup. Specs: 032. Parent pc-e8."
+    },
+    {
+      "key": "pc-e8-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:011"
+      ],
+      "title": "Media size limit (--max-media-bytes) -> resource_limit_exceeded",
+      "description": "Media size limit (--max-media-bytes) -> resource_limit_exceeded. Specs: 011,043. Parent pc-e8."
+    },
+    {
+      "key": "pc-e9-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:044",
+        "blocked:phase-b"
+      ],
+      "title": "Result/patch_report/validation_report/error envelopes (schema-versioned)",
+      "description": "Result/patch_report/validation_report/error envelopes (schema-versioned). Specs: 044. Parent pc-e9."
+    },
+    {
+      "key": "pc-e9-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:044",
+        "blocked:phase-b"
+      ],
+      "title": "Validation finding-code registry (code+category+severity) [Phase B]",
+      "description": "Validation finding-code registry (code+category+severity) [Phase B]. Specs: 044. Parent pc-e9."
+    },
+    {
+      "key": "pc-e9-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:044",
+        "blocked:phase-b"
+      ],
+      "title": "Error-code enum reconciled across 044/060/071 [Phase B]",
+      "description": "Error-code enum reconciled across 044/060/071 [Phase B]. Specs: 044. Parent pc-e9."
+    },
+    {
+      "key": "pc-e9-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:050",
+        "blocked:phase-b"
+      ],
+      "title": "Each 050 invariant as atomic validator emitting its registry code",
+      "description": "Each 050 invariant as atomic validator emitting its registry code. Specs: 050,044. Parent pc-e9."
+    },
+    {
+      "key": "pc-e9-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:045",
+        "blocked:phase-b"
+      ],
+      "title": "Semantic diff / preview / journal schemas",
+      "description": "Semantic diff / preview / journal schemas. Specs: 045. Parent pc-e9."
+    },
+    {
+      "key": "pc-e10-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:070",
+        "blocked:phase-b"
+      ],
+      "title": "clap command surface (inspect/apply/validate/schema + compat) per 071",
+      "description": "clap command surface (inspect/apply/validate/schema + compat) per 071. Specs: 070,071. Parent pc-e10."
+    },
+    {
+      "key": "pc-e10-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:071",
+        "blocked:phase-b"
+      ],
+      "title": "JSON stdout discipline, JSON errors, no prompts",
+      "description": "JSON stdout discipline, JSON errors, no prompts. Specs: 071. Parent pc-e10."
+    },
+    {
+      "key": "pc-e10-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:071",
+        "blocked:phase-b"
+      ],
+      "title": "Exit-code map (single source = 071) [Phase B]",
+      "description": "Exit-code map (single source = 071) [Phase B]. Specs: 071. Parent pc-e10."
+    },
+    {
+      "key": "pc-e10-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:071",
+        "blocked:phase-b"
+      ],
+      "title": "Atomic writes + no implicit overwrite + --deterministic",
+      "description": "Atomic writes + no implicit overwrite + --deterministic. Specs: 071,070. Parent pc-e10."
+    },
+    {
+      "key": "pc-e10-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:071",
+        "blocked:phase-b"
+      ],
+      "title": "--dry-run/--report/--diff wiring to report schemas",
+      "description": "--dry-run/--report/--diff wiring to report schemas. Specs: 071,044,045. Parent pc-e10."
+    },
+    {
+      "key": "pc-e11-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:072",
+        "blocked:phase-b"
+      ],
+      "title": "rmcp server scaffold + scoped tools; raw-XML tools off by default",
+      "description": "rmcp server scaffold + scoped tools; raw-XML tools off by default. Specs: 072,073. Parent pc-e11."
+    },
+    {
+      "key": "pc-e11-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:072",
+        "blocked:phase-b"
+      ],
+      "title": "Sessions + revisions + media handles + governance limits",
+      "description": "Sessions + revisions + media handles + governance limits. Specs: 072. Parent pc-e11."
+    },
+    {
+      "key": "pc-e11-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:072",
+        "blocked:phase-b"
+      ],
+      "title": "Structured outputs via schemars; error->tool-result mapping",
+      "description": "Structured outputs via schemars; error->tool-result mapping. Specs: 072,044. Parent pc-e11."
+    },
+    {
+      "key": "pc-e11-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:072",
+        "blocked:phase-b"
+      ],
+      "title": "Per-surface stale-patch rule (MCP rejects on mismatch)",
+      "description": "Per-surface stale-patch rule (MCP rejects on mismatch). Specs: 072,041. Parent pc-e11."
+    },
+    {
+      "key": "pc-e11-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:073",
+        "blocked:phase-b"
+      ],
+      "title": "Permission/safety enforcement (fs scope, overwrite, sensitive content)",
+      "description": "Permission/safety enforcement (fs scope, overwrite, sensitive content). Specs: 073. Parent pc-e11."
+    },
+    {
+      "key": "pc-e12-t1",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:080"
+      ],
+      "title": "Fixture-manifest corpus (filename, source app, features, consuming test)",
+      "description": "Fixture-manifest corpus (filename, source app, features, consuming test). Specs: 080. Parent pc-e12."
+    },
+    {
+      "key": "pc-e12-t2",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:050"
+      ],
+      "title": "Golden round-trip tests (no-edit byte identity, unknown-part preservation)",
+      "description": "Golden round-trip tests (no-edit byte identity, unknown-part preservation). Specs: 050,080. Parent pc-e12."
+    },
+    {
+      "key": "pc-e12-t3",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:047"
+      ],
+      "title": "Golden construction fixtures (p:pic, p:sp expected bytes)",
+      "description": "Golden construction fixtures (p:pic, p:sp expected bytes). Specs: 047,080. Parent pc-e12."
+    },
+    {
+      "key": "pc-e12-t4",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:080"
+      ],
+      "title": "Negative-case suite (stale rev, bad id, media, encrypted, zip-bomb, unsafe path, r:link)",
+      "description": "Negative-case suite (stale rev, bad id, media, encrypted, zip-bomb, unsafe path, r:link). Specs: 080,011. Parent pc-e12."
+    },
+    {
+      "key": "pc-e12-t5",
+      "type": "task",
+      "priority": 2,
+      "labels": [
+        "tier:task",
+        "v1",
+        "spec:081"
+      ],
+      "title": "Agent runtime evals (CLI + MCP transcripts)",
+      "description": "Agent runtime evals (CLI + MCP transcripts). Specs: 081. Parent pc-e12."
+    }
+  ],
+  "edges": [
+    {
+      "from_key": "pc-e1-t1",
+      "to_key": "pc-e1",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e1-t2",
+      "to_key": "pc-e1",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e1-t3",
+      "to_key": "pc-e1",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e1-t4",
+      "to_key": "pc-e1",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e1-t5",
+      "to_key": "pc-e1",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e1-t6",
+      "to_key": "pc-e1",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e1-t7",
+      "to_key": "pc-e1",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e2-t1",
+      "to_key": "pc-e2",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e2-t2",
+      "to_key": "pc-e2",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e2-t3",
+      "to_key": "pc-e2",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e2-t4",
+      "to_key": "pc-e2",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e2-t5",
+      "to_key": "pc-e2",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e2-t6",
+      "to_key": "pc-e2",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e3-t1",
+      "to_key": "pc-e3",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e3-t2",
+      "to_key": "pc-e3",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e3-t3",
+      "to_key": "pc-e3",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e3-t4",
+      "to_key": "pc-e3",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e3-t5",
+      "to_key": "pc-e3",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e3-t6",
+      "to_key": "pc-e3",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e4-t1",
+      "to_key": "pc-e4",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e4-t2",
+      "to_key": "pc-e4",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e4-t3",
+      "to_key": "pc-e4",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e4-t4",
+      "to_key": "pc-e4",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e4-t5",
+      "to_key": "pc-e4",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e4-t6",
+      "to_key": "pc-e4",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e4-t7",
+      "to_key": "pc-e4",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e4-t8",
+      "to_key": "pc-e4",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e4-t9",
+      "to_key": "pc-e4",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e5-t1",
+      "to_key": "pc-e5",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e5-t2",
+      "to_key": "pc-e5",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e5-t3",
+      "to_key": "pc-e5",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e5-t4",
+      "to_key": "pc-e5",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e5-t5",
+      "to_key": "pc-e5",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e5-t6",
+      "to_key": "pc-e5",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e6-t1",
+      "to_key": "pc-e6",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e6-t2",
+      "to_key": "pc-e6",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e6-t3",
+      "to_key": "pc-e6",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e6-t4",
+      "to_key": "pc-e6",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e6-t5",
+      "to_key": "pc-e6",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e7-t1",
+      "to_key": "pc-e7",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e7-t2",
+      "to_key": "pc-e7",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e7-t3",
+      "to_key": "pc-e7",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e7-t4",
+      "to_key": "pc-e7",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e7-t5",
+      "to_key": "pc-e7",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e7-t6",
+      "to_key": "pc-e7",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e7-t7",
+      "to_key": "pc-e7",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e7-t8",
+      "to_key": "pc-e7",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e7-t9",
+      "to_key": "pc-e7",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e7-t10",
+      "to_key": "pc-e7",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e8-t1",
+      "to_key": "pc-e8",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e8-t2",
+      "to_key": "pc-e8",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e8-t3",
+      "to_key": "pc-e8",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e8-t4",
+      "to_key": "pc-e8",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e8-t5",
+      "to_key": "pc-e8",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e9-t1",
+      "to_key": "pc-e9",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e9-t2",
+      "to_key": "pc-e9",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e9-t3",
+      "to_key": "pc-e9",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e9-t4",
+      "to_key": "pc-e9",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e9-t5",
+      "to_key": "pc-e9",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e10-t1",
+      "to_key": "pc-e10",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e10-t2",
+      "to_key": "pc-e10",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e10-t3",
+      "to_key": "pc-e10",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e10-t4",
+      "to_key": "pc-e10",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e10-t5",
+      "to_key": "pc-e10",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e11-t1",
+      "to_key": "pc-e11",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e11-t2",
+      "to_key": "pc-e11",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e11-t3",
+      "to_key": "pc-e11",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e11-t4",
+      "to_key": "pc-e11",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e11-t5",
+      "to_key": "pc-e11",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e12-t1",
+      "to_key": "pc-e12",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e12-t2",
+      "to_key": "pc-e12",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e12-t3",
+      "to_key": "pc-e12",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e12-t4",
+      "to_key": "pc-e12",
+      "type": "parent-child"
+    },
+    {
+      "from_key": "pc-e12-t5",
+      "to_key": "pc-e12",
+      "type": "parent-child"
+    }
+  ]
+}

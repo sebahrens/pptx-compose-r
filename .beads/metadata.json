@@ -1,7 +1,10 @@
 {
   "database": "dolt",
   "backend": "dolt",
-  "dolt_mode": "embedded",
+  "dolt_mode": "server",
+  "dolt_server_host": "127.0.0.1",
+  "dolt_server_port": 3308,
+  "dolt_server_user": "root",
   "dolt_database": "pptx_compose",
   "project_id": "70294cce-50c7-4dd4-a689-97c4e7f982b1"
 }
