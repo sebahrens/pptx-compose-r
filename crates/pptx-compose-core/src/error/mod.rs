@@ -100,6 +100,11 @@ impl Error {
     }
 
     #[must_use]
+    pub fn resource_limit_exceeded(message: impl Into<String>) -> Self {
+        Self::new(ErrorCode::ResourceLimitExceeded, message)
+    }
+
+    #[must_use]
     pub fn parse_error(
         message: impl Into<String>,
         source: impl error::Error + Send + Sync + 'static,

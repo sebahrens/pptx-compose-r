@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    io::{Cursor, Read, Seek},
+    io::{Cursor, Read, Seek, SeekFrom},
 };
 
 use zip::ZipArchive;
@@ -8,7 +8,12 @@ use zip::ZipArchive;
 use crate::{
     error::{Error, Result},
     opc::part_name::{PartName, reject_unsafe_entry},
-    zip::ZipEntryMetadata,
+    zip::{
+        ZipEntryMetadata,
+        limits::{
+            LimitEnforcingReader, OpenOptions, ensure_compressed_package_size, ensure_part_count,
+        },
+    },
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,33 +24,60 @@ pub struct RawEntry {
 }
 
 pub fn from_bytes(bytes: &[u8]) -> Result<Vec<RawEntry>> {
-    open_reader(Cursor::new(bytes))
+    from_bytes_with_options(bytes, &OpenOptions::default())
+}
+
+pub fn from_bytes_with_options(bytes: &[u8], options: &OpenOptions) -> Result<Vec<RawEntry>> {
+    ensure_compressed_package_size(bytes.len() as u64, &options.resource_limits)?;
+    open_reader_with_options(Cursor::new(bytes), options)
 }
 
 pub fn open_reader<R>(reader: R) -> Result<Vec<RawEntry>>
 where
     R: Read + Seek,
 {
-    read_entries(reader)
+    open_reader_with_options(reader, &OpenOptions::default())
+}
+
+pub fn open_reader_with_options<R>(reader: R, options: &OpenOptions) -> Result<Vec<RawEntry>>
+where
+    R: Read + Seek,
+{
+    read_entries_with_options(reader, options)
 }
 
 pub fn read_entries<R>(reader: R) -> Result<Vec<RawEntry>>
 where
     R: Read + Seek,
 {
-    let mut archive = ZipArchive::new(reader)
-        .map_err(|source| Error::parse_error("Could not open ZIP package.", source))?;
-    read_archive_entries(&mut archive)
+    read_entries_with_options(reader, &OpenOptions::default())
 }
 
-fn read_archive_entries<R>(archive: &mut ZipArchive<R>) -> Result<Vec<RawEntry>>
+pub fn read_entries_with_options<R>(mut reader: R, options: &OpenOptions) -> Result<Vec<RawEntry>>
+where
+    R: Read + Seek,
+{
+    let compressed_package_bytes = stream_len(&mut reader)?;
+    ensure_compressed_package_size(compressed_package_bytes, &options.resource_limits)?;
+
+    let mut archive = ZipArchive::new(reader)
+        .map_err(|source| Error::parse_error("Could not open ZIP package.", source))?;
+    read_archive_entries(&mut archive, options)
+}
+
+fn read_archive_entries<R>(
+    archive: &mut ZipArchive<R>,
+    options: &OpenOptions,
+) -> Result<Vec<RawEntry>>
 where
     R: Read + Seek,
 {
     let mut entries = Vec::with_capacity(archive.len());
     let mut names = HashSet::with_capacity(archive.len());
+    let mut package_uncompressed_bytes = 0;
 
     for index in 0..archive.len() {
+        ensure_part_count(index + 1, &options.resource_limits)?;
         let mut entry = archive.by_index(index).map_err(|source| {
             Error::parse_error("Could not read ZIP entry metadata and bytes.", source)
         })?;
@@ -71,9 +103,22 @@ where
         };
 
         let mut bytes = Vec::new();
-        entry
-            .read_to_end(&mut bytes)
-            .map_err(|source| Error::parse_error("Could not read ZIP entry bytes.", source))?;
+        let mut enforcing_reader = LimitEnforcingReader::new(
+            &mut entry,
+            &options.resource_limits,
+            &meta.original_name,
+            meta.compressed_size,
+            &mut package_uncompressed_bytes,
+        );
+        if let Err(source) = enforcing_reader.read_to_end(&mut bytes) {
+            if let Some(error) = enforcing_reader.take_error() {
+                return Err(error);
+            }
+            return Err(Error::parse_error(
+                "Could not read ZIP entry bytes.",
+                source,
+            ));
+        }
         entries.push(RawEntry {
             name: normalized_name,
             bytes,
@@ -82,6 +127,22 @@ where
     }
 
     Ok(entries)
+}
+
+fn stream_len<R>(reader: &mut R) -> Result<u64>
+where
+    R: Seek,
+{
+    let current = reader
+        .stream_position()
+        .map_err(|source| Error::parse_error("Could not read ZIP stream position.", source))?;
+    let end = reader
+        .seek(SeekFrom::End(0))
+        .map_err(|source| Error::parse_error("Could not read ZIP stream length.", source))?;
+    reader
+        .seek(SeekFrom::Start(current))
+        .map_err(|source| Error::parse_error("Could not restore ZIP stream position.", source))?;
+    Ok(end)
 }
 
 fn normalize_entry_name(entry_name: &str, is_dir: bool) -> Result<PartName> {
