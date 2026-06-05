@@ -137,6 +137,19 @@ impl Error {
     }
 
     #[must_use]
+    pub fn malformed_xml(message: impl Into<String>) -> Self {
+        Self::new(ErrorCode::MalformedXml, message)
+    }
+
+    #[must_use]
+    pub fn malformed_xml_with_source(
+        message: impl Into<String>,
+        source: impl error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::with_source(ErrorCode::MalformedXml, message, source)
+    }
+
+    #[must_use]
     pub const fn code(&self) -> ErrorCode {
         self.details.code
     }
@@ -209,7 +222,7 @@ impl ErrorCode {
             Self::UnsupportedEdit => ErrorCategory::Edit,
             Self::UnsupportedMediaType => ErrorCategory::Media,
             Self::InvalidBounds => ErrorCategory::Bounds,
-            Self::ParseError => ErrorCategory::Parse,
+            Self::ParseError | Self::MalformedXml => ErrorCategory::Parse,
             Self::ValidationFailed => ErrorCategory::Validation,
             Self::StalePatch => ErrorCategory::Patch,
             Self::SelectorNotFound | Self::SelectorAmbiguous | Self::SelectorGuardFailed => {

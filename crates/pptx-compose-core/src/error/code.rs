@@ -15,6 +15,7 @@ pub enum ErrorCode {
     UnsupportedMediaType,
     InvalidBounds,
     ParseError,
+    MalformedXml,
     ValidationFailed,
     StalePatch,
     SelectorNotFound,
@@ -28,7 +29,7 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::InvalidInput,
         Self::UnsafePath,
         Self::ResourceLimitExceeded,
@@ -37,6 +38,7 @@ impl ErrorCode {
         Self::UnsupportedMediaType,
         Self::InvalidBounds,
         Self::ParseError,
+        Self::MalformedXml,
         Self::ValidationFailed,
         Self::StalePatch,
         Self::SelectorNotFound,
@@ -60,6 +62,7 @@ impl ErrorCode {
             Self::UnsupportedMediaType => "unsupported_media_type",
             Self::InvalidBounds => "invalid_bounds",
             Self::ParseError => "parse_error",
+            Self::MalformedXml => "malformed_xml",
             Self::ValidationFailed => "validation_failed",
             Self::StalePatch => "stale_patch",
             Self::SelectorNotFound => "selector_not_found",
@@ -85,6 +88,7 @@ fn serializes_canonical_strings() {
         (ErrorCode::UnsupportedMediaType, "unsupported_media_type"),
         (ErrorCode::InvalidBounds, "invalid_bounds"),
         (ErrorCode::ParseError, "parse_error"),
+        (ErrorCode::MalformedXml, "malformed_xml"),
         (ErrorCode::ValidationFailed, "validation_failed"),
         (ErrorCode::StalePatch, "stale_patch"),
         (ErrorCode::SelectorNotFound, "selector_not_found"),
@@ -97,7 +101,7 @@ fn serializes_canonical_strings() {
         (ErrorCode::InternalError, "internal_error"),
     ];
 
-    assert_eq!(ErrorCode::ALL.len(), 18);
+    assert_eq!(ErrorCode::ALL.len(), 19);
     assert_eq!(ErrorCode::ALL, expected.map(|(code, _)| code));
     for (code, wire_string) in expected {
         assert_eq!(code.as_str(), wire_string);
