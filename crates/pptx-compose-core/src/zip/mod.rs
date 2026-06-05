@@ -7,6 +7,7 @@ pub mod writer;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZipEntryMetadata {
+    pub entry_index: usize,
     pub original_name: String,
     pub compression_method: CompressionMethod,
     pub crc32: u32,

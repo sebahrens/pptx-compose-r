@@ -92,6 +92,7 @@ where
         }
 
         let meta = ZipEntryMetadata {
+            entry_index: index,
             original_name: entry_name,
             compression_method: entry.compression(),
             crc32: entry.crc32(),
