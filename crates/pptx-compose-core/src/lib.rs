@@ -3,6 +3,7 @@
 pub mod error;
 pub mod opc;
 pub mod pptx;
+pub mod provenance;
 pub mod validation;
 pub mod xml;
 pub mod zip;
