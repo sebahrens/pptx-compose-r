@@ -93,7 +93,7 @@ pub struct XmlDiagnostic {
 pub struct XmlPart {
     pub raw: Vec<u8>,
     pub parsed: Option<XmlDocument>,
-    pub dirty: bool,
+    dirty: bool,
     pub diagnostics: Vec<XmlDiagnostic>,
 }
 
@@ -132,4 +132,53 @@ impl XmlPart {
             Error::unsupported_package("XML parse finished without producing a document.")
         })
     }
+
+    #[must_use]
+    pub const fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub const fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn dirty_transitions() {
+    use std::{
+        collections::hash_map::DefaultHasher,
+        hash::{Hash, Hasher},
+    };
+
+    fn raw_checksum(part: &XmlPart) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        part.raw.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    let raw = br#"<p:sld xmlns:p="urn:p"><p:cSld><p:spTree/></p:cSld></p:sld>"#.to_vec();
+    let mut target = XmlPart::from_raw(raw.clone());
+    let untouched = XmlPart::from_raw(raw);
+
+    assert!(!target.is_dirty());
+    assert!(!untouched.is_dirty());
+
+    let document = target.parse().expect("xml parses");
+    assert_eq!(
+        document
+            .root_element()
+            .map(|element| element.name.raw.as_str()),
+        Some("p:sld")
+    );
+    assert!(!target.is_dirty());
+
+    let checksum = raw_checksum(&target);
+    assert_eq!(checksum, raw_checksum(&target));
+    assert!(!target.is_dirty());
+
+    target.mark_dirty();
+
+    assert!(target.is_dirty());
+    assert!(!untouched.is_dirty());
 }

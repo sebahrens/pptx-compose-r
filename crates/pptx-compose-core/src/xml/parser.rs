@@ -255,5 +255,5 @@ fn preserves_unknown_and_mc() {
             .iter()
             .any(|attribute| attribute.name.raw == "cust:mode" && attribute.value == "legacy")
     );
-    assert!(!part.dirty);
+    assert!(!part.is_dirty());
 }
