@@ -54,4 +54,22 @@ impl NamespaceTable {
             }
         })
     }
+
+    #[must_use]
+    pub fn declaration_attributes(&self, deterministic: bool) -> Vec<(String, &str)> {
+        let mut declarations = self
+            .bindings
+            .iter()
+            .map(|binding| match binding.prefix.as_deref() {
+                Some(prefix) => (format!("xmlns:{prefix}"), binding.uri.as_str()),
+                None => ("xmlns".to_owned(), binding.uri.as_str()),
+            })
+            .collect::<Vec<_>>();
+
+        if deterministic {
+            declarations.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(right.1)));
+        }
+
+        declarations
+    }
 }
