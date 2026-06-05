@@ -8,6 +8,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum ErrorCode {
     InvalidInput,
     UnsafePath,
+    DuplicatePart,
     ResourceLimitExceeded,
     UnsupportedPackage,
     UnsupportedEdit,
@@ -32,6 +33,7 @@ impl ErrorCode {
         match self {
             Self::InvalidInput => "invalid_input",
             Self::UnsafePath => "unsafe_path",
+            Self::DuplicatePart => "duplicate_part",
             Self::ResourceLimitExceeded => "resource_limit_exceeded",
             Self::UnsupportedPackage => "unsupported_package",
             Self::UnsupportedEdit => "unsupported_edit",
@@ -85,6 +87,16 @@ impl Error {
     #[must_use]
     pub fn unsupported_package(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::UnsupportedPackage, message)
+    }
+
+    #[must_use]
+    pub fn unsafe_path(message: impl Into<String>) -> Self {
+        Self::new(ErrorCode::UnsafePath, message)
+    }
+
+    #[must_use]
+    pub fn duplicate_part(message: impl Into<String>) -> Self {
+        Self::new(ErrorCode::DuplicatePart, message)
     }
 
     #[must_use]
