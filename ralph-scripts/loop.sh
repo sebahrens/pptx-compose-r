@@ -374,6 +374,43 @@ epic_count() {
         | grep -v 'auto-import' | jq -r 'length' 2>/dev/null
 }
 
+# first_ready_buildable: ID + one-line summary of the highest-priority READY
+# issue that is actually IMPLEMENTABLE — i.e. anything that is NOT an epic (epics
+# are aggregates with no buildable acceptance). LABEL-INDEPENDENT BY DESIGN: it
+# selects on `issue_type` from `bd ready --json`, NOT on a `tier:task` label.
+# A task created without that label must never be silently starved — that exact
+# label drift previously made this loop spin in plan mode while ready tasks sat
+# unbuilt. `bd ready --json` is already priority-sorted, so `.[0]` is the next
+# task. Falls back to the label query only if jq is unavailable. Echoes empty
+# when nothing buildable is ready.
+first_ready_buildable() {
+    if command -v jq >/dev/null 2>&1; then
+        ( cd "$PROJECT_DIR" && bd ready --limit 0 --json 2>/dev/null ) \
+            | grep -v 'auto-import' \
+            | jq -r 'map(select(.issue_type != "epic")) | .[0] // empty
+                     | "\(.id) P\(.priority) \(.title)"' 2>/dev/null
+    else
+        ( cd "$PROJECT_DIR" && bd list --ready --label tier:task --limit 0 2>/dev/null ) \
+            | grep -E "${PREFIX}-[a-z0-9]+" | head -1 | clean_line
+    fi
+}
+
+# ready_buildable_count / ready_epic_count: deterministic, label-independent
+# counts of ready issues by implementability (issue_type), for the diagnostic
+# banner. Echo empty if jq is missing (caller falls back to count_ids).
+ready_buildable_count() {
+    command -v jq >/dev/null 2>&1 || { echo ""; return; }
+    ( cd "$PROJECT_DIR" && bd ready --limit 0 --json 2>/dev/null ) \
+        | grep -v 'auto-import' \
+        | jq -r '[ .[] | select(.issue_type != "epic") ] | length' 2>/dev/null
+}
+ready_epic_count() {
+    command -v jq >/dev/null 2>&1 || { echo ""; return; }
+    ( cd "$PROJECT_DIR" && bd ready --limit 0 --json 2>/dev/null ) \
+        | grep -v 'auto-import' \
+        | jq -r '[ .[] | select(.issue_type == "epic") ] | length' 2>/dev/null
+}
+
 # Engine dispatcher: route a phase to the configured agent.
 #   $1 prompt file  $2 temp out  $3 claude model  $4 codex model
 run_agent_with_completion_detection() {
@@ -490,14 +527,19 @@ while true; do
             echo "Resuming in-progress bead:"
             echo "  $IN_PROGRESS"
         elif [ "$MODE" = "build" ]; then
-            # Prefer atomic tasks. Skip epics — they aren't buildable.
-            NEXT_BUILDABLE=$(cd "$PROJECT_DIR" && bd list --ready --label tier:task --limit 0 2>/dev/null | grep -E "${PREFIX}-[a-z0-9]+" | head -1 | clean_line)
+            # Pick the highest-priority READY issue that is implementable. We
+            # define "buildable" as any ready issue whose issue_type is NOT
+            # `epic` (epics are aggregates), selected via --json — NOT via a
+            # `tier:task` label. Relying on the label silently starves tasks that
+            # were created without it (the failure that made this loop spin in
+            # plan mode while ready tasks sat unbuilt). See first_ready_buildable.
+            NEXT_BUILDABLE=$(first_ready_buildable)
             if [ -n "$NEXT_BUILDABLE" ]; then
                 echo "Next ready buildable task:"
                 echo "  $NEXT_BUILDABLE"
             else
                 READY_TOTAL=$(cd "$PROJECT_DIR" && bd ready --limit 0 2>/dev/null | count_ids)
-                READY_EPICS=$(cd "$PROJECT_DIR" && bd list --ready --label tier:epic --limit 0 2>/dev/null | count_ids)
+                READY_EPICS=$(ready_epic_count); READY_EPICS=${READY_EPICS:-$(cd "$PROJECT_DIR" && bd list --ready --label tier:epic --limit 0 2>/dev/null | count_ids)}
                 echo "⚠ No buildable task ready (ready=$READY_TOTAL of which epics=$READY_EPICS)."
                 echo "  Pivoting this iteration to PLAN mode to decompose into atomic tasks."
                 PROMPT_FILE="$SCRIPT_DIR/PROMPT_plan.md"

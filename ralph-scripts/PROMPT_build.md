@@ -54,8 +54,11 @@ If any exist, resume the first (check `bd show <id>`). Otherwise:
 bd ready
 ```
 
-Pick the first ready **`tier:task`** (skip epics — they are not buildable). If
-nothing is ready, the orchestrator loop will pivot to plan mode; just stop.
+Pick the **first ready issue that is not an epic** — any non-epic type (task,
+bug, feature) is buildable; only epics are aggregates with no implementable
+acceptance, so skip those. Do NOT filter on a `tier:task` label: a task created
+without that label is still buildable and must not be skipped. If nothing
+non-epic is ready, the orchestrator loop will pivot to plan mode; just stop.
 
 > beads runs against the shared Dolt server — **do NOT `bd init`**. Ignore any
 > "auto-importing … into empty database" banner; it is a known cosmetic re-import.
