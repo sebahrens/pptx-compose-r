@@ -87,15 +87,27 @@ big to decompose in one round, add more tasks across rounds; never invent a stor
 > commands print an "auto-importing … into empty database" banner, ignore it — it
 > is a known cosmetic re-import; the JSONL/server state is intact.
 
+## Per-round unit: exactly ONE epic
+
+**Each loop round decomposes exactly one epic — no more.** Pick the next epic that
+is not yet fully decomposed (it has missing, too-coarse, or under-specified
+`tier:task` children), and in this round bring **all** of that epic's tasks to
+atomic + fully specified. Do **not** touch other epics this round — the loop calls
+you again for the next epic, and **stops automatically** (deterministically, in
+`loop.sh`) once every epic's tasks are atomic and carry the full-info block. You do
+not need to keep the loop alive; just decompose your one epic well and finish.
+
 ## Decision procedure — run every round
 
 ```bash
 bd stats
-bd list --json    # full machine-readable backlog (ignore any auto-import banner)
+bd list --label tier:epic --limit 0 --json                  # the epics
+bd list --label tier:task --status open --limit 0 --json    # the tasks (--limit 0 is REQUIRED; bd caps at 50)
 ```
 
-Inspect the backlog and pick **exactly one** stage below. Do that stage's work,
-nothing else. At the end, evaluate the stopping condition.
+Pick the **one** target epic (the first that is not fully decomposed). Then apply
+the stages below **to that epic only**, in order, until every one of its tasks is
+atomic and carries the full-info block. Ignore any `auto-importing…` banner.
 
 ### Stage 1 — Seed epics (only if zero `tier:epic` beads exist)
 
@@ -187,37 +199,41 @@ Title is a **verb phrase** ("Add", "Wire", "Validate", "Implement", "Parse"),
 never a noun ("Part name normalizer"). Priority: 1 = correctness/round-trip or
 safety blocking, 2 = required V1 capability, 3 = hardening, 4 = backlog.
 
-### Stopping condition — evaluate at the end of every round
+### Stopping — the loop owns it (deterministically)
+
+You do **not** decide when the whole run ends. `loop.sh` computes the same metric
+after every round and **auto-stops** when no open `tier:task` is missing any of the
+four headers (`Spec ref:`, `Target crate`, `Change:`, `Acceptance:`), or when
+progress stalls for several rounds, or at a hard safety cap. So the run is bounded
+no matter what.
+
+Your only job each round: fully decompose **one** epic. To self-check that your
+epic is done, the same metric is:
 
 ```bash
-EPICS=$(bd list --label tier:epic --json | jq length)
-
-# Tasks missing any required section of the full info block (heuristic)
-INCOMPLETE_TASKS=$(bd list --label tier:task --status open --json \
+# Open tasks still missing any required header (the loop stops when this is 0):
+bd list --label tier:task --status open --limit 0 --json \
   | jq -r '.[] | select((.description // "")
       | (test("Spec ref:") and test("Target crate") and test("Change:") and test("Acceptance:"))
-      | not) | .id')
+      | not) | .id'
 ```
 
-**Touch `.ralph-exit` and stop** when **all** are true:
-
-- `EPICS > 0`.
-- Every epic's spec scope is covered by `tier:task` children (Stage 2 done).
-- No task fails the atomic test (Stage 3 done) — you have inspected at least one
-  sample this round and confirmed it is atomic.
-- `INCOMPLETE_TASKS` is empty (Stage 4 done).
-
-```bash
-echo "Backlog fully decomposed to atomic at $(date)" > .ralph-exit
-```
-
-If any are false, do **not** touch `.ralph-exit` — the next round continues from
-the appropriate stage.
+As a courtesy, if you can see that **every** epic is now fully decomposed (the
+command above prints nothing), you may also `echo "done" > .ralph-exit` to let the
+loop exit one round sooner — but you are not required to, and you must **never**
+create `.ralph-exit` while any task above is still incomplete.
 
 ## Rules
 
-- **One stage per round, one parent at a time.** The loop is the orchestrator;
-  keep each round's churn small and reviewable.
+- **One epic per round.** Fully decompose the chosen epic's tasks (apply whichever
+  of Stages 2–4 that epic needs), then finish. Do not start a second epic — the
+  loop will. This keeps each round's churn reviewable and lets the loop stop
+  cleanly when the last epic is done.
+- **Match the loop's completion metric exactly.** `loop.sh` stops the plan loop
+  when every open `tier:task` description literally contains all four headers
+  `Spec ref:`, `Target crate`, `Change:`, and `Acceptance:`. Use those exact
+  header strings (per the full-info block) or the loop will not consider the task
+  done and will keep iterating.
 - **Verify crate paths before writing them.** Use `rg`/`ls` against `crates/`.
   Crates may not exist yet (cleanroom) — when a target file does not exist,
   describe it as `(new)` and give its intended path per `specs/060`; do not invent

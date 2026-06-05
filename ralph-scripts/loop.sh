@@ -350,6 +350,30 @@ clean_line() { LC_ALL=C sed -E $'s/\x1b\\[[0-9;]*m//g; s/[^[:print:]\t]+/ /g; s/
 # escapes like \033[0m). Without this the loop leaks raw color codes to the term.
 strip_ansi() { LC_ALL=C sed -E $'s/\x1b\\[[0-9;?]*[ -/]*[@-~]//g; s/\x1b\\][^\x07]*(\x07|\x1b\\\\)//g; s/\x1b[@-Z\\\\-_]//g'; }
 
+# plan_incomplete_count: DETERMINISTIC plan-mode completion metric, independent
+# of whether the agent remembered to write .ralph-exit. Counts OPEN tier:task
+# beads that are NOT yet atomic + fully specified — i.e. whose description is
+# missing any required section of the full-info block (Spec ref / Target crate /
+# Change / Acceptance). 0 == the whole backlog is decomposed to the required
+# level of detail. Echoes empty if jq is missing or the query fails (the caller
+# then falls back to .ralph-exit / the iteration cap). --limit 0 is REQUIRED:
+# bd list defaults to a 50-row cap and would under-count.
+plan_incomplete_count() {
+    command -v jq >/dev/null 2>&1 || { echo ""; return; }
+    ( cd "$PROJECT_DIR" && bd list --label tier:task --status open --limit 0 --json 2>/dev/null ) \
+        | grep -v 'auto-import' \
+        | jq -r '[ .[] | select((.description // "")
+              | (test("Spec ref:") and test("Target crate") and test("Change:") and test("Acceptance:"))
+              | not) ] | length' 2>/dev/null
+}
+
+# epic_count: number of tier:epic beads (deterministic, banner-safe).
+epic_count() {
+    command -v jq >/dev/null 2>&1 || { echo ""; return; }
+    ( cd "$PROJECT_DIR" && bd list --label tier:epic --limit 0 --json 2>/dev/null ) \
+        | grep -v 'auto-import' | jq -r 'length' 2>/dev/null
+}
+
 # Engine dispatcher: route a phase to the configured agent.
 #   $1 prompt file  $2 temp out  $3 claude model  $4 codex model
 run_agent_with_completion_detection() {
@@ -432,6 +456,12 @@ if command -v bd >/dev/null 2>&1; then
 else
     echo "  ⚠ beads (bd) not on PATH — task tracking commands will be skipped"
 fi
+
+# Plan-mode deterministic-autostop state
+PLAN_PREV_REMAIN=""     # previous round's incomplete-task count (stall detection)
+PLAN_STALL=0            # consecutive rounds with no decomposition progress
+PLAN_STALL_LIMIT=3      # stop after this many stalled rounds
+PLAN_SAFETY_CAP=40      # hard ceiling on plan rounds, even if nothing else stops it
 
 # Main loop
 while true; do
@@ -568,6 +598,39 @@ $CARGO_TAIL" 2>/dev/null || true
     echo ""
     echo "Iteration $ITERATION completed (total ${ELAPSED}s)"
     echo ""
+
+    # Deterministic plan-mode autostop. `loop.sh plan` must be BOUNDED: it stops
+    # when the backlog is fully decomposed, when progress stalls, or at a hard
+    # safety cap — regardless of whether the agent wrote .ralph-exit. (The agent
+    # decomposes exactly one epic per round; this loop owns the stopping decision.)
+    if [ "$MODE" = "plan" ] && [ "$HAS_BEADS" = true ]; then
+        REMAIN=$(plan_incomplete_count)
+        if [ -n "$REMAIN" ]; then
+            echo "  Plan progress: $REMAIN task(s) still need full atomic detail (epics=$(epic_count))"
+            if [ "$REMAIN" -eq 0 ] 2>/dev/null; then
+                echo "✓ All epics decomposed — every task is atomic and fully specified. Plan loop complete."
+                break
+            fi
+            if [ "$REMAIN" = "$PLAN_PREV_REMAIN" ]; then
+                PLAN_STALL=$((PLAN_STALL + 1))
+                echo "  ⚠ No decomposition progress this round (stall ${PLAN_STALL}/${PLAN_STALL_LIMIT})."
+                if [ $PLAN_STALL -ge $PLAN_STALL_LIMIT ]; then
+                    echo "⚠ Plan loop made no progress for ${PLAN_STALL_LIMIT} rounds (still $REMAIN incomplete) — stopping."
+                    echo "  Inspect: (cd $PROJECT_DIR && bd list --label tier:task --status open --limit 0)"
+                    break
+                fi
+            else
+                PLAN_STALL=0
+            fi
+            PLAN_PREV_REMAIN="$REMAIN"
+        else
+            echo "  (plan completion metric unavailable — relying on .ralph-exit / iteration cap)"
+        fi
+        if [ $ITERATION -ge $PLAN_SAFETY_CAP ]; then
+            echo "⚠ Plan loop hit the safety cap (${PLAN_SAFETY_CAP} rounds) — stopping to avoid runaway iteration."
+            break
+        fi
+    fi
 
     # Check for explicit exit signal (file-based)
     if [ -f "$PROJECT_DIR/.ralph-exit" ]; then

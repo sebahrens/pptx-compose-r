@@ -8,7 +8,7 @@ this **cleanroom Rust** PPTX engine.
 
 | Mode | Prompt | What it does |
 |------|--------|--------------|
-| **plan** | `PROMPT_plan.md` | Multi-round, stateful drill-down: iterates over the existing epics/tasks and decomposes them into **true atomic beads** — each carrying parent epic, spec ref, target crate/files, the exact Rust change, and a single `cargo` acceptance check. Advances exactly one stage on one parent per round; writes `.ralph-exit` when the whole backlog is atomic. |
+| **plan** | `PROMPT_plan.md` | Multi-round, stateful drill-down: **one epic per round**, decomposed into **true atomic beads** — each carrying parent epic, spec ref, target crate/files, the exact Rust change, and a single `cargo` acceptance check. **Bounded and self-stopping** (see below). |
 | **build** | `PROMPT_build.md` | Implements exactly one ready `tier:task` in Rust per iteration (`cargo build`/`test`/`clippy` must pass), closes the bead, commits. Epics are skipped; if nothing buildable is ready it auto-pivots to plan mode. |
 
 ## Usage
@@ -25,6 +25,21 @@ this **cleanroom Rust** PPTX engine.
 
 Stop early: `touch .ralph-exit` in the repo root (consumed after the current round).
 Override the target repo with `PROJECT_DIR=/path/to/repo`.
+
+## Plan mode is bounded (no infinite iteration)
+
+`loop.sh plan` does **one epic per round** and stops **deterministically** — it
+does not rely on the agent remembering to write `.ralph-exit`. After each round the
+loop itself computes a completion metric via `bd … --json | jq`: the number of open
+`tier:task` beads whose description is still missing any of the four required
+headers (`Spec ref:`, `Target crate`, `Change:`, `Acceptance:`). It then stops when:
+
+- that count reaches **0** (every epic fully decomposed to atomic detail), or
+- the count **doesn't drop for 3 consecutive rounds** (stall guard), or
+- it hits the **hard safety cap** of 40 rounds (`PLAN_SAFETY_CAP` in `loop.sh`),
+
+whichever comes first. A `… N` iteration cap and a manual `.ralph-exit` still work
+on top of these. So a bare `./loop.sh plan` is guaranteed to terminate.
 
 ## Engines
 
