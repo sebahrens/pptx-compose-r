@@ -185,13 +185,11 @@ pub const FINDING_COVERAGE: &[FindingCoverage] = &[
     },
     FindingCoverage {
         code: FindingCode::ExternalRelationshipNotChecked,
-        producer: None,
-        producer_test: None,
-        deferral: Some(Deferral {
-            owner: "relationship preservation warning task",
-            spec: "specs/012-content-types-and-relationships.md; specs/044-results-validation-errors.md; specs/090-known-risks-and-non-goals.md",
-            reason: "External relationships are preserved without fetching; the warning producer belongs with relationship preservation/reporting.",
-        }),
+        producer: Some(invariants::PRODUCER_CHECK_EXTERNAL_RELATIONSHIP_NOT_CHECKED),
+        producer_test: Some(
+            "hazardous_package_preservation::preserves_hazardous_parts_and_warns_without_fetching",
+        ),
+        deferral: None,
     },
     FindingCoverage {
         code: FindingCode::DuplicateSlideId,
@@ -269,12 +267,10 @@ pub const FINDING_COVERAGE: &[FindingCoverage] = &[
     },
     FindingCoverage {
         code: FindingCode::SignatureInvalidatedByEdit,
-        producer: None,
-        producer_test: None,
-        deferral: Some(Deferral {
-            owner: "signed deck edit warning task",
-            spec: "specs/073-runtime-safety-and-permissions.md; specs/090-known-risks-and-non-goals.md",
-            reason: "Signature invalidation warnings require signed-package detection plus mutating edit context.",
-        }),
+        producer: Some(invariants::PRODUCER_CHECK_SIGNATURE_INVALIDATED_BY_EDIT),
+        producer_test: Some(
+            "hazardous_package_preservation::preserves_hazardous_parts_and_warns_without_fetching",
+        ),
+        deferral: None,
     },
 ];

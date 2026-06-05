@@ -18,13 +18,26 @@ pub(crate) const PRODUCER_CHECK_DUPLICATE_RELATIONSHIP_ID: &str =
 pub(crate) const PRODUCER_CHECK_MISSING_CONTENT_TYPE: &str =
     "validation::invariants::check_missing_content_type";
 pub(crate) const PRODUCER_CHECK_PART_DROPPED: &str = "validation::invariants::check_part_dropped";
+pub(crate) const PRODUCER_CHECK_EXTERNAL_RELATIONSHIP_NOT_CHECKED: &str =
+    "validation::invariants::check_external_relationship_not_checked";
+pub(crate) const PRODUCER_CHECK_SIGNATURE_INVALIDATED_BY_EDIT: &str =
+    "validation::invariants::check_signature_invalidated_by_edit";
+
+const DIGITAL_SIGNATURE_REL_PREFIX: &str =
+    "http://schemas.openxmlformats.org/package/2006/relationships/digital-signature/";
+const DIGITAL_SIGNATURE_ORIGIN_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-package.digital-signature-origin";
+const DIGITAL_SIGNATURE_XML_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-package.digital-signature-xmlsignature+xml";
 
 pub fn check_invariants(pkg: &Package, findings: &mut Vec<Finding>) {
     check_duplicate_slide_id(pkg, findings);
     check_dangling_internal_relationship(pkg, findings);
     check_duplicate_relationship_id(pkg, findings);
+    check_external_relationship_not_checked(pkg, findings);
     check_missing_content_type(pkg, findings);
     check_part_dropped(pkg, findings);
+    check_signature_invalidated_by_edit(pkg, findings);
 }
 
 fn check_duplicate_slide_id(pkg: &Package, findings: &mut Vec<Finding>) {
@@ -116,6 +129,30 @@ fn check_duplicate_relationship_id(pkg: &Package, findings: &mut Vec<Finding>) {
     }
 }
 
+fn check_external_relationship_not_checked(pkg: &Package, findings: &mut Vec<Finding>) {
+    for relationship in pkg.relationships().external_relationships() {
+        let mut entries = vec![
+            ("relationship_id", relationship.id.to_owned()),
+            ("target", relationship.target.to_owned()),
+        ];
+        if let Some(part) = relationship.source.location_part() {
+            entries.push(("part", part.zip_entry_name().to_owned()));
+        }
+
+        findings.push(Finding::new(
+            "",
+            FindingCode::ExternalRelationshipNotChecked,
+            format!(
+                "External relationship {} was preserved but not fetched.",
+                relationship.id
+            ),
+            false,
+            location(&entries),
+            None,
+        ));
+    }
+}
+
 fn check_missing_content_type(pkg: &Package, findings: &mut Vec<Finding>) {
     for part in pkg.parts().iter() {
         if is_opc_control_part(part.name()) {
@@ -133,6 +170,41 @@ fn check_missing_content_type(pkg: &Package, findings: &mut Vec<Finding>) {
             ));
         }
     }
+}
+
+fn check_signature_invalidated_by_edit(pkg: &Package, findings: &mut Vec<Finding>) {
+    if pkg.dirty_parts().is_empty() || !has_digital_signature(pkg) {
+        return;
+    }
+
+    let dirty_parts = pkg
+        .dirty_parts()
+        .iter()
+        .map(PartName::zip_entry_name)
+        .collect::<Vec<_>>()
+        .join(",");
+
+    findings.push(Finding::new(
+        "",
+        FindingCode::SignatureInvalidatedByEdit,
+        "A mutating edit to this signed package invalidates its digital signature.",
+        false,
+        location(&[("dirty_parts", dirty_parts)]),
+        Some("Warn the caller that existing digital signatures no longer validate.".to_owned()),
+    ));
+}
+
+fn has_digital_signature(pkg: &Package) -> bool {
+    pkg.relationships().iter().any(|relationship| {
+        relationship
+            .rel_type
+            .starts_with(DIGITAL_SIGNATURE_REL_PREFIX)
+    }) || pkg.parts().iter().any(|part| {
+        matches!(
+            pkg.content_types().resolve(part.name()),
+            Some(DIGITAL_SIGNATURE_ORIGIN_CONTENT_TYPE | DIGITAL_SIGNATURE_XML_CONTENT_TYPE)
+        )
+    })
 }
 
 fn check_part_dropped(pkg: &Package, findings: &mut Vec<Finding>) {

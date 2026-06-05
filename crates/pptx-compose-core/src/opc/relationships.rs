@@ -34,6 +34,14 @@ pub struct Relationship {
     pub target_mode: TargetMode,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExternalRelationship<'a> {
+    pub source: &'a RelationshipSource,
+    pub id: &'a str,
+    pub rel_type: &'a str,
+    pub target: &'a str,
+}
+
 impl Relationship {
     #[must_use]
     pub fn internal(
@@ -85,6 +93,18 @@ impl RelationshipGraph {
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &Relationship> {
         self.relationships.iter()
+    }
+
+    pub fn external_relationships(&self) -> impl Iterator<Item = ExternalRelationship<'_>> {
+        self.relationships
+            .iter()
+            .filter(|relationship| relationship.target_mode == TargetMode::External)
+            .map(|relationship| ExternalRelationship {
+                source: &relationship.source,
+                id: relationship.id.as_str(),
+                rel_type: relationship.rel_type.as_str(),
+                target: relationship.target.as_str(),
+            })
     }
 }
 

@@ -50,16 +50,8 @@ fn every_044_finding_has_producer_or_deferral() {
 
     assert_deferral(FindingCode::MediaContentTypeMismatch, "specs/032");
     assert_deferral(
-        FindingCode::ExternalRelationshipNotChecked,
-        "specs/012-content-types-and-relationships.md",
-    );
-    assert_deferral(
         FindingCode::InvalidBounds,
         "specs/047-drawingml-construction.md",
-    );
-    assert_deferral(
-        FindingCode::SignatureInvalidatedByEdit,
-        "specs/073-runtime-safety-and-permissions.md",
     );
 }
 
