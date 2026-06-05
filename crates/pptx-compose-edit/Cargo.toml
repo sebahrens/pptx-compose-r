@@ -1,0 +1,12 @@
+[package]
+name = "pptx-compose-edit"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+pptx-compose-core = { path = "../pptx-compose-core" }
+pptx-compose-json = { path = "../pptx-compose-json" }
+

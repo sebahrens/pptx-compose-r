@@ -1,0 +1,15 @@
+[package]
+name = "pptx-compose-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "pptx-compose"
+path = "src/main.rs"
+
+[dependencies]
+pptx-compose = { path = "../pptx-compose" }
+

@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "crates/pptx-compose",
+    "crates/pptx-compose-core",
+    "crates/pptx-compose-json",
+    "crates/pptx-compose-edit",
+    "crates/pptx-compose-cli",
+    "crates/pptx-compose-mcp",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/gastownhall/pptx-compose"
+
+[workspace.dependencies]
+clap = { version = "=4.6.0", features = ["derive"] }
+jsonschema = "=0.46.0"
+quick-xml = "=0.40.0"
+rmcp = "=1.7.0"
+schemars = "=1.2.0"
+serde_json = "=1.0.150"
+sha2 = "=0.11.0"
+zip = "=8.6.0"
+
