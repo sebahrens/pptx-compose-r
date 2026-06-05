@@ -9,4 +9,6 @@ publish = false
 [dependencies]
 pptx-compose-core = { path = "../pptx-compose-core" }
 pptx-compose-json = { path = "../pptx-compose-json" }
-
+schemars.workspace = true
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json.workspace = true

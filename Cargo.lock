@@ -128,6 +128,9 @@ version = "0.1.0"
 dependencies = [
  "pptx-compose-core",
  "pptx-compose-json",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
