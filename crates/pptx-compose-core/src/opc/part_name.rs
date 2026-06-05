@@ -44,6 +44,37 @@ impl fmt::Display for PartName {
     }
 }
 
+pub fn reject_unsafe_entry(raw_name: &str) -> Result<()> {
+    if raw_name.starts_with('/') || raw_name.starts_with('\\') {
+        return Err(Error::unsafe_path(
+            "ZIP entry name must not be an absolute path.",
+        ));
+    }
+
+    let slash_normalized = raw_name.replace('\\', "/");
+    let decoded = percent_decode_once(&slash_normalized)?;
+
+    if decoded.starts_with("//") {
+        return Err(Error::unsafe_path("ZIP entry name must not be a UNC path."));
+    }
+
+    for (index, segment) in decoded.split('/').enumerate() {
+        if segment == "." || segment == ".." {
+            return Err(Error::unsafe_path(
+                "ZIP entry name must not contain dot or dot-dot traversal segments.",
+            ));
+        }
+
+        if index == 0 && is_drive_segment(segment) {
+            return Err(Error::unsafe_path(
+                "ZIP entry name must not be a drive path.",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_canonical(canonical: &str) -> Result<()> {
     if !canonical.starts_with('/') || canonical.starts_with("//") || canonical.ends_with('/') {
         return Err(Error::unsafe_path(
