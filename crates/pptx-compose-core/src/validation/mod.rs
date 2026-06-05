@@ -127,3 +127,154 @@ pub(crate) fn location(entries: &[(&str, String)]) -> Value {
     }
     Value::Object(object)
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FindingCoverage {
+    pub code: FindingCode,
+    pub producer: Option<&'static str>,
+    pub producer_test: Option<&'static str>,
+    pub deferral: Option<Deferral>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Deferral {
+    pub owner: &'static str,
+    pub spec: &'static str,
+    pub reason: &'static str,
+}
+
+#[doc(hidden)]
+pub const FINDING_COVERAGE: &[FindingCoverage] = &[
+    FindingCoverage {
+        code: FindingCode::MissingContentType,
+        producer: Some(invariants::PRODUCER_CHECK_MISSING_CONTENT_TYPE),
+        producer_test: Some("validation::invariants::tests::detects_missing_content_type"),
+        deferral: None,
+    },
+    FindingCoverage {
+        code: FindingCode::MediaContentTypeMismatch,
+        producer: None,
+        producer_test: None,
+        deferral: Some(Deferral {
+            owner: "media sniff validation task",
+            spec: "specs/012-content-types-and-relationships.md; specs/032; specs/044-results-validation-errors.md",
+            reason: "Media magic-byte sniffing and content-type comparison are owned by the media validation work; this task only audits registry coverage.",
+        }),
+    },
+    FindingCoverage {
+        code: FindingCode::DanglingInternalRelationship,
+        producer: Some(invariants::PRODUCER_CHECK_DANGLING_INTERNAL_RELATIONSHIP),
+        producer_test: Some("validation::invariants::tests::detects_seeded_violations"),
+        deferral: None,
+    },
+    FindingCoverage {
+        code: FindingCode::UnresolvedRelationshipReference,
+        producer: None,
+        producer_test: None,
+        deferral: Some(Deferral {
+            owner: "slide XML relationship reference validation task",
+            spec: "specs/012-content-types-and-relationships.md; specs/050-roundtrip-invariants.md",
+            reason: "The core package validator does not yet parse every XML relationship reference that can carry an r:id/rId.",
+        }),
+    },
+    FindingCoverage {
+        code: FindingCode::DuplicateRelationshipId,
+        producer: Some(invariants::PRODUCER_CHECK_DUPLICATE_RELATIONSHIP_ID),
+        producer_test: Some("validation::invariants::tests::detects_duplicate_relationship_id"),
+        deferral: None,
+    },
+    FindingCoverage {
+        code: FindingCode::ExternalRelationshipNotChecked,
+        producer: None,
+        producer_test: None,
+        deferral: Some(Deferral {
+            owner: "relationship preservation warning task",
+            spec: "specs/012-content-types-and-relationships.md; specs/044-results-validation-errors.md; specs/090-known-risks-and-non-goals.md",
+            reason: "External relationships are preserved without fetching; the warning producer belongs with relationship preservation/reporting.",
+        }),
+    },
+    FindingCoverage {
+        code: FindingCode::DuplicateSlideId,
+        producer: Some(invariants::PRODUCER_CHECK_DUPLICATE_SLIDE_ID),
+        producer_test: Some("validation::invariants::tests::detects_seeded_violations"),
+        deferral: None,
+    },
+    FindingCoverage {
+        code: FindingCode::SlideOrderMismatch,
+        producer: None,
+        producer_test: None,
+        deferral: Some(Deferral {
+            owner: "presentation slide-order validation task",
+            spec: "specs/050-roundtrip-invariants.md",
+            reason: "Slide order comparison needs the presentation model and explicit reorder-edit state.",
+        }),
+    },
+    FindingCoverage {
+        code: FindingCode::DuplicateDrawingId,
+        producer: None,
+        producer_test: None,
+        deferral: Some(Deferral {
+            owner: "slide shape-tree validation task",
+            spec: "specs/050-roundtrip-invariants.md",
+            reason: "Drawing non-visual id validation belongs with slide shape-tree parsing.",
+        }),
+    },
+    FindingCoverage {
+        code: FindingCode::InvalidBounds,
+        producer: None,
+        producer_test: None,
+        deferral: Some(Deferral {
+            owner: "edit/DrawingML validation task",
+            spec: "specs/047-drawingml-construction.md; specs/044-results-validation-errors.md",
+            reason: "Bounds are validated when constructing or moving DrawingML elements, not by the package-level invariant pass.",
+        }),
+    },
+    FindingCoverage {
+        code: FindingCode::MalformedXml,
+        producer: None,
+        producer_test: None,
+        deferral: Some(Deferral {
+            owner: "dirty XML writer validation task",
+            spec: "specs/050-roundtrip-invariants.md",
+            reason: "Only dirty XML parts are reserialized; malformed written XML detection belongs with dirty-part XML writing.",
+        }),
+    },
+    FindingCoverage {
+        code: FindingCode::MissingNamespaceDeclaration,
+        producer: None,
+        producer_test: None,
+        deferral: Some(Deferral {
+            owner: "dirty XML namespace validation task",
+            spec: "specs/047-drawingml-construction.md; specs/050-roundtrip-invariants.md",
+            reason: "Namespace declaration checks require dirty XML construction/writer context.",
+        }),
+    },
+    FindingCoverage {
+        code: FindingCode::PartDropped,
+        producer: Some(invariants::PRODUCER_CHECK_PART_DROPPED),
+        producer_test: Some(
+            "validation::registry_coverage::every_044_finding_has_producer_or_deferral",
+        ),
+        deferral: None,
+    },
+    FindingCoverage {
+        code: FindingCode::OrphanPart,
+        producer: None,
+        producer_test: None,
+        deferral: Some(Deferral {
+            owner: "relationship graph reachability validation task",
+            spec: "specs/010; specs/044-results-validation-errors.md",
+            reason: "Reachability analysis is informational and awaits full package relationship graph roots.",
+        }),
+    },
+    FindingCoverage {
+        code: FindingCode::SignatureInvalidatedByEdit,
+        producer: None,
+        producer_test: None,
+        deferral: Some(Deferral {
+            owner: "signed deck edit warning task",
+            spec: "specs/073-runtime-safety-and-permissions.md; specs/090-known-risks-and-non-goals.md",
+            reason: "Signature invalidation warnings require signed-package detection plus mutating edit context.",
+        }),
+    },
+];

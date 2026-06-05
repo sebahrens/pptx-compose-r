@@ -9,6 +9,16 @@ use crate::{
     validation::{Finding, FindingCode, location},
 };
 
+pub(crate) const PRODUCER_CHECK_DUPLICATE_SLIDE_ID: &str =
+    "validation::invariants::check_duplicate_slide_id";
+pub(crate) const PRODUCER_CHECK_DANGLING_INTERNAL_RELATIONSHIP: &str =
+    "validation::invariants::check_dangling_internal_relationship";
+pub(crate) const PRODUCER_CHECK_DUPLICATE_RELATIONSHIP_ID: &str =
+    "validation::invariants::check_duplicate_relationship_id";
+pub(crate) const PRODUCER_CHECK_MISSING_CONTENT_TYPE: &str =
+    "validation::invariants::check_missing_content_type";
+pub(crate) const PRODUCER_CHECK_PART_DROPPED: &str = "validation::invariants::check_part_dropped";
+
 pub fn check_invariants(pkg: &Package, findings: &mut Vec<Finding>) {
     check_duplicate_slide_id(pkg, findings);
     check_dangling_internal_relationship(pkg, findings);
@@ -152,8 +162,7 @@ fn is_opc_control_part(part_name: &PartName) -> bool {
 }
 
 #[cfg(test)]
-#[test]
-fn detects_seeded_violations() {
+mod tests {
     use crate::{
         opc::{
             package::{Package, SlideIdEntry},
@@ -163,44 +172,93 @@ fn detects_seeded_violations() {
         validation::{FindingCode, ValidationMode, ValidationStatus, validate_package},
     };
 
-    let mut package = Package::new();
-    package
-        .insert_zip_entry("ppt/presentation.xml", Vec::new())
-        .expect("presentation part inserted");
-    package
-        .content_types_mut()
-        .insert_default("xml", "application/xml");
-    package.push_slide_id(SlideIdEntry::new("256"));
-    package.push_slide_id(SlideIdEntry::new("256"));
-    package.push_relationship(Relationship::internal(
-        RelationshipSource::Part(
-            PartName::from_zip_entry("ppt/presentation.xml").expect("valid part name"),
-        ),
-        "rId1",
-        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
-        "slides/slide1.xml",
-    ));
+    #[test]
+    fn detects_seeded_violations() {
+        let mut package = Package::new();
+        package
+            .insert_zip_entry("ppt/presentation.xml", Vec::new())
+            .expect("presentation part inserted");
+        package
+            .content_types_mut()
+            .insert_default("xml", "application/xml");
+        package.push_slide_id(SlideIdEntry::new("256"));
+        package.push_slide_id(SlideIdEntry::new("256"));
+        package.push_relationship(Relationship::internal(
+            RelationshipSource::Part(
+                PartName::from_zip_entry("ppt/presentation.xml").expect("valid part name"),
+            ),
+            "rId1",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
+            "slides/slide1.xml",
+        ));
 
-    let outcome = validate_package(&package, ValidationMode::Edited);
+        let outcome = validate_package(&package, ValidationMode::Edited);
 
-    assert_eq!(outcome.status, ValidationStatus::Invalid);
-    assert_eq!(outcome.findings.len(), 2);
-    assert_eq!(outcome.findings[0].code, FindingCode::DuplicateSlideId);
-    assert_eq!(
-        outcome.findings[0].location,
-        serde_json::json!({"slide_id": "256"})
-    );
-    assert_eq!(
-        outcome.findings[1].code,
-        FindingCode::DanglingInternalRelationship
-    );
-    assert_eq!(
-        outcome.findings[1].location,
-        serde_json::json!({
-            "relationship_id": "rId1",
-            "part": "ppt/presentation.xml",
-            "target_part": "ppt/slides/slide1.xml"
-        })
-    );
-    assert_eq!(outcome.summary.errors, 2);
+        assert_eq!(outcome.status, ValidationStatus::Invalid);
+        assert_eq!(outcome.findings.len(), 2);
+        assert_eq!(outcome.findings[0].code, FindingCode::DuplicateSlideId);
+        assert_eq!(
+            outcome.findings[0].location,
+            serde_json::json!({"slide_id": "256"})
+        );
+        assert_eq!(
+            outcome.findings[1].code,
+            FindingCode::DanglingInternalRelationship
+        );
+        assert_eq!(
+            outcome.findings[1].location,
+            serde_json::json!({
+                "relationship_id": "rId1",
+                "part": "ppt/presentation.xml",
+                "target_part": "ppt/slides/slide1.xml"
+            })
+        );
+        assert_eq!(outcome.summary.errors, 2);
+    }
+
+    #[test]
+    fn detects_duplicate_relationship_id() {
+        let mut package = Package::new();
+        let source = RelationshipSource::Part(
+            PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid part name"),
+        );
+        package.push_relationship(Relationship::internal(
+            source.clone(),
+            "rId2",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "../media/image1.png",
+        ));
+        package.push_relationship(Relationship::internal(
+            source,
+            "rId2",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "../media/image2.png",
+        ));
+
+        let outcome = validate_package(&package, ValidationMode::Edited);
+
+        assert!(
+            outcome
+                .findings
+                .iter()
+                .any(|finding| finding.code == FindingCode::DuplicateRelationshipId)
+        );
+    }
+
+    #[test]
+    fn detects_missing_content_type() {
+        let mut package = Package::new();
+        package
+            .insert_zip_entry("ppt/slides/slide1.xml", Vec::new())
+            .expect("slide part inserted");
+
+        let outcome = validate_package(&package, ValidationMode::Edited);
+
+        assert_eq!(outcome.findings.len(), 1);
+        assert_eq!(outcome.findings[0].code, FindingCode::MissingContentType);
+        assert_eq!(
+            outcome.findings[0].location,
+            serde_json::json!({"part": "ppt/slides/slide1.xml"})
+        );
+    }
 }
