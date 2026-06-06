@@ -1,12 +1,14 @@
 #![deny(warnings)]
 
 mod cli;
+mod commands;
 mod exit;
 mod output;
 mod permissions;
 
 use clap::Parser;
 use cli::{Cli, Commands, MediaCmd};
+use commands::apply::apply;
 use exit::exit_code_for;
 use output::OutputSink;
 use permissions::{PathIntent, PermissionContext};
@@ -64,26 +66,6 @@ fn validate(args: cli::ValidateArgs, permissions: &PermissionContext) -> Result<
     }
     Err(CliError::unsupported(
         "validate command is not implemented yet",
-    ))
-}
-
-fn apply(args: cli::ApplyArgs, permissions: &PermissionContext) -> Result<(), CliError> {
-    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
-    permissions.authorize_read(&args.patch, PathIntent::InputPptx)?;
-    if let Some(manifest) = &args.media_manifest {
-        permissions.authorize_read(manifest, PathIntent::MediaInput)?;
-    }
-    if let Some(output) = &args.output {
-        permissions.authorize_write(output, PathIntent::OutputPptx)?;
-    }
-    if let Some(report) = &args.report {
-        permissions.authorize_write(report, PathIntent::ReportOutput)?;
-    }
-    if let Some(diff) = &args.diff {
-        permissions.authorize_write(diff, PathIntent::DiffOutput)?;
-    }
-    Err(CliError::unsupported(
-        "apply command is not implemented yet",
     ))
 }
 

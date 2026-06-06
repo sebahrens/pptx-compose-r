@@ -33,6 +33,12 @@ pub(crate) struct OutputSink {
     json_errors: bool,
 }
 
+impl Default for OutputSink {
+    fn default() -> Self {
+        Self::new(false, false, true, false)
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorEnvelope<'a> {
     schema: &'static str,
@@ -75,6 +81,18 @@ impl OutputSink {
                 let mut writer = BufWriter::new(file);
                 self.emit_json_to_writer(doc, &mut writer)
             }
+        }
+    }
+
+    pub(crate) fn emit_write_success(
+        &self,
+        report: &impl Serialize,
+        dest: Option<PathBuf>,
+    ) -> Result<(), CliError> {
+        if let Some(dest) = dest {
+            self.emit_json(report, OutputDest::Path(dest))
+        } else {
+            Ok(())
         }
     }
 
