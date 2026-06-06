@@ -296,18 +296,24 @@ impl PresentationDocument {
     }
 
     fn write_path_direct(&self, output_path: &Path, options: WriteOptions) -> Result<()> {
-        let output = FsOpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(output_path)
-            .map_err(|source| {
+        let mut open_options = FsOpenOptions::new();
+        open_options.write(true);
+        if options.overwrite {
+            open_options.create(true).truncate(true);
+        } else {
+            open_options.create_new(true);
+        }
+        let output = open_options.open(output_path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::AlreadyExists && !options.overwrite {
+                output_exists_error(output_path)
+            } else {
                 Error::with_source(
                     ErrorCode::WriteFailed,
                     format!("Could not open output path {}.", output_path.display()),
                     source,
                 )
-            })?;
+            }
+        })?;
         let output = self.write_to_writer(output, options)?;
         output.sync_all().map_err(|source| {
             Error::with_source(
@@ -349,26 +355,42 @@ impl PresentationDocument {
                     source,
                 )
             })?;
-            if output_path.exists() && !options.overwrite {
-                return Err(Error::new(
-                    ErrorCode::WriteFailed,
-                    format!(
-                        "Output path {} already exists; pass --overwrite to replace it.",
-                        output_path.display()
-                    ),
-                ));
+            if options.overwrite {
+                fs::rename(&temp_path, output_path).map_err(|source| {
+                    Error::with_source(
+                        ErrorCode::WriteFailed,
+                        format!(
+                            "Could not atomically rename {} to {}.",
+                            temp_path.display(),
+                            output_path.display()
+                        ),
+                        source,
+                    )
+                })?;
+            } else {
+                fs::hard_link(&temp_path, output_path).map_err(|source| {
+                    if source.kind() == std::io::ErrorKind::AlreadyExists {
+                        output_exists_error(output_path)
+                    } else {
+                        Error::with_source(
+                            ErrorCode::WriteFailed,
+                            format!(
+                                "Could not atomically publish {} to {} without replacing an existing file.",
+                                temp_path.display(),
+                                output_path.display()
+                            ),
+                            source,
+                        )
+                    }
+                })?;
+                fs::remove_file(&temp_path).map_err(|source| {
+                    Error::with_source(
+                        ErrorCode::WriteFailed,
+                        format!("Could not remove temporary output {}.", temp_path.display()),
+                        source,
+                    )
+                })?;
             }
-            fs::rename(&temp_path, output_path).map_err(|source| {
-                Error::with_source(
-                    ErrorCode::WriteFailed,
-                    format!(
-                        "Could not atomically rename {} to {}.",
-                        temp_path.display(),
-                        output_path.display()
-                    ),
-                    source,
-                )
-            })?;
             fsync_dir(parent)?;
             Ok(())
         })();
@@ -526,6 +548,16 @@ fn temp_sibling_path(output_path: &Path) -> PathBuf {
         .unwrap_or("output.pptx");
     let suffix = format!("{}.{}.tmp", std::process::id(), unique_counter());
     output_path.with_file_name(format!(".{file_name}.{suffix}"))
+}
+
+fn output_exists_error(output_path: &Path) -> Error {
+    Error::new(
+        ErrorCode::WriteFailed,
+        format!(
+            "Output path {} already exists; pass --overwrite to replace it.",
+            output_path.display()
+        ),
+    )
 }
 
 fn unique_counter() -> u64 {

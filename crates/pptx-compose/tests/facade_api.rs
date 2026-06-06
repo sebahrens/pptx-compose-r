@@ -97,6 +97,59 @@ fn exposes_required_070_api_and_defaults() {
 }
 
 #[test]
+fn concurrent_non_overwrite_writes_do_not_clobber_output() {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    let bytes = include_bytes!("../../../fixtures/minimal.pptx");
+    let document = PresentationDocument::from_bytes(bytes).expect("fixture opens");
+    let root = unique_dir();
+    let output = root.join("concurrent-output.pptx");
+    let barrier = Arc::new(Barrier::new(2));
+    let mut handles = Vec::new();
+
+    for _ in 0..2 {
+        let document = document.clone();
+        let output = output.clone();
+        let barrier = Arc::clone(&barrier);
+        handles.push(thread::spawn(move || {
+            barrier.wait();
+            document
+                .write_path_with_options(
+                    &output,
+                    WriteOptions {
+                        overwrite: false,
+                        ..WriteOptions::default()
+                    },
+                )
+                .map_err(|error| error.code())
+        }));
+    }
+
+    let results = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("writer thread finishes"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        results.iter().filter(|result| result.is_ok()).count(),
+        1,
+        "exactly one writer should publish the output"
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Err(ErrorCode::WriteFailed)))
+            .count(),
+        1,
+        "the other writer should fail without replacing the output"
+    );
+
+    let output_bytes = fs::read(&output).expect("one output deck exists");
+    PresentationDocument::from_bytes(&output_bytes).expect("published output reopens");
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
 fn no_edit_rezip_preserves_canonical_document_id() {
     let bytes = include_bytes!("../../../fixtures/minimal.pptx");
     let document = PresentationDocument::from_bytes(bytes).expect("fixture opens");
