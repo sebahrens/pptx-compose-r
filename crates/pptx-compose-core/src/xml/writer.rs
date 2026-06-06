@@ -45,11 +45,15 @@ fn write_node(writer: &mut Writer<Vec<u8>>, node: &XmlNode, opts: &WriteOptions)
             }
             Ok(())
         }
-        XmlNode::Comment(comment) => write_event(writer, Event::Comment(BytesText::new(comment))),
+        XmlNode::Comment(comment) => {
+            write_event(writer, Event::Comment(BytesText::from_escaped(comment)))
+        }
         XmlNode::ProcessingInstruction(instruction) => {
             write_event(writer, Event::PI(BytesPI::new(instruction)))
         }
-        XmlNode::DocType(doc_type) => write_event(writer, Event::DocType(BytesText::new(doc_type))),
+        XmlNode::DocType(doc_type) => {
+            write_event(writer, Event::DocType(BytesText::from_escaped(doc_type)))
+        }
         XmlNode::GeneralRef(reference) => {
             write_event(writer, Event::GeneralRef(BytesRef::new(reference)))
         }

@@ -513,10 +513,7 @@ fn parse_and_resolve() {
         "/ppt/slides/slide1.xml"
     );
     assert_eq!(set.rels[1].mode, TargetMode::External);
-    assert_eq!(
-        set.rels[1].target,
-        "https://example.test/image.png?a=1&amp;b=2"
-    );
+    assert_eq!(set.rels[1].target, "https://example.test/image.png?a=1&b=2");
     assert!(set.rels[1].resolved_target.is_none());
 
     let mut graph = RelationshipGraph::new();
@@ -557,7 +554,7 @@ fn serializes_relationships_deterministically() {
     let parsed_source = PartName::from_zip_entry("/ppt/slides/slide1.xml").expect("valid source");
     let reparsed = RelationshipSet::parse(&parsed_source, &first).expect("relationships parse");
     assert_eq!(reparsed.rels.len(), 2);
-    assert_eq!(reparsed.rels[1].target, "https://example.test/?a=1&amp;b=2");
+    assert_eq!(reparsed.rels[1].target, "https://example.test/?a=1&b=2");
     assert_eq!(reparsed.rels[1].target_mode, TargetMode::External);
 }
 

@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
 use quick_xml::{
-    Reader,
-    events::{BytesStart, Event},
+    Reader, XmlVersion, escape,
+    events::{BytesStart, BytesText, Event},
 };
 
 use crate::error::{Error, Result};
@@ -37,11 +37,9 @@ pub fn parse_document(raw: &[u8]) -> Result<XmlDocument> {
                 };
                 push_node(&mut roots, &mut stack, XmlNode::Element(element));
             }
-            Ok(Event::Text(event)) => push_node(
-                &mut roots,
-                &mut stack,
-                XmlNode::Text(decode_bytes(event.as_ref())),
-            ),
+            Ok(Event::Text(event)) => {
+                push_node(&mut roots, &mut stack, XmlNode::Text(decode_text(&event)?))
+            }
             Ok(Event::CData(event)) => push_node(
                 &mut roots,
                 &mut stack,
@@ -104,7 +102,10 @@ fn element_from_start(event: &BytesStart<'_>) -> Result<XmlElement> {
         let attribute = attribute
             .map_err(|source| Error::parse_error("Could not parse XML attribute.", source))?;
         let name = qname(attribute.key.as_ref());
-        let value = decode_bytes(attribute.value.as_ref());
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::default(), event.decoder())
+            .map_err(|source| Error::parse_error("Could not decode XML attribute.", source))?
+            .into_owned();
         let namespace_declaration = namespace_declaration(&name, &value, &mut namespaces);
         attributes.push(XmlAttribute {
             name,
@@ -143,6 +144,15 @@ fn namespace_declaration(
 
 fn decode_bytes(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn decode_text(event: &BytesText<'_>) -> Result<String> {
+    let decoded = event
+        .decode()
+        .map_err(|source| Error::parse_error("Could not decode XML text.", source))?;
+    let unescaped = escape::unescape(&decoded)
+        .map_err(|source| Error::parse_error("Could not unescape XML text.", source))?;
+    Ok(unescaped.into_owned())
 }
 
 #[cfg(test)]
@@ -256,4 +266,99 @@ fn preserves_unknown_and_mc() {
             .any(|attribute| attribute.name.raw == "cust:mode" && attribute.value == "legacy")
     );
     assert!(!part.is_dirty());
+}
+
+#[cfg(test)]
+#[test]
+fn decodes_attribute_entities_before_model_storage() {
+    use crate::xml::writer::{self, WriteMode, WriteOptions};
+
+    let raw = br#"<p:sld xmlns:p="urn:p&amp;deck" data-text="A &amp; B &lt; C &gt; D &quot;Q&quot; &apos;A&apos;"><p:cSld/></p:sld>"#;
+    let parsed = parse_document(raw).expect("xml parses");
+    let root = parsed.root_element().expect("root element exists");
+
+    assert_eq!(
+        root.namespaces.resolve_prefix(Some("p")),
+        Some("urn:p&deck")
+    );
+    assert!(
+        root.attributes
+            .iter()
+            .any(|attribute| attribute.name.raw == "xmlns:p"
+                && attribute.value == "urn:p&deck"
+                && attribute.namespace_declaration)
+    );
+    assert!(
+        root.attributes
+            .iter()
+            .any(|attribute| attribute.name.raw == "data-text"
+                && attribute.value == "A & B < C > D \"Q\" 'A'")
+    );
+
+    let written = writer::write_document(
+        &parsed,
+        &WriteOptions {
+            mode: WriteMode::Deterministic,
+        },
+    )
+    .expect("dirty XML writes");
+    let serialized = String::from_utf8(written).expect("writer emits UTF-8");
+    assert!(serialized.contains(r#"xmlns:p="urn:p&amp;deck""#));
+    assert!(
+        serialized.contains(r#"data-text="A &amp; B &lt; C &gt; D &quot;Q&quot; &apos;A&apos;""#)
+    );
+    assert!(!serialized.contains("&amp;amp;"));
+    assert!(!serialized.contains("&amp;lt;"));
+}
+
+#[cfg(test)]
+#[test]
+fn preserves_non_semantic_xml_nodes_while_decoding_text_events() {
+    use crate::xml::writer::{self, WriteOptions};
+
+    let raw = br#"<root>plain<![CDATA[A &amp; B]]><!--C &amp; D--><?pi E &amp; F?><!DOCTYPE note SYSTEM "note.dtd">&amp;&lt;&gt;&quot;&apos;</root>"#;
+    let parsed = parse_document(raw).expect("xml parses");
+    let root = parsed.root_element().expect("root element exists");
+
+    assert!(
+        root.children
+            .iter()
+            .any(|node| matches!(node, XmlNode::Text(text) if text == "plain"))
+    );
+    assert!(
+        root.children
+            .iter()
+            .any(|node| matches!(node, XmlNode::CData(text) if text == "A &amp; B"))
+    );
+    assert!(
+        root.children
+            .iter()
+            .any(|node| matches!(node, XmlNode::Comment(text) if text == "C &amp; D"))
+    );
+    assert!(root.children.iter().any(
+        |node| matches!(node, XmlNode::ProcessingInstruction(text) if text == "pi E &amp; F")
+    ));
+    assert!(
+        root.children.iter().any(
+            |node| matches!(node, XmlNode::DocType(text) if text == r#"note SYSTEM "note.dtd""#)
+        )
+    );
+
+    let references = root
+        .children
+        .iter()
+        .filter_map(|node| match node {
+            XmlNode::GeneralRef(reference) => Some(reference.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(references, ["amp", "lt", "gt", "quot", "apos"]);
+
+    let written = writer::write_document(&parsed, &WriteOptions::default()).expect("xml writes");
+    let serialized = String::from_utf8(written).expect("writer emits UTF-8");
+    assert!(serialized.contains("<![CDATA[A &amp; B]]>"));
+    assert!(serialized.contains("<!--C &amp; D-->"));
+    assert!(serialized.contains("<?pi E &amp; F?>"));
+    assert!(serialized.contains("&amp;&lt;&gt;&quot;&apos;"));
+    assert!(!serialized.contains("&amp;amp;"));
 }
