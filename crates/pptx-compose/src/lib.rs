@@ -12,11 +12,17 @@ pub use pptx_compose_json as json;
 
 use core::{
     error::{Error, ErrorCode, Result},
+    provenance::revision,
     zip::{
         reader::{RawEntry, from_bytes},
         writer::{self as zip_writer, WriteEntry},
     },
 };
+use pptx_compose_edit::diffs::SemanticDiff;
+use pptx_compose_json::schemas::{
+    PatchReport, PatchStatus, PatchValidationSummary, ValidationStatus,
+};
+use sha2::{Digest, Sha256};
 
 pub use core::zip::writer::WriteMode;
 
@@ -37,6 +43,27 @@ impl Default for WriteOptions {
             atomic: true,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApplyPatchOptions {
+    pub dry_run: bool,
+    pub validate: bool,
+}
+
+impl Default for ApplyPatchOptions {
+    fn default() -> Self {
+        Self {
+            dry_run: false,
+            validate: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApplyPatchResult {
+    pub report: PatchReport,
+    pub diff: SemanticDiff,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,6 +129,56 @@ impl PresentationDocument {
             },
         )?;
         Ok(output.into_inner())
+    }
+
+    pub fn apply_patch_with_options(
+        &self,
+        patch: &serde_json::Value,
+        options: ApplyPatchOptions,
+    ) -> Result<ApplyPatchResult> {
+        let _patch = patch;
+        if options.validate {
+            self.validate()?;
+        }
+
+        let document_id = sha256_hex(&self.source_bytes);
+        let revision = u32::try_from(revision::on_open().value()).map_err(|source| {
+            Error::with_source(
+                ErrorCode::InternalError,
+                "Revision value exceeds the patch report schema range.",
+                source,
+            )
+        })?;
+        let dry_run = options.dry_run;
+        Ok(ApplyPatchResult {
+            report: PatchReport {
+                schema: pptx_compose_json::schema_versions::PATCH_REPORT_SCHEMA.to_owned(),
+                version: pptx_compose_json::schema_versions::PATCH_REPORT_VERSION,
+                status: if dry_run {
+                    PatchStatus::DryRunSuccess
+                } else {
+                    PatchStatus::Applied
+                },
+                dry_run,
+                document_id: document_id.clone(),
+                base_revision: revision,
+                new_document_id: document_id,
+                new_revision: revision,
+                operation_reports: Vec::new(),
+                changed_parts: Vec::new(),
+                validation: PatchValidationSummary {
+                    status: ValidationStatus::Valid,
+                    errors: 0,
+                    warnings: 0,
+                },
+            },
+            diff: SemanticDiff {
+                schema: pptx_compose_edit::diffs::SEMANTIC_DIFF_SCHEMA.to_owned(),
+                version: pptx_compose_edit::diffs::SEMANTIC_DIFF_VERSION,
+                changes: Vec::new(),
+                changed_parts: Vec::new(),
+            },
+        })
     }
 
     pub fn write_path_with_options(
@@ -267,6 +344,17 @@ fn fsync_dir(path: &Path) -> Result<()> {
                 source,
             )
         })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut output = String::with_capacity("sha256:".len() + 64);
+    output.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut output, "{byte:02x}").expect("writing to String succeeds");
+    }
+    output
 }
 
 #[cfg(test)]

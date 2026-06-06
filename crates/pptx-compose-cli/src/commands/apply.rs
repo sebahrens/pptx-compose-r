@@ -1,8 +1,6 @@
 use std::{fs, path::Path};
 
-use pptx_compose::{PresentationDocument, WriteMode, WriteOptions};
-use serde::Serialize;
-use sha2::{Digest, Sha256};
+use pptx_compose::{ApplyPatchOptions, PresentationDocument, WriteMode, WriteOptions};
 
 use crate::{
     CliError, InvalidInputCause,
@@ -11,24 +9,37 @@ use crate::{
     permissions::{PathIntent, PermissionContext},
 };
 
-#[derive(Debug, Serialize)]
-pub(crate) struct ApplyReport {
-    schema: &'static str,
-    version: u8,
-    status: &'static str,
-    operations: Vec<serde_json::Value>,
-    changed_parts: Vec<String>,
-    generated_ids: Vec<serde_json::Value>,
-    warnings: Vec<serde_json::Value>,
-    output_document_fingerprint: String,
-}
-
 pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<(), CliError> {
     let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
-    permissions.authorize_read(&args.patch, PathIntent::InputPptx)?;
+    let patch = permissions.authorize_read(&args.patch, PathIntent::InputPptx)?;
     if let Some(manifest) = &args.media_manifest {
         permissions.authorize_read(manifest, PathIntent::MediaInput)?;
     }
+    if let Some(report) = &args.report {
+        permissions.authorize_write(report, PathIntent::ReportOutput)?;
+    }
+    if let Some(diff) = &args.diff {
+        permissions.authorize_write(diff, PathIntent::DiffOutput)?;
+    }
+
+    let patch = read_patch_json(&patch)?;
+    let document = PresentationDocument::open_path(&input).map_err(CliError::from_error)?;
+    if args.dry_run {
+        let result = document
+            .apply_patch_with_options(
+                &patch,
+                ApplyPatchOptions {
+                    dry_run: true,
+                    validate: true,
+                },
+            )
+            .map_err(CliError::from_error)?;
+        let sink = OutputSink::default();
+        sink.emit_patch_report(&result.report, args.report)?;
+        sink.emit_diff(&result.diff, args.diff)?;
+        return Ok(());
+    }
+
     let output = args
         .output
         .as_ref()
@@ -39,40 +50,41 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
             )
         })
         .and_then(|output| permissions.authorize_write(output, PathIntent::OutputPptx))?;
-    if let Some(report) = &args.report {
-        permissions.authorize_write(report, PathIntent::ReportOutput)?;
-    }
-    if let Some(diff) = &args.diff {
-        permissions.authorize_write(diff, PathIntent::DiffOutput)?;
-    }
-
     enforce_apply_write_guards(&input, &output, args.overwrite, args.in_place)?;
 
-    let document = PresentationDocument::open_path(&input).map_err(CliError::from_error)?;
+    let apply_result = document
+        .apply_patch_with_options(
+            &patch,
+            ApplyPatchOptions {
+                dry_run: false,
+                validate: true,
+            },
+        )
+        .map_err(CliError::from_error)?;
     let write_options = write_options_from_args(&args);
     document
         .write_path_with_options(&output, write_options)
         .map_err(CliError::from_error)?;
+    OutputSink::default().emit_optional_patch_report(&apply_result.report, args.report)?;
 
-    let output_bytes = fs::read(&output).map_err(|source| {
-        CliError::write_with_source(
-            "Could not read written output for report fingerprint.",
+    Ok(())
+}
+
+fn read_patch_json(path: &Path) -> Result<serde_json::Value, CliError> {
+    let bytes = fs::read(path).map_err(|source| {
+        CliError::invalid_input_with_source(
+            InvalidInputCause::PatchSchema,
+            "Could not read patch JSON input.",
             source,
         )
     })?;
-    let report = ApplyReport {
-        schema: "pptx-compose.patch-report.v1",
-        version: 1,
-        status: "success",
-        operations: Vec::new(),
-        changed_parts: Vec::new(),
-        generated_ids: Vec::new(),
-        warnings: Vec::new(),
-        output_document_fingerprint: sha256_hex(&output_bytes),
-    };
-    OutputSink::default().emit_write_success(&report, args.report)?;
-
-    Ok(())
+    serde_json::from_slice(&bytes).map_err(|source| {
+        CliError::invalid_input_with_source(
+            InvalidInputCause::PatchSchema,
+            "Patch input is not valid JSON.",
+            source,
+        )
+    })
 }
 
 pub(crate) fn write_options_from_args(args: &ApplyArgs) -> WriteOptions {
@@ -121,17 +133,6 @@ fn same_path(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity("sha256:".len() + 64);
-    output.push_str("sha256:");
-    for byte in digest {
-        use std::fmt::Write as _;
-        write!(&mut output, "{byte:02x}").expect("writing to String succeeds");
-    }
-    output
-}
-
 #[cfg(test)]
 #[test]
 fn refuses_existing_output_without_overwrite() {
@@ -142,6 +143,12 @@ fn refuses_existing_output_without_overwrite() {
 #[test]
 fn overwrite_succeeds_and_deterministic_selects_mode() {
     test_support::overwrite_succeeds_and_deterministic_selects_mode();
+}
+
+#[cfg(test)]
+#[test]
+fn dry_run_writes_no_pptx() {
+    test_support::dry_run_writes_no_pptx();
 }
 
 #[cfg(test)]
@@ -161,7 +168,7 @@ mod test_support {
         fs::create_dir_all(&root).expect("test dir creates");
         fs::write(&input, include_bytes!("../../../../fixtures/minimal.pptx"))
             .expect("input fixture writes");
-        fs::write(&patch, b"{}").expect("patch fixture writes");
+        fs::write(&patch, br#"{"operations":[]}"#).expect("patch fixture writes");
         fs::write(&output, b"original-output").expect("existing output writes");
 
         let args = args(&input, &patch, &output, false, false);
@@ -188,7 +195,7 @@ mod test_support {
         fs::create_dir_all(&root).expect("test dir creates");
         fs::write(&input, include_bytes!("../../../../fixtures/minimal.pptx"))
             .expect("input fixture writes");
-        fs::write(&patch, b"{}").expect("patch fixture writes");
+        fs::write(&patch, br#"{"operations":[]}"#).expect("patch fixture writes");
         fs::write(&output, b"replace-me").expect("existing output writes");
 
         let args = args(&input, &patch, &output, true, true);
@@ -202,6 +209,44 @@ mod test_support {
             b"replace-me",
             "output should be replaced"
         );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn dry_run_writes_no_pptx() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let output = root.join("output.pptx");
+        let report = root.join("report.json");
+        let diff = root.join("diff.json");
+        fs::create_dir_all(&root).expect("test dir creates");
+        fs::write(&input, include_bytes!("../../../../fixtures/minimal.pptx"))
+            .expect("input fixture writes");
+        fs::write(&patch, br#"{"operations":[]}"#).expect("patch fixture writes");
+
+        let mut args = args(&input, &patch, &output, false, false);
+        args.dry_run = true;
+        args.report = Some(report.clone());
+        args.diff = Some(diff.clone());
+        args.output = None;
+
+        apply(args, &permissions(&root)).expect("dry-run apply succeeds");
+
+        assert!(!output.exists(), "dry-run must not create a PPTX output");
+        let report_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report).expect("report reads"))
+                .expect("report is JSON");
+        assert_eq!(report_json["schema"], "pptx-compose.patch_report.v1");
+        assert_eq!(report_json["version"], 1);
+        assert_eq!(report_json["status"], "dry_run_success");
+        assert_eq!(report_json["dry_run"], true);
+
+        let diff_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&diff).expect("diff reads")).expect("diff is JSON");
+        assert_eq!(diff_json["schema"], "pptx-compose.semantic_diff.v1");
+        assert_eq!(diff_json["version"], 1);
+        assert_eq!(diff_json["changes"], serde_json::json!([]));
 
         fs::remove_dir_all(root).expect("test dir removes");
     }

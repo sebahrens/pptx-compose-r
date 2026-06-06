@@ -138,6 +138,17 @@ impl CliError {
         }
     }
 
+    fn invalid_input_with_source(
+        cause: InvalidInputCause,
+        message: impl Into<String>,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            error: Error::with_source(ErrorCode::InvalidInput, message, source),
+            invalid_input_cause: Some(cause),
+        }
+    }
+
     fn from_error(error: Error) -> Self {
         Self {
             error,

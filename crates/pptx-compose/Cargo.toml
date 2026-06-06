@@ -10,4 +10,5 @@ publish = false
 pptx-compose-core = { path = "../pptx-compose-core" }
 pptx-compose-edit = { path = "../pptx-compose-edit" }
 pptx-compose-json = { path = "../pptx-compose-json" }
-
+serde_json.workspace = true
+sha2.workspace = true

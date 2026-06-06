@@ -275,6 +275,8 @@ dependencies = [
  "pptx-compose-core",
  "pptx-compose-edit",
  "pptx-compose-json",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

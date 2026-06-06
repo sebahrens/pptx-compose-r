@@ -84,13 +84,33 @@ impl OutputSink {
         }
     }
 
-    pub(crate) fn emit_write_success(
+    pub(crate) fn emit_patch_report(
+        &self,
+        report: &impl Serialize,
+        dest: Option<PathBuf>,
+    ) -> Result<(), CliError> {
+        self.emit_json(report, OutputDest::from(dest))
+    }
+
+    pub(crate) fn emit_optional_patch_report(
         &self,
         report: &impl Serialize,
         dest: Option<PathBuf>,
     ) -> Result<(), CliError> {
         if let Some(dest) = dest {
             self.emit_json(report, OutputDest::Path(dest))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn emit_diff(
+        &self,
+        diff: &impl Serialize,
+        dest: Option<PathBuf>,
+    ) -> Result<(), CliError> {
+        if let Some(dest) = dest {
+            self.emit_json(diff, OutputDest::Path(dest))
         } else {
             Ok(())
         }
