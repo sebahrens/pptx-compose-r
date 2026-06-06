@@ -1,9 +1,11 @@
 #![deny(warnings)]
 
 mod cli;
+mod permissions;
 
 use clap::Parser;
 use cli::{Cli, Commands, MediaCmd};
+use permissions::{PathIntent, PermissionContext};
 use pptx_compose::core::error::{Error, ErrorCode};
 
 fn main() {
@@ -16,41 +18,73 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), CliError> {
+    let permissions = PermissionContext::from_global_args(&cli.global)?;
     match cli.command {
-        Commands::Inspect(args) => inspect(args),
-        Commands::Validate(args) => validate(args),
-        Commands::Apply(args) => apply(args),
-        Commands::Media(MediaCmd::List(args)) => media_list(args),
-        Commands::Media(MediaCmd::Get(args)) => media_get(args),
+        Commands::Inspect(args) => inspect(args, &permissions),
+        Commands::Validate(args) => validate(args, &permissions),
+        Commands::Apply(args) => apply(args, &permissions),
+        Commands::Media(MediaCmd::List(args)) => media_list(args, &permissions),
+        Commands::Media(MediaCmd::Get(args)) => media_get(args, &permissions),
         Commands::Schema(args) => schema(args),
     }
 }
 
-fn inspect(_args: cli::InspectArgs) -> Result<(), CliError> {
+fn inspect(args: cli::InspectArgs, permissions: &PermissionContext) -> Result<(), CliError> {
+    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
+    if let Some(output) = &args.output {
+        permissions.authorize_write(output, PathIntent::OutputPptx)?;
+    }
+    if let Some(report) = &args.report {
+        permissions.authorize_write(report, PathIntent::ReportOutput)?;
+    }
     Err(CliError::unsupported(
         "inspect command is not implemented yet",
     ))
 }
 
-fn validate(_args: cli::ValidateArgs) -> Result<(), CliError> {
+fn validate(args: cli::ValidateArgs, permissions: &PermissionContext) -> Result<(), CliError> {
+    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
+    if let Some(report) = &args.report {
+        permissions.authorize_write(report, PathIntent::ReportOutput)?;
+    }
     Err(CliError::unsupported(
         "validate command is not implemented yet",
     ))
 }
 
-fn apply(_args: cli::ApplyArgs) -> Result<(), CliError> {
+fn apply(args: cli::ApplyArgs, permissions: &PermissionContext) -> Result<(), CliError> {
+    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
+    permissions.authorize_read(&args.patch, PathIntent::InputPptx)?;
+    if let Some(manifest) = &args.media_manifest {
+        permissions.authorize_read(manifest, PathIntent::MediaInput)?;
+    }
+    if let Some(output) = &args.output {
+        permissions.authorize_write(output, PathIntent::OutputPptx)?;
+    }
+    if let Some(report) = &args.report {
+        permissions.authorize_write(report, PathIntent::ReportOutput)?;
+    }
+    if let Some(diff) = &args.diff {
+        permissions.authorize_write(diff, PathIntent::DiffOutput)?;
+    }
     Err(CliError::unsupported(
         "apply command is not implemented yet",
     ))
 }
 
-fn media_list(_args: cli::MediaListArgs) -> Result<(), CliError> {
+fn media_list(args: cli::MediaListArgs, permissions: &PermissionContext) -> Result<(), CliError> {
+    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
     Err(CliError::unsupported(
         "media list command is not implemented yet",
     ))
 }
 
-fn media_get(_args: cli::MediaGetArgs) -> Result<(), CliError> {
+fn media_get(args: cli::MediaGetArgs, permissions: &PermissionContext) -> Result<(), CliError> {
+    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
+    permissions.authorize_write(&args.output, PathIntent::OutputPptx)?;
+    if let Some(report) = &args.report {
+        permissions.authorize_write(report, PathIntent::ReportOutput)?;
+    }
     Err(CliError::unsupported(
         "media get command is not implemented yet",
     ))
@@ -63,7 +97,7 @@ fn schema(_args: cli::SchemaArgs) -> Result<(), CliError> {
 }
 
 #[derive(Debug)]
-struct CliError(Error);
+pub(crate) struct CliError(Error);
 
 impl CliError {
     fn unsupported(message: impl Into<String>) -> Self {
