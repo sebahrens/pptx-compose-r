@@ -1,7 +1,7 @@
-use std::{error, fmt};
+use std::{collections::HashSet, error, fmt};
 
 use pptx_compose_core::{
-    error::{Error, ErrorCode, Result},
+    error::{Error, ErrorCode, ErrorLocation, Result},
     opc::package::Package,
     validation::{ValidationMode, validate_package},
 };
@@ -9,8 +9,276 @@ use pptx_compose_json::{
     schema_versions::{PATCH_REPORT_SCHEMA, PATCH_REPORT_VERSION},
     schemas::{PatchReport, PatchStatus, ValidationReport},
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::reports::{has_blocking_findings, patch_validation_summary, validation_report};
+
+pub const PATCH_SCHEMA: &str = "pptx-compose.patch.v1";
+pub const PATCH_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Patch {
+    pub schema: String,
+    pub version: u32,
+    pub document_id: String,
+    pub base_revision: u32,
+    pub client_request_id: String,
+    pub operations: Vec<Operation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum Operation {
+    ReplaceText(ReplaceTextOperation),
+    AddTextBox(AddTextBoxOperation),
+    MoveResizeElement(MoveResizeElementOperation),
+    SetAltText(SetAltTextOperation),
+    AddImage(AddImageOperation),
+    ReplaceImage(ReplaceImageOperation),
+}
+
+impl Operation {
+    #[must_use]
+    pub fn operation_id(&self) -> &str {
+        match self {
+            Self::ReplaceText(operation) => &operation.operation_id,
+            Self::AddTextBox(operation) => &operation.operation_id,
+            Self::MoveResizeElement(operation) => &operation.operation_id,
+            Self::SetAltText(operation) => &operation.operation_id,
+            Self::AddImage(operation) => &operation.operation_id,
+            Self::ReplaceImage(operation) => &operation.operation_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReplaceTextOperation {
+    pub operation_id: String,
+    pub element_id: String,
+    pub text: String,
+    #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
+    pub current_text_match: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ReplaceTextMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format_policy: Option<FormatPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overflow_policy: Option<OverflowPolicy>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplaceTextMode {
+    WholeElement,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatPolicy {
+    PreserveExistingRuns,
+    PreserveFirstRun,
+    SingleRunDefaultStyle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OverflowPolicy {
+    Allow,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddTextBoxOperation {
+    pub operation_id: String,
+    pub slide_id: String,
+    pub text: String,
+    pub bounds: Bounds,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alt_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<TextBoxStyle>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insert: Option<InsertOptions>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoveResizeElementOperation {
+    pub operation_id: String,
+    pub element_id: String,
+    pub bounds: Bounds,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetAltTextOperation {
+    pub operation_id: String,
+    pub element_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alt_text: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddImageOperation {
+    pub operation_id: String,
+    pub slide_id: String,
+    pub media_ref: String,
+    pub content_type: String,
+    pub bounds: Bounds,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alt_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fit: Option<ImageFit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dedupe: Option<ImageDedupe>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReplaceImageOperation {
+    pub operation_id: String,
+    pub element_id: String,
+    pub media_ref: String,
+    pub content_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_shared_mutation: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Bounds {
+    pub x: i64,
+    pub y: i64,
+    pub cx: i64,
+    pub cy: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextBoxStyle {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_face: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InsertOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub z_order: Option<ZOrder>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ZOrder {
+    Front,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageFit {
+    Stretch,
+    Contain,
+    Cover,
+    OriginalSize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageDedupe {
+    Never,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocumentState {
+    pub document_id: String,
+    pub revision: u32,
+}
+
+impl DocumentState {
+    #[must_use]
+    pub fn new(document_id: impl Into<String>, revision: u32) -> Self {
+        Self {
+            document_id: document_id.into(),
+            revision,
+        }
+    }
+}
+
+pub fn parse_patch(value: serde_json::Value) -> Result<Patch> {
+    serde_json::from_value(value).map_err(|source| {
+        Error::with_source(
+            ErrorCode::InvalidInput,
+            "Patch envelope is invalid.",
+            source,
+        )
+    })
+}
+
+pub fn validate_envelope(patch: &Patch, doc: &DocumentState) -> Result<()> {
+    if patch.schema != PATCH_SCHEMA {
+        return Err(Error::new(
+            ErrorCode::InvalidInput,
+            format!("Patch schema must be {PATCH_SCHEMA}."),
+        ));
+    }
+
+    if patch.version != PATCH_VERSION {
+        return Err(Error::new(
+            ErrorCode::InvalidInput,
+            format!("Patch version must be {PATCH_VERSION}."),
+        ));
+    }
+
+    if patch.document_id != doc.document_id || patch.base_revision != doc.revision {
+        return Err(Error::stale_revision(
+            "Patch document_id or base_revision does not match the current document.",
+        ));
+    }
+
+    let mut operation_ids = HashSet::new();
+    for operation in &patch.operations {
+        let operation_id = operation.operation_id();
+        if operation_id.is_empty() {
+            return Err(invalid_operation_id(
+                "Patch operations must include a non-empty operation_id.",
+                operation_id,
+            ));
+        }
+        if !operation_ids.insert(operation_id) {
+            return Err(invalid_operation_id(
+                format!("Patch operation_id {operation_id} is duplicated."),
+                operation_id,
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn invalid_operation_id(message: impl Into<String>, operation_id: &str) -> Error {
+    Error::new(ErrorCode::InvalidInput, message).with_location(ErrorLocation {
+        operation_id: Some(operation_id.to_owned()),
+        ..ErrorLocation::default()
+    })
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PatchContext {
@@ -143,6 +411,46 @@ fn validation_failed(report: ValidationReport) -> Error {
 #[test]
 fn blocks_write_on_invalid() {
     test_support::blocks_write_on_invalid();
+}
+
+#[cfg(test)]
+#[test]
+fn envelope_and_stale() {
+    let patch = parse_patch(serde_json::json!({
+        "schema": PATCH_SCHEMA,
+        "version": PATCH_VERSION,
+        "document_id": "sha256:current",
+        "base_revision": 3,
+        "client_request_id": "agent-run-001",
+        "operations": [
+            {
+                "operation_id": "op-1",
+                "op": "replace_text",
+                "element_id": "slide-1:shape-4",
+                "text": "Updated title"
+            }
+        ]
+    }))
+    .expect("well-formed patch envelope parses");
+
+    let current = DocumentState::new("sha256:current", 3);
+    validate_envelope(&patch, &current).expect("current revision patch validates");
+
+    let stale = DocumentState::new("sha256:current", 4);
+    let error = validate_envelope(&patch, &stale).expect_err("base_revision mismatch is stale");
+    assert_eq!(error.code(), ErrorCode::StalePatch);
+
+    let error = parse_patch(serde_json::json!({
+        "schema": PATCH_SCHEMA,
+        "version": PATCH_VERSION,
+        "document_id": "sha256:current",
+        "base_revision": 3,
+        "client_request_id": "agent-run-001",
+        "unknown": true,
+        "operations": []
+    }))
+    .expect_err("unknown top-level patch field is rejected");
+    assert_eq!(error.code(), ErrorCode::InvalidInput);
 }
 
 #[cfg(test)]

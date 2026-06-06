@@ -155,6 +155,12 @@ impl Error {
     }
 
     #[must_use]
+    pub fn stale_revision(message: impl Into<String>) -> Self {
+        Self::new(ErrorCode::StalePatch, message)
+            .with_suggestion("Inspect the deck again and regenerate the patch.")
+    }
+
+    #[must_use]
     pub const fn code(&self) -> ErrorCode {
         self.details.code
     }
