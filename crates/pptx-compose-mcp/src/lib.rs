@@ -4,9 +4,8 @@ use rmcp::{
     ServerHandler, ServiceExt, handler::server::router::tool::ToolRouter, model::ServerInfo, tool,
     tool_handler, tool_router,
 };
-use schemars::JsonSchema;
-use serde::Serialize;
 
+pub mod outputs;
 pub mod permissions;
 pub mod prompts;
 pub mod resources;
@@ -17,12 +16,6 @@ use sessions::SessionStore;
 
 const RAW_GET_PART_XML: &str = "pptx_get_part_xml";
 const RAW_REPLACE_PART_XML: &str = "pptx_replace_part_xml";
-
-#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize)]
-pub struct StubToolResult {
-    pub status: String,
-    pub tool: String,
-}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ServerConfig {
@@ -76,13 +69,6 @@ impl PptxServer {
     pub fn tool_routes(&self) -> &ToolRouter<Self> {
         &self.tool_router
     }
-
-    fn stub_result(tool: &str) -> rmcp::Json<StubToolResult> {
-        rmcp::Json(StubToolResult {
-            status: "stub".to_owned(),
-            tool: tool.to_owned(),
-        })
-    }
 }
 
 #[tool_router(router = build_tool_router)]
@@ -98,8 +84,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_open(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_open")
+    pub async fn pptx_open(&self) -> rmcp::Json<outputs::OpenOutput> {
+        rmcp::Json(outputs::OpenOutput::stub("pptx_open"))
     }
 
     /// Return deck summary and capabilities.
@@ -113,8 +99,10 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_get_document_summary(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_get_document_summary")
+    pub async fn pptx_get_document_summary(&self) -> rmcp::Json<outputs::DocumentSummaryOutput> {
+        rmcp::Json(outputs::DocumentSummaryOutput::stub(
+            "pptx_get_document_summary",
+        ))
     }
 
     /// Page through slide summaries.
@@ -128,8 +116,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_list_slides(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_list_slides")
+    pub async fn pptx_list_slides(&self) -> rmcp::Json<outputs::ListSlidesOutput> {
+        rmcp::Json(outputs::ListSlidesOutput::stub("pptx_list_slides"))
     }
 
     /// Return one slide view.
@@ -143,8 +131,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_get_slide(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_get_slide")
+    pub async fn pptx_get_slide(&self) -> rmcp::Json<outputs::SlideOutput> {
+        rmcp::Json(outputs::SlideOutput::stub("pptx_get_slide"))
     }
 
     /// Page through slide elements.
@@ -158,8 +146,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_list_elements(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_list_elements")
+    pub async fn pptx_list_elements(&self) -> rmcp::Json<outputs::ListElementsOutput> {
+        rmcp::Json(outputs::ListElementsOutput::stub("pptx_list_elements"))
     }
 
     /// Return one element detail.
@@ -173,8 +161,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_get_element(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_get_element")
+    pub async fn pptx_get_element(&self) -> rmcp::Json<outputs::ElementOutput> {
+        rmcp::Json(outputs::ElementOutput::stub("pptx_get_element"))
     }
 
     /// Search text in scoped slides.
@@ -188,8 +176,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_find_text(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_find_text")
+    pub async fn pptx_find_text(&self) -> rmcp::Json<outputs::FindTextOutput> {
+        rmcp::Json(outputs::FindTextOutput::stub("pptx_find_text"))
     }
 
     /// Stage media bytes or a path as a media_ref.
@@ -203,8 +191,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_import_media(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_import_media")
+    pub async fn pptx_import_media(&self) -> rmcp::Json<outputs::ImportMediaOutput> {
+        rmcp::Json(outputs::ImportMediaOutput::stub("pptx_import_media"))
     }
 
     /// Dry-run patch validation.
@@ -218,8 +206,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_validate_patch(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_validate_patch")
+    pub async fn pptx_validate_patch(&self) -> rmcp::Json<outputs::ValidatePatchOutput> {
+        rmcp::Json(outputs::ValidatePatchOutput::stub("pptx_validate_patch"))
     }
 
     /// Apply an atomic patch to the session.
@@ -233,8 +221,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_apply_patch(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_apply_patch")
+    pub async fn pptx_apply_patch(&self) -> rmcp::Json<outputs::ApplyPatchOutput> {
+        rmcp::Json(outputs::ApplyPatchOutput::stub("pptx_apply_patch"))
     }
 
     /// Validate the current session.
@@ -248,8 +236,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_validate(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_validate")
+    pub async fn pptx_validate(&self) -> rmcp::Json<outputs::ValidateOutput> {
+        rmcp::Json(outputs::ValidateOutput::stub("pptx_validate"))
     }
 
     /// Write or return PPTX output.
@@ -263,8 +251,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_export(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_export")
+    pub async fn pptx_export(&self) -> rmcp::Json<outputs::ExportOutput> {
+        rmcp::Json(outputs::ExportOutput::stub("pptx_export"))
     }
 
     /// Release session resources.
@@ -278,8 +266,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_close(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_close")
+    pub async fn pptx_close(&self) -> rmcp::Json<outputs::CloseOutput> {
+        rmcp::Json(outputs::CloseOutput::stub("pptx_close"))
     }
 
     /// Return raw XML for an OPC part.
@@ -293,8 +281,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_get_part_xml(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_get_part_xml")
+    pub async fn pptx_get_part_xml(&self) -> rmcp::Json<outputs::RawPartXmlOutput> {
+        rmcp::Json(outputs::RawPartXmlOutput::stub("pptx_get_part_xml"))
     }
 
     /// Replace raw XML for an OPC part.
@@ -308,8 +296,8 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_replace_part_xml(&self) -> rmcp::Json<StubToolResult> {
-        Self::stub_result("pptx_replace_part_xml")
+    pub async fn pptx_replace_part_xml(&self) -> rmcp::Json<outputs::ReplacePartXmlOutput> {
+        rmcp::Json(outputs::ReplacePartXmlOutput::stub("pptx_replace_part_xml"))
     }
 }
 
