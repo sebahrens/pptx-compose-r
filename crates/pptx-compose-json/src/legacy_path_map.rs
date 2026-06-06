@@ -4,7 +4,9 @@ use crate::{
     binary_encoding::{InlineBinaryPayload, decode_base64, encode_base64},
     schemas::JsonError,
 };
-use pptx_compose_core::opc::{package::Package, part::Part, part_name::PartName};
+use pptx_compose_core::opc::{
+    content_types::ContentTypes, package::Package, part::Part, part_name::PartName,
+};
 
 /// Path-keyed JSON compatibility export for durable file dumps only.
 ///
@@ -61,6 +63,8 @@ pub fn from_legacy_map(value: Value) -> Result<Package, JsonError> {
                 .insert_override(part_name, content_type);
         }
     }
+
+    hydrate_content_types(&mut package)?;
 
     Ok(package)
 }
@@ -158,6 +162,24 @@ fn is_xml_content_type(content_type: &str) -> bool {
         || content_type == "text/xml"
         || content_type.ends_with("+xml")
         || content_type.ends_with(".relationships+xml")
+}
+
+fn hydrate_content_types(package: &mut Package) -> Result<(), JsonError> {
+    let content_types_part = PartName::from_zip_entry("[Content_Types].xml").map_err(|err| {
+        JsonError::MalformedLegacyEnvelope(format!(
+            "Could not resolve legacy [Content_Types].xml part name: {err}"
+        ))
+    })?;
+    let Some(part) = package.parts().get(&content_types_part) else {
+        return Ok(());
+    };
+    let content_types = ContentTypes::parse(part.bytes()).map_err(|err| {
+        JsonError::MalformedLegacyEnvelope(format!(
+            "Could not parse legacy [Content_Types].xml: {err}"
+        ))
+    })?;
+    *package.content_types_mut() = content_types;
+    Ok(())
 }
 
 #[cfg(test)]

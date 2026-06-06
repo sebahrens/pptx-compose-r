@@ -739,13 +739,13 @@ fn next_revision_value(revision: revision::Revision) -> Result<u32> {
 
 fn package_to_zip_bytes(package: &Package) -> Result<Vec<u8>> {
     let mut output = Cursor::new(Vec::new());
-    write_package_to_writer(
-        &[],
-        &[],
-        package,
-        &mut output,
-        &zip_writer::WriteOptions::default(),
-    )?;
+    let options = zip_writer::WriteOptions::default();
+    let mut writer = PackageZipWriter::new(&mut output, &options);
+    for (index, part) in package.parts().iter().enumerate() {
+        let meta = dirty_zip_metadata(index, part.original_zip_entry_name(), part.bytes());
+        writer.write_dirty(part.original_zip_entry_name(), part.bytes(), &meta)?;
+    }
+    writer.finish()?;
     Ok(output.into_inner())
 }
 

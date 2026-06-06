@@ -50,6 +50,25 @@ mod legacy_compat {
         ]);
 
         assert_eq!(media_bytes(&fixture), media_bytes(&roundtrip));
+        assert_eq!(
+            zip_entry_bytes(&fixture, "[Content_Types].xml"),
+            zip_entry_bytes(&roundtrip, "[Content_Types].xml")
+        );
+
+        let validation_output = temp_dir.join("validation.json");
+        run_cli([
+            "validate",
+            roundtrip.to_str().expect("roundtrip path is UTF-8"),
+            "--report",
+            validation_output
+                .to_str()
+                .expect("validation path is UTF-8"),
+        ]);
+        let validation = read_json(&validation_output);
+        assert_eq!(
+            validation.get("status").and_then(serde_json::Value::as_str),
+            Some("valid")
+        );
     }
 
     fn run_cli<const N: usize>(args: [&str; N]) {
@@ -107,6 +126,15 @@ mod legacy_compat {
             }
         }
         media
+    }
+
+    fn zip_entry_bytes(path: &Path, entry_name: &str) -> Vec<u8> {
+        let file = fs::File::open(path).expect("PPTX opens");
+        let mut archive = ZipArchive::new(file).expect("PPTX ZIP opens");
+        let mut entry = archive.by_name(entry_name).expect("ZIP entry opens");
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).expect("entry bytes read");
+        bytes
     }
 
     fn fresh_temp_dir(test_name: &str) -> PathBuf {
