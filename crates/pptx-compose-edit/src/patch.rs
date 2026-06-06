@@ -7,7 +7,10 @@ use pptx_compose_core::{
 };
 use pptx_compose_json::{
     schema_versions::{PATCH_REPORT_SCHEMA, PATCH_REPORT_VERSION},
-    schemas::{PatchReport, PatchStatus, ValidationReport},
+    schemas::{
+        OperationReport, OperationStatus, OperationTarget, PatchReport, PatchStatus,
+        ValidationReport,
+    },
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -49,6 +52,18 @@ impl Operation {
             Self::SetAltText(operation) => &operation.operation_id,
             Self::AddImage(operation) => &operation.operation_id,
             Self::ReplaceImage(operation) => &operation.operation_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn op_name(&self) -> &'static str {
+        match self {
+            Self::ReplaceText(_) => "replace_text",
+            Self::AddTextBox(_) => "add_text_box",
+            Self::MoveResizeElement(_) => "move_resize_element",
+            Self::SetAltText(_) => "set_alt_text",
+            Self::AddImage(_) => "add_image",
+            Self::ReplaceImage(_) => "replace_image",
         }
     }
 }
@@ -307,9 +322,18 @@ impl PatchContext {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PatchEffects {
     pub changed_parts: Vec<String>,
+    pub target: Option<OperationTarget>,
+    pub created_element_ids: Vec<String>,
+    pub warnings: Vec<serde_json::Value>,
+}
+
+pub trait OperationExecutor {
+    fn validate(&mut self, package: &Package, operation: &Operation) -> Result<PatchEffects>;
+
+    fn apply(&mut self, package: &mut Package, operation: &Operation) -> Result<PatchEffects>;
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -352,7 +376,11 @@ impl fmt::Display for ValidationFailedReport {
 
 impl error::Error for ValidationFailedReport {}
 
-pub fn apply_patch<F>(package: Package, context: PatchContext, apply: F) -> Result<ApplyPatchResult>
+pub fn apply_package_patch<F>(
+    package: Package,
+    context: PatchContext,
+    apply: F,
+) -> Result<ApplyPatchResult>
 where
     F: FnOnce(&mut Package) -> Result<PatchEffects>,
 {
@@ -384,6 +412,103 @@ where
             validation: patch_validation_summary(&validation),
         },
     })
+}
+
+pub fn apply_patch<E>(
+    package: &mut Package,
+    mut context: PatchContext,
+    patch: &Patch,
+    dry_run: bool,
+    executor: &mut E,
+) -> Result<PatchReport>
+where
+    E: OperationExecutor,
+{
+    context.dry_run = dry_run;
+    let mut staged = package.clone();
+    let mut operation_reports = Vec::with_capacity(patch.operations.len());
+    let mut changed_parts = Vec::new();
+
+    for operation in &patch.operations {
+        let validation_effects = executor.validate(&staged, operation)?;
+        let effects = if dry_run {
+            validation_effects
+        } else {
+            executor.apply(&mut staged, operation)?
+        };
+
+        changed_parts.extend(effects.changed_parts.iter().cloned());
+        operation_reports.push(operation_report(
+            operation,
+            if dry_run {
+                OperationStatus::Validated
+            } else {
+                OperationStatus::Applied
+            },
+            effects,
+        ));
+    }
+
+    changed_parts.sort();
+    changed_parts.dedup();
+
+    let wrote_part = !changed_parts.is_empty();
+    let report_revision = if dry_run || !wrote_part {
+        context.base_revision
+    } else {
+        context.new_revision
+    };
+    let validation = validate_for_write(&staged, &context.new_document_id, report_revision)?;
+
+    if has_blocking_findings(&validation) {
+        return Err(validation_failed(validation));
+    }
+
+    if !dry_run {
+        *package = staged;
+    }
+
+    Ok(PatchReport {
+        schema: PATCH_REPORT_SCHEMA.to_owned(),
+        version: PATCH_REPORT_VERSION,
+        status: if dry_run {
+            PatchStatus::DryRunSuccess
+        } else {
+            PatchStatus::Applied
+        },
+        dry_run,
+        document_id: context.document_id,
+        base_revision: context.base_revision,
+        new_document_id: context.new_document_id,
+        new_revision: report_revision,
+        operation_reports,
+        changed_parts,
+        validation: patch_validation_summary(&validation),
+    })
+}
+
+fn operation_report(
+    operation: &Operation,
+    status: OperationStatus,
+    effects: PatchEffects,
+) -> OperationReport {
+    OperationReport {
+        operation_id: operation.operation_id().to_owned(),
+        op: operation.op_name().to_owned(),
+        status,
+        target: effects.target.unwrap_or_else(unknown_target),
+        changed_parts: effects.changed_parts,
+        created_element_ids: effects.created_element_ids,
+        warnings: effects.warnings,
+    }
+}
+
+fn unknown_target() -> OperationTarget {
+    OperationTarget {
+        slide_id: String::new(),
+        element_id: String::new(),
+        part: String::new(),
+    }
 }
 
 pub fn validate_for_write(
@@ -454,18 +579,29 @@ fn envelope_and_stale() {
 }
 
 #[cfg(test)]
+#[test]
+fn apply_is_atomic() {
+    test_support::apply_is_atomic();
+}
+
+#[cfg(test)]
 mod test_support {
     use pptx_compose_core::{
-        error::ErrorCode,
+        error::{Error, ErrorCode, Result},
         opc::{
             package::Package,
             part_name::PartName,
             relationships::{Relationship, RelationshipSource},
         },
     };
-    use pptx_compose_json::schemas::{FindingCode, ValidationStatus};
+    use pptx_compose_json::schemas::{
+        FindingCode, OperationStatus, OperationTarget, ValidationStatus,
+    };
 
-    use super::{PatchContext, PatchEffects, apply_patch};
+    use super::{
+        AddTextBoxOperation, Operation, OperationExecutor, PATCH_SCHEMA, PATCH_VERSION, Patch,
+        PatchContext, PatchEffects, apply_package_patch,
+    };
 
     const IMAGE_REL_TYPE: &str =
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
@@ -473,7 +609,7 @@ mod test_support {
     pub fn blocks_write_on_invalid() {
         let package = base_package();
         let source = part("ppt/slides/slide1.xml");
-        let error = apply_patch(package.clone(), context(), |package| {
+        let error = apply_package_patch(package.clone(), context(), |package| {
             package.push_relationship(Relationship::internal(
                 RelationshipSource::Part(source),
                 "rId1",
@@ -482,13 +618,14 @@ mod test_support {
             ));
             Ok(PatchEffects {
                 changed_parts: vec!["ppt/slides/_rels/slide1.xml.rels".to_owned()],
+                ..PatchEffects::default()
             })
         })
         .expect_err("dangling relationship blocks writable package");
 
         assert_eq!(error.code(), ErrorCode::ValidationFailed);
 
-        let clean = apply_patch(package, context(), |_| Ok(PatchEffects::default()))
+        let clean = apply_package_patch(package, context(), |_| Ok(PatchEffects::default()))
             .expect("valid patch returns writable package");
 
         assert_eq!(clean.report.validation.status, ValidationStatus::Valid);
@@ -506,7 +643,7 @@ mod test_support {
             "https://example.test/",
         ));
 
-        let result = apply_patch(package, context(), |_| Ok(PatchEffects::default()))
+        let result = apply_package_patch(package, context(), |_| Ok(PatchEffects::default()))
             .expect("warning-only validation is writable");
 
         assert_eq!(result.report.validation.status, ValidationStatus::Valid);
@@ -531,6 +668,124 @@ mod test_support {
         assert!(report.findings.iter().any(|finding| {
             finding.code == FindingCode::DanglingInternalRelationship && finding.blocking
         }));
+    }
+
+    pub fn apply_is_atomic() {
+        let mut package = base_package();
+        let original = package.clone();
+        let patch = two_op_patch();
+        let mut executor = FailingSecondOp;
+
+        let error = super::apply_patch(&mut package, context(), &patch, false, &mut executor)
+            .expect_err("second operation failure aborts patch");
+
+        assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+        assert_eq!(package, original);
+
+        let mut executor = SuccessfulOps;
+        let report = super::apply_patch(&mut package, context(), &patch, false, &mut executor)
+            .expect("all successful operations apply atomically");
+
+        assert_eq!(
+            report.status,
+            pptx_compose_json::schemas::PatchStatus::Applied
+        );
+        assert_eq!(report.operation_reports.len(), 2);
+        assert!(
+            report
+                .operation_reports
+                .iter()
+                .all(|operation| operation.status == OperationStatus::Applied)
+        );
+        assert_ne!(package, original);
+    }
+
+    struct FailingSecondOp;
+
+    impl OperationExecutor for FailingSecondOp {
+        fn validate(&mut self, _package: &Package, operation: &Operation) -> Result<PatchEffects> {
+            if operation.operation_id() == "op-2" {
+                return Err(Error::new(
+                    ErrorCode::UnsupportedEdit,
+                    "Test operation op-2 is unsupported.",
+                ));
+            }
+
+            Ok(effects(operation.operation_id()))
+        }
+
+        fn apply(&mut self, package: &mut Package, operation: &Operation) -> Result<PatchEffects> {
+            package.mark_dirty(part("ppt/slides/slide1.xml"));
+            Ok(effects(operation.operation_id()))
+        }
+    }
+
+    struct SuccessfulOps;
+
+    impl OperationExecutor for SuccessfulOps {
+        fn validate(&mut self, _package: &Package, operation: &Operation) -> Result<PatchEffects> {
+            Ok(effects(operation.operation_id()))
+        }
+
+        fn apply(&mut self, package: &mut Package, operation: &Operation) -> Result<PatchEffects> {
+            package.mark_dirty(part("ppt/slides/slide1.xml"));
+            Ok(effects(operation.operation_id()))
+        }
+    }
+
+    fn effects(operation_id: &str) -> PatchEffects {
+        PatchEffects {
+            changed_parts: vec!["ppt/slides/slide1.xml".to_owned()],
+            target: Some(OperationTarget {
+                slide_id: "slide-1".to_owned(),
+                element_id: format!("slide-1:{operation_id}"),
+                part: "ppt/slides/slide1.xml".to_owned(),
+            }),
+            created_element_ids: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn two_op_patch() -> Patch {
+        Patch {
+            schema: PATCH_SCHEMA.to_owned(),
+            version: PATCH_VERSION,
+            document_id: "sha256:old".to_owned(),
+            base_revision: 1,
+            client_request_id: "agent-run-001".to_owned(),
+            operations: vec![
+                Operation::AddTextBox(AddTextBoxOperation {
+                    operation_id: "op-1".to_owned(),
+                    slide_id: "slide-1".to_owned(),
+                    text: "One".to_owned(),
+                    bounds: super::Bounds {
+                        x: 0,
+                        y: 0,
+                        cx: 1,
+                        cy: 1,
+                    },
+                    name: None,
+                    alt_text: None,
+                    style: None,
+                    insert: None,
+                }),
+                Operation::AddTextBox(AddTextBoxOperation {
+                    operation_id: "op-2".to_owned(),
+                    slide_id: "slide-1".to_owned(),
+                    text: "Two".to_owned(),
+                    bounds: super::Bounds {
+                        x: 0,
+                        y: 0,
+                        cx: 1,
+                        cy: 1,
+                    },
+                    name: None,
+                    alt_text: None,
+                    style: None,
+                    insert: None,
+                }),
+            ],
+        }
     }
 
     fn base_package() -> Package {
