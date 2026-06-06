@@ -1,6 +1,7 @@
 #![deny(warnings)]
 
 use std::{
+    collections::BTreeSet,
     fs::{self, File, OpenOptions as FsOpenOptions},
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -31,12 +32,12 @@ use core::{
         ZipEntryMetadata,
         reader::{RawEntry, from_bytes},
         sniff::sniff_package,
-        writer::{self as zip_writer, PackageZipWriter, WriteEntry},
+        writer::{self as zip_writer, DirtyEntry, PackageZipWriter, WriteEntry},
     },
 };
 use pptx_compose_edit::{
     operations::{
-        ResolvedTarget, add_text_box::AddTextBox, move_resize::MoveResize,
+        ResolvedTarget, add_image::AddImage, add_text_box::AddTextBox, move_resize::MoveResize,
         replace_image::ReplaceImage, replace_text::ReplaceText, set_alt_text::SetAltText,
     },
     patch::{DocumentState, Operation, OperationExecutor, PatchEffects, validate_envelope},
@@ -52,6 +53,7 @@ pub struct PresentationDocument {
     source_path: Option<PathBuf>,
     source_bytes: Vec<u8>,
     entries: Vec<RawEntry>,
+    dirty_parts: BTreeSet<PartName>,
 }
 
 impl PresentationDocument {
@@ -81,6 +83,7 @@ impl PresentationDocument {
             source_path: None,
             source_bytes,
             entries,
+            dirty_parts: BTreeSet::new(),
         })
     }
 
@@ -134,11 +137,11 @@ impl PresentationDocument {
         if options.validate {
             let _report = self.validate()?;
         }
-        let entries: Vec<_> = self.entries.iter().map(WriteEntry::Clean).collect();
+        let entries = self.write_entries();
         let output = Cursor::new(Vec::new());
         let output = zip_writer::write_writer_with_options(
             &self.source_bytes,
-            &entries,
+            entries.as_slice(),
             output,
             &zip_writer::WriteOptions {
                 mode: options.mode,
@@ -195,10 +198,10 @@ impl PresentationDocument {
         validate_patch_operations(&package, &patch.operations, &media)?;
 
         let mut package = package_from_entries(&self.entries)?;
-        let mut executor = ValidationOnlyExecutor {
+        let mut executor = RealOperationExecutor {
             media_inputs: &media,
         };
-        pptx_compose_edit::patch::apply_patch(
+        let report = pptx_compose_edit::patch::apply_patch(
             &mut package,
             pptx_compose_edit::patch::PatchContext::new(
                 document_id.clone(),
@@ -209,7 +212,9 @@ impl PresentationDocument {
             &patch,
             options.dry_run,
             &mut executor,
-        )
+        )?;
+        self.replace_entries_from_package(&package)?;
+        Ok(report)
     }
 
     pub fn write_path_with_options(
@@ -326,10 +331,10 @@ impl PresentationDocument {
         if options.validate {
             let _report = self.validate()?;
         }
-        let entries: Vec<_> = self.entries.iter().map(WriteEntry::Clean).collect();
+        let entries = self.write_entries();
         zip_writer::write_writer_with_options(
             &self.source_bytes,
-            &entries,
+            entries.as_slice(),
             output,
             &zip_writer::WriteOptions {
                 mode: options.mode,
@@ -365,6 +370,46 @@ impl PresentationDocument {
     #[must_use]
     pub fn source_bytes(&self) -> &[u8] {
         &self.source_bytes
+    }
+
+    fn write_entries(&self) -> Vec<WriteEntry<'_>> {
+        self.entries
+            .iter()
+            .map(|entry| {
+                if self.dirty_parts.contains(&entry.name) {
+                    WriteEntry::Dirty(DirtyEntry {
+                        name: entry.meta.original_name.as_str(),
+                        bytes: entry.bytes.as_slice(),
+                        meta: &entry.meta,
+                    })
+                } else {
+                    WriteEntry::Clean(entry)
+                }
+            })
+            .collect()
+    }
+
+    fn replace_entries_from_package(&mut self, package: &Package) -> Result<()> {
+        for entry in &mut self.entries {
+            if let Some(part) = package.parts().get(&entry.name) {
+                entry.bytes = part.bytes().to_vec();
+            }
+        }
+
+        for part in package.parts().iter() {
+            if self.entries.iter().any(|entry| entry.name == *part.name()) {
+                continue;
+            }
+            let entry_index = self.entries.len();
+            self.entries.push(RawEntry {
+                name: part.name().clone(),
+                bytes: part.bytes().to_vec(),
+                meta: dirty_zip_metadata(entry_index, part.original_zip_entry_name(), part.bytes()),
+            });
+        }
+
+        self.dirty_parts = package.dirty_parts().clone();
+        Ok(())
     }
 }
 
@@ -583,11 +628,11 @@ fn optional_attr<'a>(element: &'a XmlElement, name: &str) -> Option<&'a str> {
         .map(|attribute| attribute.value.as_str())
 }
 
-struct ValidationOnlyExecutor<'a> {
+struct RealOperationExecutor<'a> {
     media_inputs: &'a MediaInputs,
 }
 
-impl OperationExecutor for ValidationOnlyExecutor<'_> {
+impl OperationExecutor for RealOperationExecutor<'_> {
     fn validate(&mut self, package: &Package, operation: &Operation) -> Result<PatchEffects> {
         let model = core_presentation::PresentationDocument::open(package.clone())?;
         validate_operation(package, &model, operation, self.media_inputs)?;
@@ -595,7 +640,33 @@ impl OperationExecutor for ValidationOnlyExecutor<'_> {
     }
 
     fn apply(&mut self, package: &mut Package, operation: &Operation) -> Result<PatchEffects> {
-        self.validate(package, operation)
+        let model = core_presentation::PresentationDocument::open(package.clone())?;
+        match operation {
+            Operation::ReplaceText(operation) => {
+                let target = resolve_element(&model, &operation.element_id)?;
+                ReplaceText::from(operation).apply(package, &target)
+            }
+            Operation::AddTextBox(operation) => {
+                let target = resolve_slide(&model, &operation.slide_id)?;
+                AddTextBox::from(operation).apply(package, &target)
+            }
+            Operation::MoveResizeElement(operation) => {
+                let target = resolve_element(&model, &operation.element_id)?;
+                MoveResize::from(operation).apply(package, &target)
+            }
+            Operation::SetAltText(operation) => {
+                let target = resolve_element(&model, &operation.element_id)?;
+                SetAltText::from(operation).apply(package, &target)
+            }
+            Operation::AddImage(operation) => {
+                let target = resolve_slide(&model, &operation.slide_id)?;
+                AddImage::from(operation).apply(package, &target, self.media_inputs)
+            }
+            Operation::ReplaceImage(operation) => {
+                let target = resolve_element(&model, &operation.element_id)?;
+                ReplaceImage::from(operation).apply(package, &target, self.media_inputs)
+            }
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{fs, io::Cursor, path::Path};
+use std::{fs, io::Cursor, io::Write, path::Path};
 
 use pptx_compose::{
     AgentViewOptions, ApplyPatchOptions, MediaInputs, OpenOptions, Patch, PresentationDocument,
@@ -7,7 +7,9 @@ use pptx_compose::{
         provenance::document_id::document_id as provenance_document_id,
         zip::reader::{RawEntry, from_bytes},
     },
+    edit::patch::parse_patch,
 };
+use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 #[test]
 fn exposes_required_070_api_and_defaults() {
@@ -104,6 +106,61 @@ fn no_edit_rezip_preserves_canonical_document_id() {
     assert_eq!(validation.document_id, original_id);
 }
 
+#[test]
+fn replace_text_apply_writes_only_dirtied_slide_part() {
+    let bytes = text_deck();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let patch = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(&bytes),
+        "base_revision": 1,
+        "client_request_id": "replace-text-facade",
+        "operations": [{
+            "operation_id": "replace-title",
+            "op": "replace_text",
+            "element_id": "slide-1:shape-3",
+            "text": "Updated title"
+        }]
+    }))
+    .expect("patch parses");
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("replace_text applies");
+    assert_eq!(report.changed_parts, vec!["ppt/slides/slide1.xml"]);
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("edited deck writes");
+    assert_ne!(written, bytes);
+
+    let original_entries = from_bytes(&bytes).expect("original entries read");
+    let written_entries = from_bytes(&written).expect("written entries read");
+    let changed_parts = original_entries
+        .iter()
+        .zip(written_entries.iter())
+        .filter_map(|(original, written)| {
+            if original.bytes == written.bytes {
+                None
+            } else {
+                Some(original.name.zip_entry_name().to_owned())
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(changed_parts, vec!["ppt/slides/slide1.xml"]);
+
+    let slide = written_entries
+        .iter()
+        .find(|entry| entry.name.zip_entry_name() == "ppt/slides/slide1.xml")
+        .expect("slide entry exists");
+    let slide_xml = std::str::from_utf8(&slide.bytes).expect("slide XML is UTF-8");
+    assert!(slide_xml.contains(">Updated title<"));
+}
+
 fn noop_patch(bytes: &[u8]) -> Patch {
     serde_json::from_value(serde_json::json!({
         "schema": "pptx-compose.patch.v1",
@@ -166,3 +223,86 @@ fn unique_dir() -> std::path::PathBuf {
 
 #[allow(dead_code)]
 fn _assert_no_internal_parser_types_in_primary_api(_path: &Path) {}
+
+fn text_deck() -> Vec<u8> {
+    zip_entries(
+        [
+            ("[Content_Types].xml", content_types().as_bytes()),
+            ("_rels/.rels", root_rels().as_bytes()),
+            ("ppt/presentation.xml", presentation().as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", text_slide().as_bytes()),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
+fn zip_entries<const N: usize>(entries: [(&str, &[u8]); N], method: CompressionMethod) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    {
+        let mut writer = ZipWriter::new(Cursor::new(&mut bytes));
+        let options = SimpleFileOptions::default().compression_method(method);
+        for (name, data) in entries {
+            writer.start_file(name, options).expect("start ZIP entry");
+            writer.write_all(data).expect("write ZIP entry");
+        }
+        writer.finish().expect("finish ZIP");
+    }
+    bytes
+}
+
+fn content_types() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>"#
+        .to_owned()
+}
+
+fn root_rels() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>"#
+        .to_owned()
+}
+
+fn presentation() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>"#
+        .to_owned()
+}
+
+fn presentation_rels() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>"#
+        .to_owned()
+}
+
+fn text_slide() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="3" name="Title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Original title</a:t></a:r></a:p></p:txBody>
+      </p:sp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+        .to_owned()
+}

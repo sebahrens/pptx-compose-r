@@ -223,10 +223,17 @@ fn dry_run_writes_no_pptx() {
 }
 
 #[cfg(test)]
-mod test_support {
-    use std::{fs, path::Path};
+#[test]
+fn replace_text_writes_mutated_output() {
+    test_support::replace_text_writes_mutated_output();
+}
 
-    use pptx_compose::{PresentationDocument, WriteMode};
+#[cfg(test)]
+mod test_support {
+    use std::{fs, io::Cursor, io::Write, path::Path};
+
+    use pptx_compose::{PresentationDocument, WriteMode, core::zip::reader::from_bytes};
+    use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
     use super::{apply, write_options_from_args};
     use crate::{cli::ApplyArgs, exit, exit::exit_code_for, permissions::PermissionContext};
@@ -322,6 +329,43 @@ mod test_support {
         fs::remove_dir_all(root).expect("test dir removes");
     }
 
+    pub(super) fn replace_text_writes_mutated_output() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let output = root.join("output.pptx");
+        let report = root.join("report.json");
+        fs::create_dir_all(&root).expect("test dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
+
+        let mut args = args(&input, &patch, &output, false, false);
+        args.report = Some(report.clone());
+        apply(args, &permissions(&root)).expect("replace_text apply succeeds");
+
+        let output_bytes = fs::read(&output).expect("output reads");
+        assert_ne!(output_bytes, input_bytes);
+        let output_entries = from_bytes(&output_bytes).expect("output entries read");
+        let slide = output_entries
+            .iter()
+            .find(|entry| entry.name.zip_entry_name() == "ppt/slides/slide1.xml")
+            .expect("slide entry exists");
+        let slide_xml = std::str::from_utf8(&slide.bytes).expect("slide XML is UTF-8");
+        assert!(slide_xml.contains(">Updated title<"));
+
+        let report_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report).expect("report reads"))
+                .expect("report is JSON");
+        assert_eq!(report_json["status"], "applied");
+        assert_eq!(
+            report_json["changed_parts"],
+            serde_json::json!(["ppt/slides/slide1.xml"])
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
     fn args(
         input: &Path,
         patch: &Path,
@@ -369,6 +413,116 @@ mod test_support {
         }}"#
         )
         .into_bytes()
+    }
+
+    fn replace_text_patch(bytes: &[u8]) -> Vec<u8> {
+        let document_id = PresentationDocument::from_bytes(bytes)
+            .expect("fixture opens")
+            .validate()
+            .expect("fixture validates")
+            .document_id;
+        format!(
+            r#"{{
+            "schema": "pptx-compose.patch.v1",
+            "version": 1,
+            "document_id": "{document_id}",
+            "base_revision": 1,
+            "client_request_id": "apply-test-replace-text",
+            "operations": [{{
+                "operation_id": "replace-title",
+                "op": "replace_text",
+                "element_id": "slide-1:shape-3",
+                "text": "Updated title"
+            }}]
+        }}"#
+        )
+        .into_bytes()
+    }
+
+    fn text_deck() -> Vec<u8> {
+        zip_entries(
+            [
+                ("[Content_Types].xml", content_types().as_bytes()),
+                ("_rels/.rels", root_rels().as_bytes()),
+                ("ppt/presentation.xml", presentation().as_bytes()),
+                (
+                    "ppt/_rels/presentation.xml.rels",
+                    presentation_rels().as_bytes(),
+                ),
+                ("ppt/slides/slide1.xml", text_slide().as_bytes()),
+            ],
+            CompressionMethod::Stored,
+        )
+    }
+
+    fn zip_entries<const N: usize>(
+        entries: [(&str, &[u8]); N],
+        method: CompressionMethod,
+    ) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut writer = ZipWriter::new(Cursor::new(&mut bytes));
+            let options = SimpleFileOptions::default().compression_method(method);
+            for (name, data) in entries {
+                writer.start_file(name, options).expect("start ZIP entry");
+                writer.write_all(data).expect("write ZIP entry");
+            }
+            writer.finish().expect("finish ZIP");
+        }
+        bytes
+    }
+
+    fn content_types() -> String {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>"#
+            .to_owned()
+    }
+
+    fn root_rels() -> String {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>"#
+            .to_owned()
+    }
+
+    fn presentation() -> String {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>"#
+            .to_owned()
+    }
+
+    fn presentation_rels() -> String {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>"#
+            .to_owned()
+    }
+
+    fn text_slide() -> String {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="3" name="Title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Original title</a:t></a:r></a:p></p:txBody>
+      </p:sp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+            .to_owned()
     }
 
     fn unique_dir() -> std::path::PathBuf {
