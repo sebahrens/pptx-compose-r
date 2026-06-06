@@ -32,6 +32,7 @@ pub struct MediaBinding {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedMedia {
     pub content_type: String,
+    pub sha256: String,
     pub bytes: Vec<u8>,
 }
 
@@ -135,21 +136,22 @@ impl MediaInputs {
                 ),
             ));
         }
-        if let Some(expected_sha256) = &binding.declared_sha256 {
-            let actual_sha256 = part_checksum(&bytes);
-            if &actual_sha256 != expected_sha256 {
-                return Err(Error::new(
-                    ErrorCode::MediaChecksumMismatch,
-                    format!(
-                        "Media input `{media_ref}` sha256 declared `{expected_sha256}` but resolved `{actual_sha256}`."
-                    ),
-                ));
-            }
+        let actual_sha256 = part_checksum(&bytes);
+        if let Some(expected_sha256) = &binding.declared_sha256
+            && &actual_sha256 != expected_sha256
+        {
+            return Err(Error::new(
+                ErrorCode::MediaChecksumMismatch,
+                format!(
+                    "Media input `{media_ref}` sha256 declared `{expected_sha256}` but resolved `{actual_sha256}`."
+                ),
+            ));
         }
         sniff::verify_declared(&binding.content_type, &bytes)?;
 
         Ok(ResolvedMedia {
             content_type: binding.content_type.clone(),
+            sha256: actual_sha256,
             bytes,
         })
     }
@@ -333,6 +335,73 @@ fn push_base64_quartet(quartet: [u8; 4], bytes: &mut Vec<u8>) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+pub mod checksum {
+    use std::collections::HashMap;
+
+    use pptx_compose_core::{error::ErrorCode, provenance::checksum::part_checksum};
+
+    use super::*;
+
+    #[test]
+    fn mismatch_fails_before_mutation() {
+        let bytes = b"\x89PNG\r\n\x1a\nresolved bytes".to_vec();
+        let digest = part_checksum(&bytes);
+
+        let matched = inputs_with_declared_sha256("matched", bytes.clone(), Some(digest.clone()));
+        let resolved = matched
+            .resolve("matched")
+            .expect("matching declared sha256 resolves");
+        assert_eq!(resolved.sha256, digest);
+        assert_eq!(resolved.bytes, bytes);
+
+        let mismatched = inputs_with_declared_sha256(
+            "mismatched",
+            bytes.clone(),
+            Some(
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_owned(),
+            ),
+        );
+        let error = mismatched
+            .resolve("mismatched")
+            .expect_err("declared sha256 mismatch fails");
+        assert_eq!(error.code(), ErrorCode::MediaChecksumMismatch);
+        assert!(error.message().contains("mismatched"));
+        assert!(
+            error.message().contains(
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            )
+        );
+        assert!(error.message().contains(&digest));
+
+        let undeclared = inputs_with_declared_sha256("undeclared", bytes.clone(), None);
+        let resolved = undeclared
+            .resolve("undeclared")
+            .expect("absent declared sha256 still resolves");
+        assert_eq!(resolved.sha256, digest);
+        assert_eq!(resolved.bytes, bytes);
+    }
+
+    fn inputs_with_declared_sha256(
+        media_ref: &str,
+        bytes: Vec<u8>,
+        declared_sha256: Option<String>,
+    ) -> MediaInputs {
+        let mut bindings = HashMap::new();
+        bindings.insert(
+            media_ref.to_owned(),
+            MediaBinding {
+                content_type: "image/png".to_owned(),
+                declared_sha256,
+                declared_byte_length: None,
+                source: MediaSource::Bytes(bytes),
+            },
+        );
+        MediaInputs::new(bindings)
+    }
 }
 
 #[cfg(test)]
