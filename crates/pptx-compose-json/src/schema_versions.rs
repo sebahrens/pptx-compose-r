@@ -1,6 +1,9 @@
 pub const AGENT_VIEW_SCHEMA: &str = "pptx-compose.agent_view.v1";
 pub const AGENT_VIEW_VERSION: u32 = 1;
 
+pub const CAPABILITIES_SCHEMA: &str = "pptx-compose.capabilities.v1";
+pub const CAPABILITIES_VERSION: u32 = 1;
+
 pub const LEGACY_PATH_MAP_SCHEMA: &str = "pptx-compose.legacy_path_map.v1";
 pub const LEGACY_PATH_MAP_VERSION: u32 = 1;
 

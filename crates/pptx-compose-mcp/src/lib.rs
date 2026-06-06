@@ -105,7 +105,7 @@ impl PptxServer {
             sessions,
             config,
             permission_policy,
-            resource_registry: ResourceRegistry::new(),
+            resource_registry: ResourceRegistry::with_raw_xml_enabled(config.enable_raw_xml_tools),
             prompt_registry: PromptRegistry::new(),
             tool_router,
         }

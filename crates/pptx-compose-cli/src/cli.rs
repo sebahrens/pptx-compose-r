@@ -42,6 +42,7 @@ pub struct GlobalArgs {
 
 #[derive(Debug, Eq, PartialEq, Subcommand)]
 pub enum Commands {
+    Capabilities,
     Inspect(InspectArgs),
     FindText(FindTextArgs),
     Validate(ValidateArgs),
@@ -175,6 +176,17 @@ pub struct MediaGetArgs {
 #[derive(Args, Debug, Eq, PartialEq)]
 pub struct SchemaArgs {
     pub name: String,
+}
+
+#[cfg(test)]
+#[test]
+fn parses_capabilities() {
+    use clap::Parser;
+
+    let cli = Cli::try_parse_from(["pptx-compose", "capabilities"])
+        .expect("capabilities command should parse");
+
+    assert!(matches!(cli.command, Commands::Capabilities));
 }
 
 #[cfg(test)]

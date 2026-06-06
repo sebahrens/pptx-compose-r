@@ -70,6 +70,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
     let sink = OutputSink::from_global_args(&cli.global);
     let open_options = open_options_from_global_args(&cli.global)?;
     match cli.command {
+        Commands::Capabilities => capabilities(sink),
         Commands::Inspect(args) => inspect(args, &permissions, sink, open_options),
         Commands::FindText(args) => find_text(args, &permissions, sink, open_options),
         Commands::Validate(args) => validate(args, &permissions, sink, open_options),
@@ -81,6 +82,16 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Media(MediaCmd::Get(args)) => media_get(args, &permissions, sink, open_options),
         Commands::Schema(args) => schema(args, sink),
     }
+}
+
+fn capabilities(sink: OutputSink) -> Result<(), CliError> {
+    let document = pptx_compose::capabilities::capabilities(
+        pptx_compose::capabilities::CapabilitiesOptions::new(
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+        ),
+    );
+    sink.emit_json(&document, OutputDest::Stdout)
 }
 
 fn open_options_from_global_args(global: &cli::GlobalArgs) -> Result<OpenOptions, CliError> {

@@ -2,6 +2,7 @@ use std::{fmt, str::FromStr};
 
 use pptx_compose::{
     AgentViewOptions,
+    capabilities::{CapabilitiesOptions, capabilities},
     core::error::{Error, ErrorCode},
     edit::patch::{PATCH_SCHEMA, PATCH_VERSION, Patch},
     json::{
@@ -20,6 +21,7 @@ pub type McpError = Error;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceUri {
+    Capabilities,
     SessionSummary {
         session_id: String,
     },
@@ -69,17 +71,25 @@ pub struct ResourceContent {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ResourceRegistry;
+pub struct ResourceRegistry {
+    raw_xml_enabled: bool,
+}
 
 impl ResourceRegistry {
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub const fn new() -> Self {
+        Self::with_raw_xml_enabled(false)
+    }
+
+    #[must_use]
+    pub const fn with_raw_xml_enabled(raw_xml_enabled: bool) -> Self {
+        Self { raw_xml_enabled }
     }
 
     #[must_use]
     pub fn list_resources(&self, session_id: Option<&str>) -> Vec<ResourceDescriptor> {
-        let mut resources = schema_resource_descriptors();
+        let mut resources = vec![capabilities_resource_descriptor()];
+        resources.extend(schema_resource_descriptors());
         if let Some(session_id) = session_id {
             resources.extend(session_resource_descriptors(session_id));
         }
@@ -92,6 +102,10 @@ impl ResourceRegistry {
         sessions: &SessionStore,
     ) -> Result<ResourceContent, McpError> {
         let content = match uri {
+            ResourceUri::Capabilities => json!(capabilities(
+                CapabilitiesOptions::new("pptx-compose-mcp", env!("CARGO_PKG_VERSION"))
+                    .with_raw_xml_enabled(self.raw_xml_enabled),
+            )),
             ResourceUri::SessionSummary { session_id } => session_view(
                 sessions,
                 session_id,
@@ -186,6 +200,7 @@ impl FromStr for ResourceUri {
         let segments = path.split('/').collect::<Vec<_>>();
 
         match segments.as_slice() {
+            ["capabilities", "v1"] => Ok(Self::Capabilities),
             ["sessions", session_id, "summary"] if !session_id.is_empty() => {
                 Ok(Self::SessionSummary {
                     session_id: (*session_id).to_owned(),
@@ -245,6 +260,7 @@ impl FromStr for ResourceUri {
 impl fmt::Display for ResourceUri {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Capabilities => write!(formatter, "pptx://capabilities/v1"),
             Self::SessionSummary { session_id } => {
                 write!(formatter, "pptx://sessions/{session_id}/summary")
             }
@@ -399,6 +415,17 @@ fn schema_resource_descriptors() -> Vec<ResourceDescriptor> {
     .collect()
 }
 
+fn capabilities_resource_descriptor() -> ResourceDescriptor {
+    ResourceDescriptor {
+        uri: ResourceUri::Capabilities.to_string(),
+        name: "capabilities".to_owned(),
+        title: "Capabilities".to_owned(),
+        description: "Versioned machine-readable CLI and MCP capabilities for agents.".to_owned(),
+        mime_type: "application/json".to_owned(),
+        read_only: true,
+    }
+}
+
 fn session_resource_descriptors(session_id: &str) -> Vec<ResourceDescriptor> {
     [
         (
@@ -468,4 +495,58 @@ fn invalid_uri(input: &str, message: &str) -> Error {
         ErrorCode::InvalidInput,
         format!("{message} Input: {input}."),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_and_formats_capabilities_uri() {
+        let uri = ResourceUri::from_str("pptx://capabilities/v1")
+            .expect("capabilities resource URI parses");
+
+        assert_eq!(uri, ResourceUri::Capabilities);
+        assert_eq!(uri.to_string(), "pptx://capabilities/v1");
+    }
+
+    #[test]
+    fn lists_capabilities_resource() {
+        let resources = ResourceRegistry::default().list_resources(None);
+
+        assert!(resources.iter().any(|resource| {
+            resource.uri == "pptx://capabilities/v1"
+                && resource.name == "capabilities"
+                && resource.read_only
+        }));
+    }
+
+    #[tokio::test]
+    async fn reads_capabilities_resource_with_raw_xml_flag() {
+        let content = ResourceRegistry::with_raw_xml_enabled(true)
+            .read_resource(&ResourceUri::Capabilities, &SessionStore::default())
+            .await
+            .expect("capabilities resource reads");
+
+        assert_eq!(content.uri, "pptx://capabilities/v1");
+        assert_eq!(content.content["schema"], "pptx-compose.capabilities.v1");
+        assert_eq!(content.content["raw_xml_enabled"], true);
+        assert!(
+            content.content["supported_operations"]
+                .as_array()
+                .expect("operations are an array")
+                .iter()
+                .any(|operation| operation["op"] == "replace_text")
+        );
+        assert!(
+            content.content["exit_codes"]
+                .as_array()
+                .expect("exit codes are an array")
+                .iter()
+                .any(|entry| entry["exit"] == 24
+                    && entry["error_codes"]
+                        .as_array()
+                        .is_some_and(|codes| codes.iter().any(|code| code == "unsupported_edit")))
+        );
+    }
 }

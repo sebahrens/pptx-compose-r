@@ -9,6 +9,8 @@ use std::{
 
 mod options;
 
+pub mod capabilities;
+
 pub use options::{AgentViewOptions, ApplyPatchOptions, OpenOptions, WriteOptions};
 pub use pptx_compose_core as core;
 pub use pptx_compose_core::zip::writer::WriteMode;
