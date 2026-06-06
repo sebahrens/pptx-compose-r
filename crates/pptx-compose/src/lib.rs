@@ -300,32 +300,40 @@ impl PresentationDocument {
             package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         validate_patch_operations(&original_package, &patch.operations, &media)?;
 
-        let mut package = original_package.clone();
+        let package = original_package.clone();
         let mut executor = RealOperationExecutor {
             media_inputs: &media,
         };
         let next_revision = next_revision_value(self.revision)?;
-        let report = pptx_compose_edit::patch::apply_patch(
-            &mut package,
+        let staged = pptx_compose_edit::patch::apply_patch_staged(
+            &package,
             pptx_compose_edit::patch::PatchContext::new(
                 document_id.clone(),
                 revision,
-                document_id,
+                document_id.clone(),
                 next_revision,
             ),
             &patch,
             options.dry_run,
             &mut executor,
         )?;
+        let staged_package = staged.package;
+        let staged_package = staged_package.package();
+        let mut report = staged.report;
+        report.new_document_id = if report.changed_parts.is_empty() {
+            document_id
+        } else {
+            document_id_from_package(staged_package, &self.entries)?
+        };
         let diff = semantic_diff_for_patch(
             &original_package,
-            &package,
+            staged_package,
             &self.entries,
             &patch.operations,
             &report,
         )?;
         if !options.dry_run {
-            self.replace_entries_from_package(&package)?;
+            self.replace_entries_from_package(staged_package)?;
         }
         if !options.dry_run && !report.changed_parts.is_empty() {
             let recorded_revision =
@@ -829,6 +837,26 @@ fn document_id_from_entries(entries: &[RawEntry]) -> Result<String> {
         .collect::<Vec<_>>();
 
     Ok(provenance_document_id(&ordinary_parts, content_types_bytes))
+}
+
+fn document_id_from_package(package: &Package, source_entries: &[RawEntry]) -> Result<String> {
+    let package = package_with_serialized_control_parts(package, Some(source_entries))?;
+    let content_types_name = content_types_part()?;
+    let content_types = package
+        .parts()
+        .get(&content_types_name)
+        .ok_or_else(|| Error::unsupported_package("Package is missing [Content_Types].xml."))?;
+    let ordinary_parts = package
+        .parts()
+        .iter()
+        .filter(|part| part.name() != &content_types_name)
+        .map(|part| (part.name().clone(), part.bytes()))
+        .collect::<Vec<_>>();
+
+    Ok(provenance_document_id(
+        &ordinary_parts,
+        content_types.bytes(),
+    ))
 }
 
 fn is_slide_part_name(part_name: &str) -> bool {

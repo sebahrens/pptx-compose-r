@@ -421,6 +421,7 @@ fn replace_text_apply_writes_only_dirtied_slide_part() {
         .apply_patch(patch, MediaInputs::default())
         .expect("replace_text applies");
     assert_eq!(report.changed_parts, vec!["ppt/slides/slide1.xml"]);
+    assert_ne!(report.new_document_id, report.document_id);
 
     let written = document
         .write_vec_with_options(WriteOptions {
@@ -429,6 +430,7 @@ fn replace_text_apply_writes_only_dirtied_slide_part() {
         })
         .expect("edited deck writes");
     assert_ne!(written, bytes);
+    assert_eq!(report.new_document_id, document_id(&written));
 
     let original_entries = from_bytes(&bytes).expect("original entries read");
     let written_entries = from_bytes(&written).expect("written entries read");
@@ -518,6 +520,7 @@ fn replace_text_dry_run_reports_effects_without_mutating_document() {
         pptx_compose::json::schemas::PatchStatus::DryRunSuccess
     );
     assert_eq!(output.report.changed_parts, vec!["ppt/slides/slide1.xml"]);
+    assert_ne!(output.report.new_document_id, output.report.document_id);
     assert_eq!(output.report.operation_reports.len(), 1);
     let operation = &output.report.operation_reports[0];
     assert_eq!(

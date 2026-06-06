@@ -608,6 +608,12 @@ pub struct ApplyPatchResult {
     pub report: PatchReport,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct StagedPatchResult {
+    pub package: WritablePackage,
+    pub report: PatchReport,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WritablePackage {
     package: Package,
@@ -685,11 +691,28 @@ where
 
 pub fn apply_patch<E>(
     package: &mut Package,
-    mut context: PatchContext,
+    context: PatchContext,
     patch: &Patch,
     dry_run: bool,
     executor: &mut E,
 ) -> Result<PatchReport>
+where
+    E: OperationExecutor,
+{
+    let result = apply_patch_staged(package, context, patch, dry_run, executor)?;
+    if !dry_run {
+        *package = result.package.into_inner();
+    }
+    Ok(result.report)
+}
+
+pub fn apply_patch_staged<E>(
+    package: &Package,
+    mut context: PatchContext,
+    patch: &Patch,
+    dry_run: bool,
+    executor: &mut E,
+) -> Result<StagedPatchResult>
 where
     E: OperationExecutor,
 {
@@ -729,29 +752,28 @@ where
         return Err(validation_failed(validation));
     }
 
-    if !dry_run {
-        *package = staged;
-    }
-
-    Ok(PatchReport {
-        schema: PATCH_REPORT_SCHEMA.to_owned(),
-        version: PATCH_REPORT_VERSION,
-        client_request_id: Some(patch.client_request_id.clone()),
-        request_id: None,
-        transaction_id: None,
-        status: if dry_run {
-            PatchStatus::DryRunSuccess
-        } else {
-            PatchStatus::Applied
+    Ok(StagedPatchResult {
+        package: WritablePackage { package: staged },
+        report: PatchReport {
+            schema: PATCH_REPORT_SCHEMA.to_owned(),
+            version: PATCH_REPORT_VERSION,
+            client_request_id: Some(patch.client_request_id.clone()),
+            request_id: None,
+            transaction_id: None,
+            status: if dry_run {
+                PatchStatus::DryRunSuccess
+            } else {
+                PatchStatus::Applied
+            },
+            dry_run,
+            document_id: context.document_id,
+            base_revision: context.base_revision,
+            new_document_id: context.new_document_id,
+            new_revision: report_revision,
+            operation_reports,
+            changed_parts,
+            validation: patch_validation_summary(&validation),
         },
-        dry_run,
-        document_id: context.document_id,
-        base_revision: context.base_revision,
-        new_document_id: context.new_document_id,
-        new_revision: report_revision,
-        operation_reports,
-        changed_parts,
-        validation: patch_validation_summary(&validation),
     })
 }
 
