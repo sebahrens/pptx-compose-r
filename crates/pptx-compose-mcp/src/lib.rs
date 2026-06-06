@@ -19,6 +19,7 @@ use sessions::SessionStore;
 
 const RAW_GET_PART_XML: &str = "pptx_get_part_xml";
 const RAW_REPLACE_PART_XML: &str = "pptx_replace_part_xml";
+const MAX_INLINE_MEDIA_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ServerConfig {
@@ -115,7 +116,15 @@ pub struct OpenInput {
 pub struct ImportMediaInput {
     pub session_id: String,
     pub media_path: Option<String>,
+    pub inline: Option<InlineMediaInput>,
     pub content_type: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InlineMediaInput {
+    pub encoding: String,
+    pub data: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -146,6 +155,107 @@ pub struct ExportInput {
     pub output_path: Option<String>,
     #[serde(default)]
     pub overwrite: bool,
+}
+
+fn decode_inline_media(inline: &InlineMediaInput) -> pptx_compose::core::error::Result<Vec<u8>> {
+    if inline.encoding != "base64" {
+        return Err(pptx_compose::core::error::Error::new(
+            pptx_compose::core::error::ErrorCode::InvalidInput,
+            "Inline media encoding must be `base64`.",
+        ));
+    }
+    check_inline_encoded_size(&inline.data)?;
+    let bytes = decode_base64(&inline.data)?;
+    if bytes.len() > MAX_INLINE_MEDIA_BYTES {
+        return Err(inline_size_error());
+    }
+    Ok(bytes)
+}
+
+fn check_inline_encoded_size(encoded: &str) -> pptx_compose::core::error::Result<()> {
+    let max_encoded_len = MAX_INLINE_MEDIA_BYTES.div_ceil(3).saturating_mul(4);
+    if encoded.len() > max_encoded_len {
+        return Err(inline_size_error());
+    }
+    Ok(())
+}
+
+fn inline_size_error() -> pptx_compose::core::error::Error {
+    pptx_compose::core::error::Error::resource_limit_exceeded(format!(
+        "Inline media exceeds max_inline_media_bytes {MAX_INLINE_MEDIA_BYTES}."
+    ))
+}
+
+fn decode_base64(encoded: &str) -> pptx_compose::core::error::Result<Vec<u8>> {
+    let input = encoded.as_bytes();
+    if !input.len().is_multiple_of(4) {
+        return Err(invalid_base64_error(
+            "Inline media contains incomplete base64 data.",
+        ));
+    }
+
+    let mut bytes = Vec::with_capacity(input.len() / 4 * 3);
+    for (index, chunk) in input.chunks_exact(4).enumerate() {
+        let is_last = (index + 1) * 4 == input.len();
+        push_base64_chunk(chunk, is_last, &mut bytes)?;
+    }
+    Ok(bytes)
+}
+
+fn push_base64_chunk(
+    chunk: &[u8],
+    is_last: bool,
+    bytes: &mut Vec<u8>,
+) -> pptx_compose::core::error::Result<()> {
+    let first = decode_base64_value(chunk[0])?;
+    let second = decode_base64_value(chunk[1])?;
+
+    if chunk[2] == b'=' {
+        if chunk[3] != b'=' || !is_last {
+            return Err(invalid_base64_error(
+                "Inline media contains invalid base64 padding.",
+            ));
+        }
+        bytes.push((first << 2) | (second >> 4));
+        return Ok(());
+    }
+
+    let third = decode_base64_value(chunk[2])?;
+    bytes.push((first << 2) | (second >> 4));
+    bytes.push(((second & 0x0f) << 4) | (third >> 2));
+
+    if chunk[3] == b'=' {
+        if !is_last {
+            return Err(invalid_base64_error(
+                "Inline media contains invalid base64 padding.",
+            ));
+        }
+        return Ok(());
+    }
+
+    let fourth = decode_base64_value(chunk[3])?;
+    bytes.push(((third & 0x03) << 6) | fourth);
+    Ok(())
+}
+
+fn decode_base64_value(byte: u8) -> pptx_compose::core::error::Result<u8> {
+    match byte {
+        b'A'..=b'Z' => Ok(byte - b'A'),
+        b'a'..=b'z' => Ok(byte - b'a' + 26),
+        b'0'..=b'9' => Ok(byte - b'0' + 52),
+        b'+' => Ok(62),
+        b'/' => Ok(63),
+        _ => Err(invalid_base64_error(
+            "Inline media contains invalid base64 characters.",
+        )),
+    }
+}
+
+fn invalid_base64_error(message: &'static str) -> pptx_compose::core::error::Error {
+    pptx_compose::core::error::Error::new(
+        pptx_compose::core::error::ErrorCode::InvalidInput,
+        message,
+    )
 }
 
 #[tool_router(router = build_tool_router)]
@@ -283,21 +393,35 @@ impl PptxServer {
         &self,
         input: rmcp::handler::server::wrapper::Parameters<ImportMediaInput>,
     ) -> Result<Json<outputs::ImportMediaOutput>, rmcp::model::CallToolResult> {
-        if let Some(media_path) = input.0.media_path {
-            self.permission_policy
-                .check_read(&media_path)
-                .map_err(|error| outputs::map_error(error.into_core_error()))?;
-            let handle = self
-                .sessions
-                .import_media_path(&input.0.session_id, media_path, &input.0.content_type)
-                .map_err(outputs::map_error)?;
-            return Ok(Json(outputs::ImportMediaOutput::imported(handle)));
+        let input = input.0;
+        match (input.media_path, input.inline) {
+            (Some(_), Some(_)) => Err(outputs::map_error(pptx_compose::core::error::Error::new(
+                pptx_compose::core::error::ErrorCode::InvalidInput,
+                "pptx_import_media accepts either media_path or inline, not both.",
+            ))),
+            (Some(media_path), None) => {
+                self.permission_policy
+                    .check_read(&media_path)
+                    .map_err(|error| outputs::map_error(error.into_core_error()))?;
+                let handle = self
+                    .sessions
+                    .import_media_path(&input.session_id, media_path, &input.content_type)
+                    .map_err(outputs::map_error)?;
+                Ok(Json(outputs::ImportMediaOutput::imported(handle)))
+            }
+            (None, Some(inline)) => {
+                let bytes = decode_inline_media(&inline).map_err(outputs::map_error)?;
+                let handle = self
+                    .sessions
+                    .import_media_bytes(&input.session_id, bytes, &input.content_type)
+                    .map_err(outputs::map_error)?;
+                Ok(Json(outputs::ImportMediaOutput::imported(handle)))
+            }
+            (None, None) => Err(outputs::map_error(pptx_compose::core::error::Error::new(
+                pptx_compose::core::error::ErrorCode::InvalidInput,
+                "pptx_import_media requires media_path or inline.",
+            ))),
         }
-
-        Err(outputs::map_error(pptx_compose::core::error::Error::new(
-            pptx_compose::core::error::ErrorCode::InvalidInput,
-            "pptx_import_media requires media_path.",
-        )))
     }
 
     /// Dry-run patch validation.
@@ -478,4 +602,109 @@ pub async fn run_server(server: PptxServer) -> Result<(), rmcp::service::ServerI
         .await
         .map(|_| ())
         .map_err(|error| rmcp::service::ServerInitializeError::ConnectionClosed(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use pptx_compose::core::error::ErrorCode;
+
+    use super::*;
+
+    const ONE_BY_ONE_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+
+    #[tokio::test]
+    async fn import_media_accepts_inline_base64_without_filesystem_access() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+
+        let imported = server
+            .pptx_import_media(rmcp::handler::server::wrapper::Parameters(
+                ImportMediaInput {
+                    session_id: opened.session_id.clone(),
+                    media_path: None,
+                    inline: Some(InlineMediaInput {
+                        encoding: "base64".to_owned(),
+                        data: ONE_BY_ONE_PNG_BASE64.to_owned(),
+                    }),
+                    content_type: "image/png".to_owned(),
+                },
+            ))
+            .await
+            .expect("inline media imports");
+
+        let result = imported.0.0.result;
+        assert_eq!(result["media_ref"], "media_1");
+        assert_eq!(result["content_type"], "image/png");
+        assert_eq!(result["byte_length"], 68);
+        assert_eq!(result["dimensions_px"]["width"], 1);
+        assert_eq!(result["dimensions_px"]["height"], 1);
+
+        let session = server
+            .sessions()
+            .get(&opened.session_id)
+            .expect("session remains open");
+        assert!(session.media.contains_key("media_1"));
+    }
+
+    #[tokio::test]
+    async fn import_media_rejects_inline_content_type_mismatch() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+
+        let result = server
+            .pptx_import_media(rmcp::handler::server::wrapper::Parameters(
+                ImportMediaInput {
+                    session_id: opened.session_id,
+                    media_path: None,
+                    inline: Some(InlineMediaInput {
+                        encoding: "base64".to_owned(),
+                        data: ONE_BY_ONE_PNG_BASE64.to_owned(),
+                    }),
+                    content_type: "image/jpeg".to_owned(),
+                },
+            ))
+            .await;
+
+        let Err(error) = result else {
+            panic!("content-type mismatch is rejected");
+        };
+        let envelope = error
+            .structured_content
+            .expect("mismatch error has structured content");
+
+        assert_eq!(error.is_error, Some(true));
+        assert_eq!(
+            envelope["error"]["code"],
+            ErrorCode::UnsupportedMediaType.as_str()
+        );
+    }
+
+    #[test]
+    fn inline_base64_decoder_rejects_invalid_input() {
+        let bad_encoding = decode_inline_media(&InlineMediaInput {
+            encoding: "hex".to_owned(),
+            data: String::new(),
+        })
+        .expect_err("non-base64 encoding fails");
+        assert_eq!(bad_encoding.code(), ErrorCode::InvalidInput);
+
+        let bad_data = decode_inline_media(&InlineMediaInput {
+            encoding: "base64".to_owned(),
+            data: "!!!!".to_owned(),
+        })
+        .expect_err("malformed base64 fails");
+        assert_eq!(bad_data.code(), ErrorCode::InvalidInput);
+    }
+
+    fn open_fixture_session(server: &PptxServer) -> sessions::OpenSession {
+        let fixture = include_bytes!("../../../fixtures/minimal.pptx").to_vec();
+        server
+            .sessions()
+            .open_package(
+                pptx_compose::PresentationDocument::from_bytes(fixture.clone())
+                    .expect("fixture opens"),
+                &fixture,
+            )
+            .expect("session opens")
+    }
 }
