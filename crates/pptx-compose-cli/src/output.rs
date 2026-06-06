@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{self, BufWriter, Write},
+    io::{self, BufWriter, IsTerminal, Write},
     path::{Path, PathBuf},
 };
 
@@ -29,7 +29,7 @@ pub(crate) enum OutputDest {
 pub(crate) struct OutputSink {
     quiet: bool,
     verbose: bool,
-    no_color: bool,
+    color: bool,
     json_errors: bool,
 }
 
@@ -49,16 +49,32 @@ struct ErrorEnvelope<'a> {
 
 impl OutputSink {
     pub(crate) const fn new(quiet: bool, verbose: bool, no_color: bool, json_errors: bool) -> Self {
+        Self::new_with_color_policy(quiet, verbose, no_color, json_errors, false)
+    }
+
+    const fn new_with_color_policy(
+        quiet: bool,
+        verbose: bool,
+        no_color: bool,
+        json_errors: bool,
+        stderr_is_terminal: bool,
+    ) -> Self {
         Self {
             quiet,
             verbose,
-            no_color,
+            color: !no_color && stderr_is_terminal,
             json_errors,
         }
     }
 
-    pub(crate) const fn from_global_args(args: &GlobalArgs) -> Self {
-        Self::new(args.quiet, args.verbose, args.no_color, args.json_errors)
+    pub(crate) fn from_global_args(args: &GlobalArgs) -> Self {
+        Self::new_with_color_policy(
+            args.quiet,
+            args.verbose,
+            args.no_color,
+            args.json_errors,
+            io::stderr().is_terminal(),
+        )
     }
 
     #[allow(dead_code)]
@@ -175,11 +191,15 @@ impl OutputSink {
     }
 
     const fn log_prefix(self, level: LogLevel) -> &'static str {
-        match (self.no_color, level) {
-            (_, LogLevel::Error) => "error",
-            (_, LogLevel::Warn) => "warning",
-            (_, LogLevel::Info) => "info",
-            (_, LogLevel::Debug) => "debug",
+        match (self.color, level) {
+            (false, LogLevel::Error) => "error",
+            (false, LogLevel::Warn) => "warning",
+            (false, LogLevel::Info) => "info",
+            (false, LogLevel::Debug) => "debug",
+            (true, LogLevel::Error) => "\x1b[31merror\x1b[0m",
+            (true, LogLevel::Warn) => "\x1b[33mwarning\x1b[0m",
+            (true, LogLevel::Info) => "\x1b[36minfo\x1b[0m",
+            (true, LogLevel::Debug) => "\x1b[90mdebug\x1b[0m",
         }
     }
 }
@@ -242,4 +262,39 @@ fn emit_json_writes_one_newline_terminated_document() {
 
     let expected = br#"{"status":"success"}"#.iter().copied().chain([b'\n']).collect::<Vec<_>>();
     assert_eq!(stdout, expected);
+}
+
+#[cfg(test)]
+#[test]
+fn no_color_suppresses_ansi_log_prefixes_even_for_terminal_stderr() {
+    let color_sink = OutputSink::new_with_color_policy(false, false, false, false, true);
+    let no_color_sink = OutputSink::new_with_color_policy(false, false, true, false, true);
+
+    let mut colored = Vec::new();
+    color_sink
+        .log_to_writer(LogLevel::Warn, "check", &mut colored)
+        .expect("colored log emits");
+
+    let mut plain = Vec::new();
+    no_color_sink
+        .log_to_writer(LogLevel::Warn, "check", &mut plain)
+        .expect("plain log emits");
+
+    assert_eq!(
+        String::from_utf8(colored).expect("UTF-8"),
+        "\x1b[33mwarning\x1b[0m: check\n"
+    );
+    assert_eq!(String::from_utf8(plain).expect("UTF-8"), "warning: check\n");
+}
+
+#[cfg(test)]
+#[test]
+fn non_terminal_stderr_keeps_log_prefixes_plain_without_no_color() {
+    let sink = OutputSink::new_with_color_policy(false, false, false, false, false);
+    let mut stderr = Vec::new();
+
+    sink.log_to_writer(LogLevel::Error, "check", &mut stderr)
+        .expect("plain log emits");
+
+    assert_eq!(String::from_utf8(stderr).expect("UTF-8"), "error: check\n");
 }
