@@ -1,4 +1,8 @@
-use pptx_compose_core::{opc::part_name::PartName, pptx::ids::ElementKind};
+use pptx_compose_core::{
+    opc::part_name::PartName,
+    pptx::ids::ElementKind,
+    xml::{document::XmlElement, namespaces::NamespaceBinding},
+};
 
 pub mod add_image;
 pub mod add_text_box;
@@ -37,4 +41,26 @@ pub struct ResolvedElement {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedMediaPart {
     pub part: PartName,
+}
+
+const P_NS: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
+const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+pub(super) fn ensure_slide_namespaces(root: &mut XmlElement) {
+    ensure_namespace(root, Some("p"), P_NS);
+    ensure_namespace(root, Some("a"), A_NS);
+    ensure_namespace(root, Some("r"), R_NS);
+}
+
+fn ensure_namespace(root: &mut XmlElement, prefix: Option<&str>, uri: &str) {
+    if root.namespaces.resolve_prefix(prefix) == Some(uri) {
+        return;
+    }
+    if let Some(prefix) = prefix {
+        root.namespaces
+            .push(NamespaceBinding::prefixed(prefix, uri));
+    } else {
+        root.namespaces.push(NamespaceBinding::default(uri));
+    }
 }

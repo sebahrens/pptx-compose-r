@@ -11,7 +11,7 @@ use pptx_compose_core::{
 use pptx_compose_json::schemas::OperationTarget;
 
 use crate::{
-    operations::{ResolvedSlide, bounds::validate_bounds},
+    operations::{ResolvedSlide, bounds::validate_bounds, ensure_slide_namespaces},
     patch::{AddTextBoxOperation, Bounds, InsertOptions, PatchEffects, TextAlign, TextBoxStyle},
 };
 
@@ -139,6 +139,7 @@ fn insert_text_box(document: &mut XmlDocument, operation: &AddTextBox) -> Result
         Error::malformed_xml("Slide XML does not contain a root element.")
             .with_location(operation.location(None))
     })?;
+    ensure_slide_namespaces(root);
     let sp_tree = first_descendant_mut(root, "spTree").ok_or_else(|| {
         Error::new(
             ErrorCode::SelectorNotFound,
@@ -560,4 +561,105 @@ fn builds_template() {
         .validate()
         .expect_err("zero width is invalid");
     assert_eq!(error.code(), ErrorCode::InvalidBounds);
+}
+
+#[cfg(test)]
+#[test]
+fn declares_missing_slide_namespaces_before_inserting_text_box() {
+    let slide_part = PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid slide part");
+    let mut package = Package::new();
+    package
+        .insert_zip_entry(
+            "ppt/slides/slide1.xml",
+            br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/></p:spTree></p:cSld></p:sld>"#.to_vec(),
+        )
+        .expect("slide inserted");
+    let target = ResolvedSlide {
+        slide_id: "slide-1".to_owned(),
+        part: slide_part.clone(),
+    };
+    let operation = AddTextBox {
+        operation_id: "op-namespaces".to_owned(),
+        slide_id: "slide-1".to_owned(),
+        text: "Hello".to_owned(),
+        bounds: Bounds {
+            x: 1,
+            y: 2,
+            cx: 3,
+            cy: 4,
+        },
+        name: None,
+        alt_text: None,
+        style: None,
+        insert: None,
+    };
+
+    operation
+        .apply(&mut package, &target)
+        .expect("text box is inserted");
+
+    let slide_xml = String::from_utf8(
+        package
+            .parts()
+            .get(&slide_part)
+            .expect("slide still exists")
+            .bytes()
+            .to_vec(),
+    )
+    .expect("slide XML is UTF-8");
+    parse_document(slide_xml.as_bytes()).expect("inserted slide XML remains well formed");
+    assert_eq!(
+        slide_xml,
+        r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="1" name="TextBox 1"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="1" y="2"/><a:ext cx="3" cy="4"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr wrap="square" rtlCol="0"><a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" dirty="0"/><a:t>Hello</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn preserves_existing_slide_namespaces_without_duplicates() {
+    let slide_part = PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid slide part");
+    let mut package = Package::new();
+    package
+        .insert_zip_entry(
+            "ppt/slides/slide1.xml",
+            br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/></p:spTree></p:cSld></p:sld>"#.to_vec(),
+        )
+        .expect("slide inserted");
+    let target = ResolvedSlide {
+        slide_id: "slide-1".to_owned(),
+        part: slide_part.clone(),
+    };
+    let operation = AddTextBox {
+        operation_id: "op-existing-namespaces".to_owned(),
+        slide_id: "slide-1".to_owned(),
+        text: "Hello".to_owned(),
+        bounds: Bounds {
+            x: 1,
+            y: 2,
+            cx: 3,
+            cy: 4,
+        },
+        name: None,
+        alt_text: None,
+        style: None,
+        insert: None,
+    };
+
+    operation
+        .apply(&mut package, &target)
+        .expect("text box is inserted");
+
+    let slide_xml = String::from_utf8(
+        package
+            .parts()
+            .get(&slide_part)
+            .expect("slide still exists")
+            .bytes()
+            .to_vec(),
+    )
+    .expect("slide XML is UTF-8");
+    assert_eq!(slide_xml.matches("xmlns:p=").count(), 1);
+    assert_eq!(slide_xml.matches("xmlns:a=").count(), 1);
+    assert_eq!(slide_xml.matches("xmlns:r=").count(), 1);
+    assert!(slide_xml.contains(r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#));
 }
