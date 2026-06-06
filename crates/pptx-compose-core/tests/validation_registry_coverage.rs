@@ -48,11 +48,8 @@ fn every_044_finding_has_producer_or_deferral() {
         );
     }
 
-    assert_deferral(FindingCode::MediaContentTypeMismatch, "specs/032");
-    assert_deferral(
-        FindingCode::UnresolvedRelationshipReference,
-        "specs/012-content-types-and-relationships.md",
-    );
+    assert_has_runtime_producer(FindingCode::MediaContentTypeMismatch);
+    assert_has_runtime_producer(FindingCode::UnresolvedRelationshipReference);
     assert_deferral(
         FindingCode::SlideOrderMismatch,
         "specs/050-roundtrip-invariants.md",
@@ -65,6 +62,23 @@ fn coverage_entries(code: FindingCode) -> Vec<&'static FindingCoverage> {
         .iter()
         .filter(|entry| entry.code == code)
         .collect()
+}
+
+fn assert_has_runtime_producer(code: FindingCode) {
+    let entries = coverage_entries(code);
+    let entry = entries
+        .first()
+        .copied()
+        .expect("coverage entry must exist for runtime producer assertion");
+
+    assert!(
+        entry.producer.is_some() && entry.producer_test.is_some(),
+        "{code:?} must have runtime producer coverage"
+    );
+    assert!(
+        entry.deferral.is_none(),
+        "{code:?} must not be satisfied by deferral"
+    );
 }
 
 fn assert_deferral(code: FindingCode, spec_ref: &str) {

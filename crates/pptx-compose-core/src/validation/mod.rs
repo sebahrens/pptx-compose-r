@@ -156,13 +156,9 @@ pub const FINDING_COVERAGE: &[FindingCoverage] = &[
     },
     FindingCoverage {
         code: FindingCode::MediaContentTypeMismatch,
-        producer: None,
-        producer_test: None,
-        deferral: Some(Deferral {
-            owner: "media sniff validation task",
-            spec: "specs/012-content-types-and-relationships.md; specs/032; specs/044-results-validation-errors.md",
-            reason: "Media magic-byte sniffing and content-type comparison are owned by the media validation work; this task only audits registry coverage.",
-        }),
+        producer: Some(package_graph::PRODUCER_CHECK_MEDIA_CONTENT_TYPE_MISMATCH),
+        producer_test: Some("validation::package_graph::detects_media_content_type_mismatch"),
+        deferral: None,
     },
     FindingCoverage {
         code: FindingCode::DanglingInternalRelationship,
@@ -172,13 +168,9 @@ pub const FINDING_COVERAGE: &[FindingCoverage] = &[
     },
     FindingCoverage {
         code: FindingCode::UnresolvedRelationshipReference,
-        producer: None,
-        producer_test: None,
-        deferral: Some(Deferral {
-            owner: "slide XML relationship reference validation task",
-            spec: "specs/012-content-types-and-relationships.md; specs/050-roundtrip-invariants.md",
-            reason: "The core package validator does not yet parse every XML relationship reference that can carry an r:id/rId.",
-        }),
+        producer: Some(package_graph::PRODUCER_CHECK_UNRESOLVED_RELATIONSHIP_REFERENCE),
+        producer_test: Some("validation::package_graph::detects_unresolved_relationship_reference"),
+        deferral: None,
     },
     FindingCoverage {
         code: FindingCode::DuplicateRelationshipId,
