@@ -8,10 +8,7 @@ use pptx_compose_core::{
         relationships::{RelationshipSet, RelationshipSource},
     },
     pptx::{
-        ids::{
-            ElementKind as CoreElementKind, SpTreePath, agent_element_id, paragraph_agent_id,
-            run_agent_id,
-        },
+        ids::{ElementKind as CoreElementKind, SpTreePath, agent_element_id},
         picture::read_picture,
         presentation::PresentationDocument,
         shape::{Shape, ShapeKind, read_shape},
@@ -371,7 +368,6 @@ fn collect_text_matches(
                 continue;
             };
             for span in find_query_spans(&text.plain, query)? {
-                let (paragraph_id, run_id) = locate_text_ids(text, span.start, span.end);
                 matches.push(TextMatch {
                     slide_id: slide.detail.id.clone(),
                     slide_index: slide.detail.index,
@@ -380,8 +376,6 @@ fn collect_text_matches(
                     part: element.part.clone(),
                     fingerprint: element.fingerprint.clone(),
                     text_hash: text.text_hash.clone(),
-                    paragraph_id,
-                    run_id,
                     span,
                     matched_text: substring_by_char_span(&text.plain, span),
                     selector: ElementSelector {
@@ -427,25 +421,6 @@ fn find_query_spans(text: &str, query: &str) -> Result<Vec<TextSpan>, JsonError>
         search_start = byte_end;
     }
     Ok(spans)
-}
-
-fn locate_text_ids(text: &TextView, start: u32, end: u32) -> (Option<String>, Option<String>) {
-    let mut cursor = 0_u32;
-    for paragraph in &text.paragraphs {
-        let paragraph_start = cursor;
-        for run in &paragraph.runs {
-            let run_len = u32::try_from(run.text.chars().count()).unwrap_or(u32::MAX);
-            let run_end = cursor.saturating_add(run_len);
-            if start >= cursor && end <= run_end {
-                return (Some(paragraph.id.clone()), Some(run.id.clone()));
-            }
-            cursor = run_end;
-        }
-        if start >= paragraph_start && end <= cursor {
-            return (Some(paragraph.id.clone()), None);
-        }
-    }
-    (None, None)
 }
 
 fn substring_by_char_span(text: &str, span: TextSpan) -> String {
@@ -610,8 +585,7 @@ fn project_element(
     media: &mut BTreeMap<String, Value>,
 ) -> Result<ElementView, JsonError> {
     let shape = read_shape(element, path.clone());
-    let text = first_descendant(element, "txBody")
-        .map(|tx_body| project_text(tx_body, slide_id, core_kind, shape.cnvpr_id, &path));
+    let text = first_descendant(element, "txBody").map(project_text);
     let text_hash = text.as_ref().map(|text| text.text_hash.clone());
     let image = if core_kind == CoreElementKind::Picture {
         match read_picture(element, path.clone(), slide_rels, package) {
@@ -678,36 +652,24 @@ fn project_element(
     })
 }
 
-fn project_text(
-    tx_body: &XmlElement,
-    slide_id: &str,
-    kind: CoreElementKind,
-    cnvpr_id: Option<i64>,
-    path: &SpTreePath,
-) -> TextView {
+fn project_text(tx_body: &XmlElement) -> TextView {
     let body = read_text_body(tx_body);
-    let element_id = agent_element_id(slide_id, kind, cnvpr_id, path);
     let paragraphs = body
         .paragraphs
         .into_iter()
-        .map(|paragraph| {
-            let paragraph_id = paragraph_agent_id(&element_id, paragraph.index as usize);
-            Paragraph {
-                id: paragraph_id.clone(),
-                text: paragraph.runs.iter().map(|run| run.text.as_str()).collect(),
-                runs: paragraph
-                    .runs
-                    .into_iter()
-                    .map(|run| Run {
-                        id: run_agent_id(&paragraph_id, run.index as usize),
-                        text: run.text,
-                        style_summary: StyleSummary {
-                            font_size_pt: None,
-                            bold: None,
-                        },
-                    })
-                    .collect(),
-            }
+        .map(|paragraph| Paragraph {
+            text: paragraph.runs.iter().map(|run| run.text.as_str()).collect(),
+            runs: paragraph
+                .runs
+                .into_iter()
+                .map(|run| Run {
+                    text: run.text,
+                    style_summary: StyleSummary {
+                        font_size_pt: None,
+                        bold: None,
+                    },
+                })
+                .collect(),
         })
         .collect();
     TextView {

@@ -76,7 +76,9 @@ Required fields:
 Optional fields:
 
 - `match`: exact current text guard. If present and the current text differs, validation fails.
-- `mode`: `whole_element` by default; future modes may target paragraph or run IDs.
+- `mode`: `whole_element` by default. V1 exposes structured paragraph/run text
+  for context only; it must not emit paragraph/run IDs because no paragraph/run
+  replacement mode exists yet.
 - `format_policy`: `preserve_existing_runs`, `preserve_first_run`, or `single_run_default_style`.
 - `overflow_policy`: `allow` by default. V1 does not guarantee rendered text fit unless an external renderer is configured.
 

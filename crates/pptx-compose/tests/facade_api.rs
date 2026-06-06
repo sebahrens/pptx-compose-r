@@ -12,8 +12,12 @@ use pptx_compose::{
         media_inputs::{MediaBinding, MediaSource},
         patch::parse_patch,
     },
-    json::agent_view::{FindTextScope, views::FindTextRequest},
+    json::agent_view::{
+        FindTextScope,
+        views::{FindTextRequest, ViewMode},
+    },
 };
+use serde_json::Value;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 #[test]
@@ -166,22 +170,43 @@ fn find_text_returns_selector_ready_hits() {
     assert_eq!(hit.matched_text, "Original");
     assert_eq!(hit.span.start, 0);
     assert_eq!(hit.span.end, 8);
-    assert!(
-        hit.paragraph_id
-            .as_deref()
-            .is_some_and(|id| id.ends_with(":p0"))
-    );
-    assert!(
-        hit.run_id
-            .as_deref()
-            .is_some_and(|id| id.ends_with(":p0:r0"))
-    );
     assert_eq!(hit.selector.selector_type, "element_id");
     assert_eq!(hit.selector.id, hit.element_id);
     assert_eq!(hit.selector.guards.slide_id, hit.slide_id);
     assert_eq!(hit.selector.guards.part, hit.part);
     assert_eq!(hit.selector.guards.text_hash, hit.text_hash);
     assert_eq!(hit.selector.guards.fingerprint, hit.fingerprint);
+}
+
+#[test]
+fn agent_text_view_does_not_emit_unaddressable_run_or_paragraph_ids() {
+    let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
+    let view = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            slide_id: Some("slide-1".to_owned()),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide_detail builds");
+    let text = view["slides"][0]["elements"]
+        .as_array()
+        .expect("slide_detail exposes elements")
+        .iter()
+        .find_map(|element| element.get("text"))
+        .expect("text deck exposes text");
+
+    for paragraph in text["paragraphs"].as_array().expect("paragraphs array") {
+        assert_no_field(paragraph, "id");
+        for run in paragraph["runs"].as_array().expect("runs array") {
+            assert_no_field(run, "id");
+        }
+    }
+}
+
+fn assert_no_field(value: &Value, field: &str) {
+    assert_eq!(value.get(field), None);
 }
 
 #[test]

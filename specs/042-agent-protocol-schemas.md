@@ -90,11 +90,9 @@ Flat `text` is convenient but insufficient for safe targeting. Text-capable elem
     "normalized": "Quarterly Results",
     "paragraphs": [
       {
-        "id": "slide-1:shape-4:p0",
         "text": "Quarterly Results",
         "runs": [
           {
-            "id": "slide-1:shape-4:p0:r0",
             "text": "Quarterly Results",
             "style_summary": { "font_size_pt": 32, "bold": false }
           }

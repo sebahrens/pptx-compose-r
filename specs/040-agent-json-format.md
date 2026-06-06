@@ -10,6 +10,9 @@ The agent JSON format is a compact semantic projection for LLMs. It is not a raw
 - No inline binary blobs by default.
 - Include provenance so patches can be validated.
 - Preserve unknown content by reference rather than dropping it.
+- Emit only IDs that are accepted by V1 patch operations. Structured paragraph
+  and run text may be exposed for context, but paragraph/run IDs must not be
+  emitted until paragraph/run replacement modes are implemented.
 
 Agent element IDs are valid for the `document_id` and `revision` that produced the JSON view. CLI workflows that export JSON and apply a later patch must include those fields and reject stale patches unless the implementation can prove the IDs still resolve to the same elements.
 

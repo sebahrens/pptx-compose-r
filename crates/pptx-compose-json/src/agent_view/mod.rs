@@ -128,7 +128,6 @@ pub struct TextView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Paragraph {
-    pub id: String,
     pub text: String,
     pub runs: Vec<Run>,
 }
@@ -136,7 +135,6 @@ pub struct Paragraph {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
-    pub id: String,
     pub text: String,
     pub style_summary: StyleSummary,
 }
@@ -194,8 +192,6 @@ pub struct TextMatch {
     pub part: String,
     pub fingerprint: String,
     pub text_hash: String,
-    pub paragraph_id: Option<String>,
-    pub run_id: Option<String>,
     pub span: TextSpan,
     pub matched_text: String,
     pub selector: ElementSelector,
@@ -325,11 +321,9 @@ pub mod schema {
                                     "normalized": "Quarterly Results",
                                     "paragraphs": [
                                         {
-                                            "id": "slide-1:shape-4:p0",
                                             "text": "Quarterly Results",
                                             "runs": [
                                                 {
-                                                    "id": "slide-1:shape-4:p0:r0",
                                                     "text": "Quarterly Results",
                                                     "style_summary": { "font_size_pt": 32, "bold": false }
                                                 }
