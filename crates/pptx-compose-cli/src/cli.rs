@@ -121,6 +121,8 @@ pub struct ApplyArgs {
     #[arg(long)]
     pub in_place: bool,
     #[arg(long)]
+    pub no_backup: bool,
+    #[arg(long)]
     pub deterministic: bool,
 }
 
@@ -220,5 +222,6 @@ fn parses_apply_dry_run() {
     assert_eq!(args.diff, None);
     assert!(!args.overwrite);
     assert!(!args.in_place);
+    assert!(!args.no_backup);
     assert!(!args.deterministic);
 }

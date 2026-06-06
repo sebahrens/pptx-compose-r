@@ -1,4 +1,8 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
 
 use pptx_compose::{
     ApplyPatchOptions, OpenOptions, PresentationDocument, WriteMode, WriteOptions,
@@ -64,6 +68,7 @@ pub(crate) fn apply(
             )
         })
         .and_then(|output| permissions.authorize_write(output, PathIntent::OutputPptx))?;
+    let in_place_output = same_path(&input, &output);
     enforce_apply_write_guards(&input, &output, args.overwrite, args.in_place)?;
 
     let apply_output = document
@@ -77,9 +82,20 @@ pub(crate) fn apply(
         )
         .map_err(apply_error)?;
     let write_options = write_options_from_args(&args);
-    document
-        .write_path_with_options(&output, write_options)
-        .map_err(CliError::from_error)?;
+    let backup = if in_place_output && !args.no_backup {
+        let backup = available_backup_path(&input);
+        permissions.authorize_write(&backup, PathIntent::OutputPptx)?;
+        create_in_place_backup(&input, &backup)?;
+        Some(backup)
+    } else {
+        None
+    };
+    if let Err(error) = document.write_path_with_options(&output, write_options) {
+        if let Some(backup) = &backup {
+            restore_in_place_backup(backup, &output)?;
+        }
+        return Err(CliError::from_error(error));
+    }
     let sink = OutputSink::default();
     sink.emit_optional_patch_report(&apply_output.report, args.report)?;
     sink.emit_diff(&apply_output.diff, args.diff)?;
@@ -169,7 +185,7 @@ fn reject_known_unsupported_operations(patch: &serde_json::Value) -> Result<(), 
 pub(crate) fn write_options_from_args(args: &ApplyArgs) -> WriteOptions {
     WriteOptions {
         mode: WriteMode::Deterministic,
-        overwrite: args.overwrite,
+        overwrite: args.overwrite || args.in_place,
         validate: true,
         atomic: true,
     }
@@ -193,20 +209,21 @@ fn enforce_apply_write_guards(
     overwrite: bool,
     in_place: bool,
 ) -> Result<(), CliError> {
-    if output.exists() && !overwrite {
+    let same_output = same_path(input, output);
+    if same_output && !in_place {
+        return Err(CliError::new(
+            pptx_compose::core::error::ErrorCode::WriteFailed,
+            "Output path equals input path; pass --in-place to edit the input path.",
+        ));
+    }
+
+    if output.exists() && !overwrite && !same_output {
         return Err(CliError::new(
             pptx_compose::core::error::ErrorCode::WriteFailed,
             format!(
                 "Output path {} already exists; pass --overwrite to replace it.",
                 output.display()
             ),
-        ));
-    }
-
-    if same_path(input, output) && !in_place {
-        return Err(CliError::new(
-            pptx_compose::core::error::ErrorCode::WriteFailed,
-            "Output path equals input path; pass --in-place to edit the input path.",
         ));
     }
 
@@ -218,6 +235,56 @@ fn same_path(left: &Path, right: &Path) -> bool {
         (Ok(left), Ok(right)) => left == right,
         _ => left == right,
     }
+}
+
+fn create_in_place_backup(input: &Path, backup: &Path) -> Result<(), CliError> {
+    copy_file_exclusive(input, backup).map_err(|source| {
+        CliError::write_with_source(
+            format!("Could not create in-place backup {}.", backup.display()),
+            source,
+        )
+    })?;
+    Ok(())
+}
+
+fn available_backup_path(input: &Path) -> PathBuf {
+    let base = PathBuf::from(format!("{}.bak", input.display()));
+    if !base.exists() {
+        return base;
+    }
+
+    for index in 1.. {
+        let candidate = PathBuf::from(format!("{}.bak.{index}", input.display()));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded backup suffix search must eventually return")
+}
+
+fn copy_file_exclusive(from: &Path, to: &Path) -> io::Result<()> {
+    let mut input = fs::File::open(from)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)?;
+    io::copy(&mut input, &mut output)?;
+    output.flush()?;
+    output.sync_all()
+}
+
+fn restore_in_place_backup(backup: &Path, output: &Path) -> Result<(), CliError> {
+    fs::copy(backup, output).map_err(|source| {
+        CliError::write_with_source(
+            format!(
+                "Could not restore in-place output {} from backup {}.",
+                output.display(),
+                backup.display()
+            ),
+            source,
+        )
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -242,6 +309,24 @@ fn default_apply_selects_deterministic_mode() {
 #[test]
 fn repeated_apply_without_flag_is_byte_identical() {
     test_support::repeated_apply_without_flag_is_byte_identical();
+}
+
+#[cfg(test)]
+#[test]
+fn in_place_apply_writes_backup() {
+    test_support::in_place_apply_writes_backup();
+}
+
+#[cfg(test)]
+#[test]
+fn in_place_no_backup_suppresses_backup() {
+    test_support::in_place_no_backup_suppresses_backup();
+}
+
+#[cfg(test)]
+#[test]
+fn in_place_apply_restores_from_backup_on_write_failure() {
+    test_support::in_place_apply_restores_from_backup_on_write_failure();
 }
 
 #[cfg(test)]
@@ -379,6 +464,96 @@ mod test_support {
         assert_eq!(
             fs::read(&first_output).expect("first output reads"),
             fs::read(&second_output).expect("second output reads")
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn in_place_apply_writes_backup() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        fs::create_dir_all(&root).expect("test dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
+
+        let mut args = args(&input, &patch, &input, false, false);
+        args.in_place = true;
+        let write_options = write_options_from_args(&args);
+        assert!(
+            write_options.overwrite,
+            "in-place mode permits same-path overwrite"
+        );
+        apply(args, &permissions(&root), OpenOptions::default()).expect("in-place apply succeeds");
+
+        let backup = root.join("input.pptx.bak");
+        assert_eq!(
+            fs::read(&backup).expect("backup reads"),
+            input_bytes,
+            "backup preserves original input bytes"
+        );
+        assert_ne!(
+            fs::read(&input).expect("input reads after apply"),
+            input_bytes,
+            "input is replaced in-place"
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn in_place_no_backup_suppresses_backup() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        fs::create_dir_all(&root).expect("test dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
+
+        let mut args = args(&input, &patch, &input, false, false);
+        args.in_place = true;
+        args.no_backup = true;
+        apply(args, &permissions(&root), OpenOptions::default())
+            .expect("in-place apply without backup succeeds");
+
+        assert!(
+            !root.join("input.pptx.bak").exists(),
+            "--no-backup suppresses the sibling backup"
+        );
+        assert_ne!(
+            fs::read(&input).expect("input reads after apply"),
+            input_bytes,
+            "input is replaced in-place"
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn in_place_apply_restores_from_backup_on_write_failure() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        fs::create_dir_all(&root).expect("test dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
+        precreate_atomic_temp_outputs(&input);
+
+        let mut args = args(&input, &patch, &input, false, false);
+        args.in_place = true;
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("pre-created atomic temp output forces write failure");
+
+        assert_eq!(err.code(), ErrorCode::WriteFailed);
+        assert_eq!(
+            fs::read(&input).expect("input reads after failed write"),
+            input_bytes,
+            "input is restored from backup after write failure"
+        );
+        assert_eq!(
+            fs::read(root.join("input.pptx.bak")).expect("backup reads"),
+            input_bytes
         );
 
         fs::remove_dir_all(root).expect("test dir removes");
@@ -607,6 +782,7 @@ mod test_support {
             diff: None,
             overwrite,
             in_place: false,
+            no_backup: false,
             deterministic,
         }
     }
@@ -832,5 +1008,20 @@ mod test_support {
         }
 
         panic!("could not create a unique apply test directory")
+    }
+
+    fn precreate_atomic_temp_outputs(output: &Path) {
+        let file_name = output
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("test output filename is UTF-8");
+        for counter in 0..4096 {
+            let temp = output.with_file_name(format!(
+                ".{file_name}.{}.{}.tmp",
+                std::process::id(),
+                counter
+            ));
+            fs::write(temp, b"precreated temp output").expect("temp output writes");
+        }
     }
 }
