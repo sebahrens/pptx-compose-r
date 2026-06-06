@@ -5,7 +5,7 @@ use crate::{
         part_name::PartName,
         relationships::{Relationship, RelationshipSource, TargetMode, resolve_internal_target},
     },
-    pptx::slide::{Slide, SlideId, SlideRef, rels_part_name_for},
+    pptx::slide::{Slide, SlideId, SlideRef, rels_part_name_for, resolve_layout},
     xml::{document::XmlElement, parser::parse_document},
 };
 
@@ -98,12 +98,16 @@ impl Presentation {
             let agent_index = u32::try_from(slides.len()).map_err(|_| {
                 Error::resource_limit_exceeded("Presentation contains too many slides.")
             })?;
+            let layout = package
+                .relationships()
+                .set_for(&slide_part_name)
+                .and_then(|slide_rels| resolve_layout(slide_rels, package));
             slides.push(Slide {
                 id,
                 agent_index,
                 rels_part_name: rels_part_name_for(&slide_part_name)?,
                 part_name: slide_part_name,
-                layout: None,
+                layout,
             });
         }
 
