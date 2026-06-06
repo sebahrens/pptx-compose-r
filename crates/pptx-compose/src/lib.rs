@@ -29,10 +29,11 @@ use core::{
     },
     pptx::presentation as core_presentation,
     provenance::{document_id::document_id as provenance_document_id, revision},
-    xml::{document::XmlElement, parser::parse_document},
+    xml::{document::XmlElement, parser::parse_document_with_limits},
     zip::{
         ZipEntryMetadata,
-        reader::{RawEntry, from_bytes},
+        limits::{OpenOptions as CoreOpenOptions, ResourceLimits},
+        reader::{RawEntry, from_bytes_with_options},
         sniff::sniff_package,
         writer::{self as zip_writer, DirtyEntry, PackageZipWriter, WriteEntry},
     },
@@ -55,6 +56,7 @@ pub struct PresentationDocument {
     source_path: Option<PathBuf>,
     source_bytes: Vec<u8>,
     entries: Vec<RawEntry>,
+    resource_limits: ResourceLimits,
     dirty_parts: BTreeSet<PartName>,
     revision: revision::Revision,
 }
@@ -64,7 +66,7 @@ impl PresentationDocument {
         Self::open_path_with_options(path, OpenOptions::default())
     }
 
-    pub fn open_path_with_options(path: impl AsRef<Path>, _options: OpenOptions) -> Result<Self> {
+    pub fn open_path_with_options(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self> {
         let path = path.as_ref();
         let bytes = fs::read(path).map_err(|source| {
             Error::with_source(
@@ -73,19 +75,30 @@ impl PresentationDocument {
                 source,
             )
         })?;
-        let mut document = Self::from_bytes(bytes)?;
+        let mut document = Self::from_bytes_with_options(bytes, options)?;
         document.source_path = Some(path.to_path_buf());
         Ok(document)
     }
 
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        Self::from_bytes_with_options(bytes, OpenOptions::default())
+    }
+
+    pub fn from_bytes_with_options(bytes: impl AsRef<[u8]>, options: OpenOptions) -> Result<Self> {
         let source_bytes = bytes.as_ref().to_vec();
         sniff_package(&mut Cursor::new(source_bytes.as_slice()))?;
-        let entries = from_bytes(&source_bytes)?;
+        let entries = from_bytes_with_options(
+            &source_bytes,
+            &CoreOpenOptions {
+                resource_limits: options.resource_limits.clone(),
+            },
+        )?;
+        package_from_entries_with_limits(&entries, &options.resource_limits)?;
         Ok(Self {
             source_path: None,
             source_bytes,
             entries,
+            resource_limits: options.resource_limits,
             dirty_parts: BTreeSet::new(),
             revision: revision::on_open(),
         })
@@ -110,7 +123,7 @@ impl PresentationDocument {
         &self,
         options: AgentViewOptions,
     ) -> Result<serde_json::Value> {
-        let package = package_from_entries(&self.entries)?;
+        let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         let model = core_presentation::PresentationDocument::open(package)?;
         pptx_compose_json::agent_view::views::build_view(
             &model,
@@ -126,7 +139,7 @@ impl PresentationDocument {
     }
 
     pub fn to_legacy_json(&self) -> Result<serde_json::Value> {
-        let package = package_from_entries(&self.entries)?;
+        let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         pptx_compose_json::legacy_path_map::to_legacy_map(&package).map_err(json_error)
     }
 
@@ -134,7 +147,7 @@ impl PresentationDocument {
         &self,
         request: FindTextRequest,
     ) -> Result<pptx_compose_json::agent_view::FindTextResult> {
-        let package = package_from_entries(&self.entries)?;
+        let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         let model = core_presentation::PresentationDocument::open(package)?;
         pptx_compose_json::agent_view::views::find_text(&model, request).map_err(json_error)
     }
@@ -150,7 +163,7 @@ impl PresentationDocument {
         if options.validate {
             let _report = self.validate()?;
         }
-        let mut package = package_from_entries(&self.entries)?;
+        let mut package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         apply_dirty_parts(&mut package, &self.dirty_parts);
         let output = Cursor::new(Vec::new());
         let output = write_package_to_writer(
@@ -189,7 +202,7 @@ impl PresentationDocument {
         validate_envelope(&patch, &DocumentState::new(document_id.clone(), revision))?;
         if options.dry_run {
             let validation = self.validate()?;
-            let package = package_from_entries(&self.entries)?;
+            let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
             validate_patch_operations(&package, &patch.operations, &media)?;
             return Ok(PatchReport {
                 schema: pptx_compose_json::schema_versions::PATCH_REPORT_SCHEMA.to_owned(),
@@ -205,10 +218,10 @@ impl PresentationDocument {
                 validation: pptx_compose_edit::reports::patch_validation_summary(&validation),
             });
         }
-        let package = package_from_entries(&self.entries)?;
+        let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         validate_patch_operations(&package, &patch.operations, &media)?;
 
-        let mut package = package_from_entries(&self.entries)?;
+        let mut package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         let mut executor = RealOperationExecutor {
             media_inputs: &media,
         };
@@ -359,7 +372,7 @@ impl PresentationDocument {
         if options.validate {
             let _report = self.validate()?;
         }
-        let mut package = package_from_entries(&self.entries)?;
+        let mut package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         apply_dirty_parts(&mut package, &self.dirty_parts);
         write_package_to_writer(
             &self.source_bytes,
@@ -374,7 +387,7 @@ impl PresentationDocument {
     }
 
     pub fn validate(&self) -> Result<ValidationReport> {
-        let package = package_from_entries(&self.entries)?;
+        let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         pptx_compose_edit::reports::validation_report(
             core::validation::validate_package(&package, core::validation::ValidationMode::Edited),
             document_id_from_entries(&self.entries)?,
@@ -480,7 +493,10 @@ fn json_error(error: pptx_compose_json::schemas::JsonError) -> Error {
     }
 }
 
-fn package_from_entries(entries: &[RawEntry]) -> Result<Package> {
+fn package_from_entries_with_limits(
+    entries: &[RawEntry],
+    resource_limits: &ResourceLimits,
+) -> Result<Package> {
     let mut package = Package::new();
     for entry in entries {
         if entry.meta.is_dir {
@@ -492,8 +508,8 @@ fn package_from_entries(entries: &[RawEntry]) -> Result<Package> {
         )?)?;
     }
 
-    hydrate_content_types(&mut package)?;
-    hydrate_relationships(&mut package)?;
+    hydrate_content_types(&mut package, resource_limits)?;
+    hydrate_relationships(&mut package, resource_limits)?;
     Ok(package)
 }
 
@@ -716,17 +732,17 @@ fn dirty_zip_metadata(index: usize, name: &str, bytes: &[u8]) -> ZipEntryMetadat
     }
 }
 
-fn hydrate_content_types(package: &mut Package) -> Result<()> {
+fn hydrate_content_types(package: &mut Package, resource_limits: &ResourceLimits) -> Result<()> {
     let name = PartName::from_zip_entry("[Content_Types].xml")?;
     let part = package
         .parts()
         .get(&name)
         .ok_or_else(|| Error::unsupported_package("Package is missing [Content_Types].xml."))?;
-    *package.content_types_mut() = ContentTypes::parse(part.bytes())?;
+    *package.content_types_mut() = ContentTypes::parse_with_limits(part.bytes(), resource_limits)?;
     Ok(())
 }
 
-fn hydrate_relationships(package: &mut Package) -> Result<()> {
+fn hydrate_relationships(package: &mut Package, resource_limits: &ResourceLimits) -> Result<()> {
     let rels_parts = package
         .parts()
         .iter()
@@ -736,12 +752,12 @@ fn hydrate_relationships(package: &mut Package) -> Result<()> {
 
     for (rels_part, bytes) in rels_parts {
         if rels_part.as_str() == "/_rels/.rels" {
-            for relationship in parse_root_relationships(&bytes)? {
+            for relationship in parse_root_relationships(&bytes, resource_limits)? {
                 package.push_relationship(relationship);
             }
         } else {
             let source = relationship_source_for(&rels_part)?;
-            let set = RelationshipSet::parse(&source, &bytes)?;
+            let set = RelationshipSet::parse_with_limits(&source, &bytes, resource_limits)?;
             package.relationships_mut().insert_set(set);
         }
     }
@@ -749,13 +765,17 @@ fn hydrate_relationships(package: &mut Package) -> Result<()> {
     Ok(())
 }
 
-fn parse_root_relationships(bytes: &[u8]) -> Result<Vec<Relationship>> {
-    let document = parse_document(bytes).map_err(|source| {
-        Error::with_source(
-            source.code(),
-            "Could not parse package root relationships.",
-            source,
-        )
+fn parse_root_relationships(
+    bytes: &[u8],
+    resource_limits: &ResourceLimits,
+) -> Result<Vec<Relationship>> {
+    let document = parse_document_with_limits(bytes, resource_limits).map_err(|source| {
+        let code = if source.code() == ErrorCode::ResourceLimitExceeded {
+            source.code()
+        } else {
+            ErrorCode::UnsupportedPackage
+        };
+        Error::with_source(code, "Could not parse package root relationships.", source)
     })?;
     let root = document.root_element().ok_or_else(|| {
         Error::unsupported_package("Package root relationships part has no root element.")

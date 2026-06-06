@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use pptx_compose::{
-    ApplyPatchOptions, PresentationDocument, WriteMode, WriteOptions,
+    ApplyPatchOptions, OpenOptions, PresentationDocument, WriteMode, WriteOptions,
     core::error::{Error, ErrorCode, ErrorLocation},
     edit::{
         diffs::{SEMANTIC_DIFF_SCHEMA, SEMANTIC_DIFF_VERSION, SemanticDiff},
@@ -17,7 +17,11 @@ use crate::{
     permissions::{PathIntent, PermissionContext},
 };
 
-pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<(), CliError> {
+pub(crate) fn apply(
+    args: ApplyArgs,
+    permissions: &PermissionContext,
+    open_options: OpenOptions,
+) -> Result<(), CliError> {
     let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
     let patch = permissions.authorize_read(&args.patch, PathIntent::InputPptx)?;
     if let Some(manifest) = &args.media_manifest {
@@ -32,7 +36,8 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
 
     let patch = read_patch(&patch)?;
     let media_inputs = read_media_inputs(args.media_manifest.as_deref())?;
-    let mut document = PresentationDocument::open_path(&input).map_err(CliError::from_error)?;
+    let mut document = PresentationDocument::open_path_with_options(&input, open_options)
+        .map_err(CliError::from_error)?;
     if args.dry_run {
         let report = document
             .apply_patch_with_options(
@@ -268,7 +273,7 @@ mod test_support {
     use std::{fs, io::Cursor, io::Write, path::Path};
 
     use pptx_compose::{
-        PresentationDocument, WriteMode,
+        OpenOptions, PresentationDocument, WriteMode,
         core::{error::ErrorCode, provenance::checksum::part_checksum, zip::reader::from_bytes},
     };
     use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
@@ -288,7 +293,8 @@ mod test_support {
         fs::write(&output, b"original-output").expect("existing output writes");
 
         let args = args(&input, &patch, &output, false, false);
-        let err = apply(args, &permissions(&root)).expect_err("existing output must fail");
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("existing output must fail");
 
         assert_eq!(
             err.code(),
@@ -318,7 +324,7 @@ mod test_support {
         let write_options = write_options_from_args(&args);
         assert_eq!(write_options.mode, WriteMode::Deterministic);
 
-        apply(args, &permissions(&root)).expect("overwrite apply succeeds");
+        apply(args, &permissions(&root), OpenOptions::default()).expect("overwrite apply succeeds");
 
         assert_ne!(
             fs::read(&output).expect("output reads"),
@@ -347,7 +353,7 @@ mod test_support {
         args.diff = Some(diff.clone());
         args.output = None;
 
-        apply(args, &permissions(&root)).expect("dry-run apply succeeds");
+        apply(args, &permissions(&root), OpenOptions::default()).expect("dry-run apply succeeds");
 
         assert!(!output.exists(), "dry-run must not create a PPTX output");
         let report_json: serde_json::Value =
@@ -380,7 +386,8 @@ mod test_support {
 
         let mut args = args(&input, &patch, &output, false, false);
         args.report = Some(report.clone());
-        apply(args, &permissions(&root)).expect("replace_text apply succeeds");
+        apply(args, &permissions(&root), OpenOptions::default())
+            .expect("replace_text apply succeeds");
 
         let output_bytes = fs::read(&output).expect("output reads");
         assert_ne!(output_bytes, input_bytes);
@@ -435,7 +442,8 @@ mod test_support {
         args.report = Some(report.clone());
         args.media_manifest = Some(manifest);
 
-        apply(args, &permissions(&root)).expect("dry-run add_image uses manifest media");
+        apply(args, &permissions(&root), OpenOptions::default())
+            .expect("dry-run add_image uses manifest media");
 
         let report_json: serde_json::Value =
             serde_json::from_slice(&fs::read(&report).expect("report reads"))
@@ -493,7 +501,7 @@ mod test_support {
             args.output = None;
             args.media_manifest = Some(manifest);
 
-            let err = match apply(args, &permissions(&root)) {
+            let err = match apply(args, &permissions(&root), OpenOptions::default()) {
                 Ok(()) => panic!("{name} mismatch must fail"),
                 Err(error) => error,
             };

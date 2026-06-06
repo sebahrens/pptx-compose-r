@@ -5,7 +5,10 @@ use quick_xml::{
     events::{BytesStart, BytesText, Event},
 };
 
-use crate::error::{Error, Result};
+use crate::{
+    error::{Error, Result},
+    zip::limits::ResourceLimits,
+};
 
 use super::{
     document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
@@ -13,6 +16,10 @@ use super::{
 };
 
 pub fn parse_document(raw: &[u8]) -> Result<XmlDocument> {
+    parse_document_with_limits(raw, &ResourceLimits::default())
+}
+
+pub fn parse_document_with_limits(raw: &[u8], limits: &ResourceLimits) -> Result<XmlDocument> {
     let mut reader = Reader::from_reader(Cursor::new(raw));
     reader.config_mut().trim_text(false);
 
@@ -20,15 +27,24 @@ pub fn parse_document(raw: &[u8]) -> Result<XmlDocument> {
     let mut declaration = None;
     let mut roots = Vec::new();
     let mut stack = Vec::new();
+    let mut node_count = 0;
 
     loop {
         match reader.read_event_into(&mut buffer) {
-            Ok(Event::Start(event)) => stack.push(element_from_start(&event)?),
-            Ok(Event::Empty(event)) => push_node(
-                &mut roots,
-                &mut stack,
-                XmlNode::Element(element_from_start(&event)?),
-            ),
+            Ok(Event::Start(event)) => {
+                count_xml_node(&mut node_count, limits)?;
+                ensure_xml_depth(stack.len() + 1, limits)?;
+                stack.push(element_from_start(&event)?);
+            }
+            Ok(Event::Empty(event)) => {
+                count_xml_node(&mut node_count, limits)?;
+                ensure_xml_depth(stack.len() + 1, limits)?;
+                push_node(
+                    &mut roots,
+                    &mut stack,
+                    XmlNode::Element(element_from_start(&event)?),
+                );
+            }
             Ok(Event::End(_)) => {
                 let Some(element) = stack.pop() else {
                     return Err(Error::unsupported_package(
@@ -38,13 +54,17 @@ pub fn parse_document(raw: &[u8]) -> Result<XmlDocument> {
                 push_node(&mut roots, &mut stack, XmlNode::Element(element));
             }
             Ok(Event::Text(event)) => {
+                count_xml_node(&mut node_count, limits)?;
                 push_node(&mut roots, &mut stack, XmlNode::Text(decode_text(&event)?))
             }
-            Ok(Event::CData(event)) => push_node(
-                &mut roots,
-                &mut stack,
-                XmlNode::CData(decode_bytes(event.as_ref())),
-            ),
+            Ok(Event::CData(event)) => {
+                count_xml_node(&mut node_count, limits)?;
+                push_node(
+                    &mut roots,
+                    &mut stack,
+                    XmlNode::CData(decode_bytes(event.as_ref())),
+                );
+            }
             Ok(Event::Comment(event)) => push_node(
                 &mut roots,
                 &mut stack,
@@ -84,6 +104,27 @@ pub fn parse_document(raw: &[u8]) -> Result<XmlDocument> {
         declaration,
         nodes: roots,
     })
+}
+
+fn count_xml_node(node_count: &mut u64, limits: &ResourceLimits) -> Result<()> {
+    *node_count = node_count.saturating_add(1);
+    if *node_count > limits.max_xml_node_count {
+        return Err(Error::resource_limit_exceeded(format!(
+            "XML part exceeded the maximum node count of {}.",
+            limits.max_xml_node_count
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_xml_depth(depth: usize, limits: &ResourceLimits) -> Result<()> {
+    if depth > limits.max_xml_depth {
+        return Err(Error::resource_limit_exceeded(format!(
+            "XML part exceeded the maximum element depth of {}.",
+            limits.max_xml_depth
+        )));
+    }
+    Ok(())
 }
 
 fn push_node(roots: &mut Vec<XmlNode>, stack: &mut [XmlElement], node: XmlNode) {
@@ -153,6 +194,38 @@ fn decode_text(event: &BytesText<'_>) -> Result<String> {
     let unescaped = escape::unescape(&decoded)
         .map_err(|source| Error::parse_error("Could not unescape XML text.", source))?;
     Ok(unescaped.into_owned())
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_xml_exceeding_depth_limit() {
+    use crate::{error::ErrorCode, zip::limits::ResourceLimits};
+
+    let limits = ResourceLimits {
+        max_xml_depth: 2,
+        ..ResourceLimits::default()
+    };
+    let error = parse_document_with_limits(b"<a><b><c/></b></a>", &limits)
+        .expect_err("deep XML must reject");
+
+    assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
+    assert!(error.message().contains("maximum element depth"));
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_xml_exceeding_node_count_limit() {
+    use crate::{error::ErrorCode, zip::limits::ResourceLimits};
+
+    let limits = ResourceLimits {
+        max_xml_node_count: 2,
+        ..ResourceLimits::default()
+    };
+    let error = parse_document_with_limits(b"<a>one<b/></a>", &limits)
+        .expect_err("XML with too many nodes must reject");
+
+    assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
+    assert!(error.message().contains("maximum node count"));
 }
 
 #[cfg(test)]

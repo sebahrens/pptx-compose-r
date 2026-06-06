@@ -1,14 +1,15 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    error::{Error, Result},
+    error::{Error, ErrorCode, Result},
     opc::part_name::PartName,
     xml::{
         document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
         namespaces::{NamespaceBinding, NamespaceTable},
-        parser::parse_document,
+        parser::parse_document_with_limits,
         writer::{WriteMode, WriteOptions, write_document},
     },
+    zip::limits::ResourceLimits,
 };
 
 const CONTENT_TYPES_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -26,18 +27,23 @@ impl ContentTypes {
     }
 
     pub fn parse(raw: &[u8]) -> Result<Self> {
+        Self::parse_with_limits(raw, &ResourceLimits::default())
+    }
+
+    pub fn parse_with_limits(raw: &[u8], limits: &ResourceLimits) -> Result<Self> {
         if raw.is_empty() || raw.iter().all(u8::is_ascii_whitespace) {
             return Err(Error::malformed_package(
                 "[Content_Types].xml is missing or empty.",
             ));
         }
 
-        let document = parse_document(raw).map_err(|source| {
-            Error::with_source(
-                crate::error::ErrorCode::UnsupportedPackage,
-                "Could not parse [Content_Types].xml.",
-                source,
-            )
+        let document = parse_document_with_limits(raw, limits).map_err(|source| {
+            let code = if source.code() == ErrorCode::ResourceLimitExceeded {
+                source.code()
+            } else {
+                ErrorCode::UnsupportedPackage
+            };
+            Error::with_source(code, "Could not parse [Content_Types].xml.", source)
         })?;
         let root = document.root_element().ok_or_else(|| {
             Error::malformed_package("[Content_Types].xml has no root Types element.")

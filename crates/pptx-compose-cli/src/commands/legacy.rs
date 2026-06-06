@@ -1,7 +1,8 @@
 use std::{fs, path::Path};
 
 use pptx_compose::{
-    PresentationDocument, WriteMode, WriteOptions, core::error::ErrorCode, json::legacy_path_map,
+    OpenOptions, PresentationDocument, WriteMode, WriteOptions, core::error::ErrorCode,
+    json::legacy_path_map,
 };
 
 use crate::{
@@ -13,12 +14,14 @@ use crate::{
 pub(crate) fn run_to_json(
     args: LegacyToJsonArgs,
     permissions: &PermissionContext,
+    open_options: OpenOptions,
 ) -> Result<(), CliError> {
     require_compat_json(args.compat_json)?;
     let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
     let output = permissions.authorize_write(&args.output, PathIntent::LegacyJsonOutput)?;
 
-    let document = PresentationDocument::open_path(&input).map_err(CliError::from_error)?;
+    let document = PresentationDocument::open_path_with_options(&input, open_options)
+        .map_err(CliError::from_error)?;
     let legacy_json = document.to_legacy_json().map_err(CliError::from_error)?;
     let legacy_json = legacy_path_map::from_legacy_map(legacy_json)
         .and_then(|package| legacy_path_map::to_legacy_map(&package))
@@ -29,6 +32,7 @@ pub(crate) fn run_to_json(
 pub(crate) fn run_convert(
     args: LegacyConvertArgs,
     permissions: &PermissionContext,
+    open_options: OpenOptions,
 ) -> Result<(), CliError> {
     run_to_json(
         LegacyToJsonArgs {
@@ -37,6 +41,7 @@ pub(crate) fn run_convert(
             compat_json: args.compat_json,
         },
         permissions,
+        open_options,
     )
 }
 

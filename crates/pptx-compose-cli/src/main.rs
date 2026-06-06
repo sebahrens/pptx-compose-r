@@ -14,8 +14,11 @@ use exit::exit_code_for;
 use output::OutputSink;
 use permissions::{PathIntent, PermissionContext};
 use pptx_compose::{
-    PresentationDocument,
-    core::error::{Error, ErrorCode, ErrorDetails, ErrorLocation},
+    OpenOptions, PresentationDocument,
+    core::{
+        error::{Error, ErrorCode, ErrorDetails, ErrorLocation},
+        zip::limits::ResourceLimits,
+    },
     json::agent_view::{FindTextScope, views::FindTextRequest},
 };
 
@@ -48,36 +51,59 @@ fn main() {
 fn run(cli: Cli) -> Result<(), CliError> {
     let permissions = PermissionContext::from_global_args(&cli.global)?;
     let sink = OutputSink::from_global_args(&cli.global);
+    let open_options = open_options_from_global_args(&cli.global)?;
     match cli.command {
         Commands::Inspect(args) => inspect(args, &permissions),
-        Commands::FindText(args) => find_text(args, &permissions, sink),
+        Commands::FindText(args) => find_text(args, &permissions, sink, open_options),
         Commands::Validate(args) => validate(args, &permissions),
-        Commands::Apply(args) => apply(args, &permissions),
-        Commands::ToJson(args) => run_to_json(args, &permissions),
+        Commands::Apply(args) => apply(args, &permissions, open_options),
+        Commands::ToJson(args) => run_to_json(args, &permissions, open_options),
         Commands::ToPptx(args) => run_to_pptx(args, &permissions),
-        Commands::Convert(args) => run_convert(args, &permissions),
+        Commands::Convert(args) => run_convert(args, &permissions, open_options),
         Commands::Media(MediaCmd::List(args)) => media_list(args, &permissions),
         Commands::Media(MediaCmd::Get(args)) => media_get(args, &permissions),
         Commands::Schema(args) => schema(args),
     }
 }
 
+fn open_options_from_global_args(global: &cli::GlobalArgs) -> Result<OpenOptions, CliError> {
+    let mut resource_limits = ResourceLimits::default();
+    if let Some(max_uncompressed_bytes) = global.max_uncompressed_bytes {
+        resource_limits.max_uncompressed_package_bytes = max_uncompressed_bytes;
+    }
+    if let Some(max_part_count) = global.max_part_count {
+        resource_limits.max_part_count = usize::try_from(max_part_count).map_err(|source| {
+            CliError::invalid_input_with_source(
+                InvalidInputCause::CliArgument,
+                "--max-part-count exceeds this platform's supported usize range.",
+                source,
+            )
+        })?;
+    }
+    if let Some(max_media_bytes) = global.max_media_bytes {
+        resource_limits.max_media_part_bytes = max_media_bytes;
+    }
+    Ok(OpenOptions { resource_limits })
+}
+
 fn find_text(
     args: cli::FindTextArgs,
     permissions: &PermissionContext,
     sink: OutputSink,
+    open_options: OpenOptions,
 ) -> Result<(), CliError> {
     permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
     if let Some(output) = &args.output {
         permissions.authorize_write(output, PathIntent::ReportOutput)?;
     }
 
-    let document = PresentationDocument::open_path(&args.input).map_err(|error| {
-        CliError::from_error(error.with_location(ErrorLocation {
-            part: Some(args.input.display().to_string()),
-            ..ErrorLocation::default()
-        }))
-    })?;
+    let document = PresentationDocument::open_path_with_options(&args.input, open_options)
+        .map_err(|error| {
+            CliError::from_error(error.with_location(ErrorLocation {
+                part: Some(args.input.display().to_string()),
+                ..ErrorLocation::default()
+            }))
+        })?;
     let scope = match args.slide_id {
         Some(slide_id) => FindTextScope::Slide { slide_id },
         None => FindTextScope::Deck,

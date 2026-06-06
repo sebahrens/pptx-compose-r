@@ -6,9 +6,10 @@ use crate::{
     xml::{
         document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
         namespaces::{NamespaceBinding, NamespaceTable},
-        parser::parse_document,
+        parser::parse_document_with_limits,
         writer::{WriteMode, WriteOptions, write_document},
     },
+    zip::limits::ResourceLimits,
 };
 
 const RELATIONSHIPS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
@@ -109,9 +110,22 @@ pub struct RelationshipSet {
 
 impl RelationshipSet {
     pub fn parse(source_part: &PartName, raw: &[u8]) -> Result<Self> {
-        let document = parse_document(raw).map_err(|source| {
+        Self::parse_with_limits(source_part, raw, &ResourceLimits::default())
+    }
+
+    pub fn parse_with_limits(
+        source_part: &PartName,
+        raw: &[u8],
+        limits: &ResourceLimits,
+    ) -> Result<Self> {
+        let document = parse_document_with_limits(raw, limits).map_err(|source| {
+            let code = if source.code() == ErrorCode::ResourceLimitExceeded {
+                source.code()
+            } else {
+                ErrorCode::UnsupportedPackage
+            };
             Error::with_source(
-                ErrorCode::UnsupportedPackage,
+                code,
                 format!("Could not parse relationship part for {source_part}."),
                 source,
             )

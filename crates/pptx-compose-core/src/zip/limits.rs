@@ -38,6 +38,7 @@ pub(crate) struct LimitEnforcingReader<'a, R> {
     inner: R,
     limits: &'a ResourceLimits,
     entry_name: &'a str,
+    entry_specific_uncompressed_limit: Option<u64>,
     compressed_size: u64,
     entry_uncompressed_bytes: u64,
     package_uncompressed_bytes: &'a mut u64,
@@ -52,6 +53,7 @@ where
         inner: R,
         limits: &'a ResourceLimits,
         entry_name: &'a str,
+        entry_specific_uncompressed_limit: Option<u64>,
         compressed_size: u64,
         package_uncompressed_bytes: &'a mut u64,
     ) -> Self {
@@ -59,6 +61,7 @@ where
             inner,
             limits,
             entry_name,
+            entry_specific_uncompressed_limit,
             compressed_size,
             entry_uncompressed_bytes: 0,
             package_uncompressed_bytes,
@@ -80,6 +83,10 @@ where
             self.entry_uncompressed_bytes,
             self.limits.max_single_part_uncompressed_bytes,
         );
+        let entry_specific = self
+            .entry_specific_uncompressed_limit
+            .map(|limit| bytes_until_crossing(self.entry_uncompressed_bytes, limit))
+            .unwrap_or(u64::MAX);
         let package = bytes_until_crossing(
             *self.package_uncompressed_bytes,
             self.limits.max_uncompressed_package_bytes,
@@ -98,7 +105,7 @@ where
             )
         };
 
-        let limit = single_part.min(package).min(ratio);
+        let limit = single_part.min(entry_specific).min(package).min(ratio);
         requested.min(usize::try_from(limit).unwrap_or(usize::MAX))
     }
 
@@ -107,6 +114,15 @@ where
             return Err(Error::resource_limit_exceeded(format!(
                 "ZIP entry {} exceeded the maximum single-part uncompressed size of {} bytes.",
                 self.entry_name, self.limits.max_single_part_uncompressed_bytes
+            )));
+        }
+
+        if let Some(limit) = self.entry_specific_uncompressed_limit
+            && self.entry_uncompressed_bytes > limit
+        {
+            return Err(Error::resource_limit_exceeded(format!(
+                "ZIP entry {} exceeded the maximum media part size of {} bytes.",
+                self.entry_name, limit
             )));
         }
 
@@ -234,6 +250,7 @@ fn aborts_zip_bomb_during_inflate() {
         &mut entry,
         &limits,
         "ppt/slides/slide1.xml",
+        None,
         compressed_size,
         &mut package_uncompressed,
     );

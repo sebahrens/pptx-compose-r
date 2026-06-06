@@ -108,6 +108,7 @@ where
             &mut entry,
             &options.resource_limits,
             &meta.original_name,
+            media_part_limit(&normalized_name, &options.resource_limits),
             meta.compressed_size,
             &mut package_uncompressed_bytes,
         );
@@ -154,6 +155,17 @@ fn normalize_entry_name(entry_name: &str, is_dir: bool) -> Result<PartName> {
     }
 }
 
+fn media_part_limit(
+    part_name: &PartName,
+    limits: &crate::zip::limits::ResourceLimits,
+) -> Option<u64> {
+    if part_name.as_str().starts_with("/ppt/media/") {
+        Some(limits.max_media_part_bytes)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 #[test]
 fn reads_minimal_pptx() {
@@ -190,8 +202,11 @@ mod tests {
 
     use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
-    use super::from_bytes;
-    use crate::error::ErrorCode;
+    use super::{from_bytes, from_bytes_with_options};
+    use crate::{
+        error::ErrorCode,
+        zip::limits::{OpenOptions, ResourceLimits},
+    };
 
     #[test]
     fn preserves_archive_order_and_metadata() {
@@ -248,6 +263,26 @@ mod tests {
 
             assert_eq!(error.code(), ErrorCode::UnsafePath);
         }
+    }
+
+    #[test]
+    fn rejects_oversized_media_part() {
+        let package = zip_with_entries([("ppt/media/image1.png", b"abcdef".as_slice())]);
+        let options = OpenOptions {
+            resource_limits: ResourceLimits {
+                max_media_part_bytes: 5,
+                ..ResourceLimits::default()
+            },
+        };
+
+        let error = from_bytes_with_options(&package, &options)
+            .expect_err("oversized media part must reject package");
+
+        assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
+        assert!(
+            error.message().contains("maximum media part size"),
+            "{error}"
+        );
     }
 
     fn zip_with_entries<const N: usize>(entries: [(&str, &[u8]); N]) -> Vec<u8> {

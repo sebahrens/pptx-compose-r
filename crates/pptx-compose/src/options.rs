@@ -1,7 +1,9 @@
-use pptx_compose_core::zip::writer::WriteMode;
+use pptx_compose_core::zip::{limits::ResourceLimits, writer::WriteMode};
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct OpenOptions {}
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OpenOptions {
+    pub resource_limits: ResourceLimits,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentViewOptions {

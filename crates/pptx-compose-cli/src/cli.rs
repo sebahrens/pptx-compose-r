@@ -36,6 +36,8 @@ pub struct GlobalArgs {
     pub max_uncompressed_bytes: Option<u64>,
     #[arg(long, value_name = "N")]
     pub max_part_count: Option<u64>,
+    #[arg(long, value_name = "N")]
+    pub max_media_bytes: Option<u64>,
 }
 
 #[derive(Debug, Eq, PartialEq, Subcommand)]
