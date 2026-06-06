@@ -1,13 +1,18 @@
 #![deny(warnings)]
 
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File, OpenOptions as FsOpenOptions},
     io::{Cursor, Write},
     path::{Path, PathBuf},
 };
 
+mod options;
+
+pub use options::{AgentViewOptions, ApplyPatchOptions, OpenOptions, WriteOptions};
 pub use pptx_compose_core as core;
+pub use pptx_compose_core::zip::writer::WriteMode;
 pub use pptx_compose_edit as edit;
+pub use pptx_compose_edit::{media_inputs::MediaInputs, patch::Patch};
 pub use pptx_compose_json as json;
 
 use core::{
@@ -28,64 +33,19 @@ use core::{
         writer::{self as zip_writer, WriteEntry},
     },
 };
-use pptx_compose_edit::diffs::SemanticDiff;
 use pptx_compose_edit::{
-    media_inputs::MediaInputs,
     operations::{
         ResolvedTarget, add_text_box::AddTextBox, move_resize::MoveResize,
         replace_image::ReplaceImage, replace_text::ReplaceText, set_alt_text::SetAltText,
     },
-    patch::{DocumentState, Operation, parse_patch, validate_envelope},
+    patch::{DocumentState, Operation, OperationExecutor, PatchEffects, validate_envelope},
     selectors::{self, Selector},
 };
-use pptx_compose_json::schemas::{
-    PatchReport, PatchStatus, PatchValidationSummary, ValidationStatus,
+use pptx_compose_json::{
+    agent_view::views::ViewRequest,
+    schemas::{PatchReport, ValidationReport},
 };
 use sha2::{Digest, Sha256};
-
-pub use core::zip::writer::WriteMode;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct WriteOptions {
-    pub mode: WriteMode,
-    pub overwrite: bool,
-    pub validate: bool,
-    pub atomic: bool,
-}
-
-impl Default for WriteOptions {
-    fn default() -> Self {
-        Self {
-            mode: WriteMode::Preserve,
-            overwrite: false,
-            validate: true,
-            atomic: true,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ApplyPatchOptions {
-    pub dry_run: bool,
-    pub validate: bool,
-    pub media_inputs: MediaInputs,
-}
-
-impl Default for ApplyPatchOptions {
-    fn default() -> Self {
-        Self {
-            dry_run: false,
-            validate: true,
-            media_inputs: MediaInputs::default(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ApplyPatchResult {
-    pub report: PatchReport,
-    pub diff: SemanticDiff,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PresentationDocument {
@@ -96,10 +56,10 @@ pub struct PresentationDocument {
 
 impl PresentationDocument {
     pub fn open_path(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_path_with_options(path)
+        Self::open_path_with_options(path, OpenOptions::default())
     }
 
-    pub fn open_path_with_options(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn open_path_with_options(path: impl AsRef<Path>, _options: OpenOptions) -> Result<Self> {
         let path = path.as_ref();
         let bytes = fs::read(path).map_err(|source| {
             Error::with_source(
@@ -113,8 +73,8 @@ impl PresentationDocument {
         Ok(document)
     }
 
-    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Result<Self> {
-        let source_bytes = bytes.into();
+    pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let source_bytes = bytes.as_ref().to_vec();
         sniff_package(&mut Cursor::new(source_bytes.as_slice()))?;
         let entries = from_bytes(&source_bytes)?;
         Ok(Self {
@@ -135,9 +95,37 @@ impl PresentationDocument {
         Self::from_bytes(bytes)
     }
 
+    pub fn to_agent_json(&self) -> Result<serde_json::Value> {
+        self.to_agent_json_with_options(AgentViewOptions::default())
+    }
+
+    pub fn to_agent_json_with_options(
+        &self,
+        options: AgentViewOptions,
+    ) -> Result<serde_json::Value> {
+        let package = package_from_entries(&self.entries)?;
+        let model = core_presentation::PresentationDocument::open(package)?;
+        pptx_compose_json::agent_view::views::build_view(
+            &model,
+            ViewRequest {
+                mode: options.mode,
+                slide_id: options.slide_id,
+                element_id: options.element_id,
+                cursor: options.cursor,
+                limit: options.limit,
+            },
+        )
+        .map_err(json_error)
+    }
+
+    pub fn to_legacy_json(&self) -> Result<serde_json::Value> {
+        let package = package_from_entries(&self.entries)?;
+        pptx_compose_json::legacy_path_map::to_legacy_map(&package).map_err(json_error)
+    }
+
     pub fn write_vec_with_options(&self, options: WriteOptions) -> Result<Vec<u8>> {
         if options.validate {
-            self.validate()?;
+            let _report = self.validate()?;
         }
         let entries: Vec<_> = self.entries.iter().map(WriteEntry::Clean).collect();
         let output = Cursor::new(Vec::new());
@@ -153,13 +141,22 @@ impl PresentationDocument {
         Ok(output.into_inner())
     }
 
+    pub fn write_vec(&self) -> Result<Vec<u8>> {
+        self.write_vec_with_options(WriteOptions::default())
+    }
+
+    pub fn apply_patch(&mut self, patch: Patch, media: MediaInputs) -> Result<PatchReport> {
+        self.apply_patch_with_options(patch, media, ApplyPatchOptions::default())
+    }
+
     pub fn apply_patch_with_options(
-        &self,
-        patch: &serde_json::Value,
+        &mut self,
+        patch: Patch,
+        media: MediaInputs,
         options: ApplyPatchOptions,
-    ) -> Result<ApplyPatchResult> {
+    ) -> Result<PatchReport> {
         if options.validate {
-            self.validate()?;
+            let _report = self.validate()?;
         }
 
         let document_id = sha256_hex(&self.source_bytes);
@@ -170,44 +167,42 @@ impl PresentationDocument {
                 source,
             )
         })?;
-        reject_known_unsupported_operations(patch)?;
-        let patch = parse_patch(patch.clone())?;
         validate_envelope(&patch, &DocumentState::new(document_id.clone(), revision))?;
-        if !options.dry_run {
-            let package = package_from_entries(&self.entries)?;
-            validate_patch_operations(&package, &patch.operations, &options.media_inputs)?;
-        }
-
-        let dry_run = options.dry_run;
-        Ok(ApplyPatchResult {
-            report: PatchReport {
+        if options.dry_run {
+            let validation = self.validate()?;
+            return Ok(PatchReport {
                 schema: pptx_compose_json::schema_versions::PATCH_REPORT_SCHEMA.to_owned(),
                 version: pptx_compose_json::schema_versions::PATCH_REPORT_VERSION,
-                status: if dry_run {
-                    PatchStatus::DryRunSuccess
-                } else {
-                    PatchStatus::Applied
-                },
-                dry_run,
+                status: pptx_compose_json::schemas::PatchStatus::DryRunSuccess,
+                dry_run: true,
                 document_id: document_id.clone(),
                 base_revision: revision,
                 new_document_id: document_id,
                 new_revision: revision,
                 operation_reports: Vec::new(),
                 changed_parts: Vec::new(),
-                validation: PatchValidationSummary {
-                    status: ValidationStatus::Valid,
-                    errors: 0,
-                    warnings: 0,
-                },
-            },
-            diff: SemanticDiff {
-                schema: pptx_compose_edit::diffs::SEMANTIC_DIFF_SCHEMA.to_owned(),
-                version: pptx_compose_edit::diffs::SEMANTIC_DIFF_VERSION,
-                changes: Vec::new(),
-                changed_parts: Vec::new(),
-            },
-        })
+                validation: pptx_compose_edit::reports::patch_validation_summary(&validation),
+            });
+        }
+        let package = package_from_entries(&self.entries)?;
+        validate_patch_operations(&package, &patch.operations, &media)?;
+
+        let mut package = package_from_entries(&self.entries)?;
+        let mut executor = ValidationOnlyExecutor {
+            media_inputs: &media,
+        };
+        pptx_compose_edit::patch::apply_patch(
+            &mut package,
+            pptx_compose_edit::patch::PatchContext::new(
+                document_id.clone(),
+                revision,
+                document_id,
+                revision,
+            ),
+            &patch,
+            options.dry_run,
+            &mut executor,
+        )
     }
 
     pub fn write_path_with_options(
@@ -234,7 +229,7 @@ impl PresentationDocument {
     }
 
     fn write_path_direct(&self, output_path: &Path, options: WriteOptions) -> Result<()> {
-        let output = OpenOptions::new()
+        let output = FsOpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
@@ -268,7 +263,7 @@ impl PresentationDocument {
         })?;
         let temp_path = temp_sibling_path(output_path);
         let write_result = (|| {
-            let output = OpenOptions::new()
+            let output = FsOpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&temp_path)
@@ -322,7 +317,7 @@ impl PresentationDocument {
         W: Write + std::io::Seek,
     {
         if options.validate {
-            self.validate()?;
+            let _report = self.validate()?;
         }
         let entries: Vec<_> = self.entries.iter().map(WriteEntry::Clean).collect();
         zip_writer::write_writer_with_options(
@@ -336,9 +331,23 @@ impl PresentationDocument {
         )
     }
 
-    pub fn validate(&self) -> Result<()> {
-        let _entries = from_bytes(&self.source_bytes)?;
-        Ok(())
+    pub fn validate(&self) -> Result<ValidationReport> {
+        let package = package_from_entries(&self.entries)?;
+        pptx_compose_edit::reports::validation_report(
+            core::validation::validate_package(&package, core::validation::ValidationMode::Edited),
+            sha256_hex(&self.source_bytes),
+            u32::try_from(revision::on_open().value()).map_err(|source| {
+                Error::with_source(
+                    ErrorCode::InternalError,
+                    "Revision value exceeds the validation report schema range.",
+                    source,
+                )
+            })?,
+        )
+    }
+
+    pub fn write_path(&self, path: impl AsRef<Path>) -> Result<()> {
+        self.write_path_with_options(path, WriteOptions::default())
     }
 
     #[must_use]
@@ -361,44 +370,6 @@ fn temp_sibling_path(output_path: &Path) -> PathBuf {
     output_path.with_file_name(format!(".{file_name}.{suffix}"))
 }
 
-fn reject_known_unsupported_operations(patch: &serde_json::Value) -> Result<()> {
-    let Some(operations) = patch
-        .get("operations")
-        .and_then(serde_json::Value::as_array)
-    else {
-        return Ok(());
-    };
-
-    for operation in operations {
-        let Some(op_name) = operation.get("op").and_then(serde_json::Value::as_str) else {
-            continue;
-        };
-        if matches!(
-            op_name,
-            "edit_chart" | "replace_chart_data" | "replace_chart" | "update_chart"
-        ) {
-            let operation_id = operation
-                .get("operation_id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned);
-            return Err(Error::new(
-                ErrorCode::UnsupportedEdit,
-                "Chart editing is not supported by V1 patch operations.",
-            )
-            .with_location(ErrorLocation {
-                operation_id,
-                operation: Some(op_name.to_owned()),
-                ..ErrorLocation::default()
-            })
-            .with_suggestion(
-                "Leave chart parts unchanged or use raw XML tools when explicitly enabled.",
-            ));
-        }
-    }
-
-    Ok(())
-}
-
 fn unique_counter() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -416,6 +387,21 @@ fn fsync_dir(path: &Path) -> Result<()> {
                 source,
             )
         })
+}
+
+fn json_error(error: pptx_compose_json::schemas::JsonError) -> Error {
+    match error {
+        pptx_compose_json::schemas::JsonError::SerializeSchema(message)
+        | pptx_compose_json::schemas::JsonError::InvalidCursor(message)
+        | pptx_compose_json::schemas::JsonError::MalformedLegacyEnvelope(message)
+        | pptx_compose_json::schemas::JsonError::Projection(message) => {
+            Error::new(ErrorCode::InvalidInput, message)
+        }
+        pptx_compose_json::schemas::JsonError::NotFound { kind, id } => Error::new(
+            ErrorCode::SelectorNotFound,
+            format!("{kind} `{id}` was not found."),
+        ),
+    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -555,6 +541,22 @@ fn optional_attr<'a>(element: &'a XmlElement, name: &str) -> Option<&'a str> {
         .iter()
         .find(|attribute| attribute.name.local_name == name)
         .map(|attribute| attribute.value.as_str())
+}
+
+struct ValidationOnlyExecutor<'a> {
+    media_inputs: &'a MediaInputs,
+}
+
+impl OperationExecutor for ValidationOnlyExecutor<'_> {
+    fn validate(&mut self, package: &Package, operation: &Operation) -> Result<PatchEffects> {
+        let model = core_presentation::PresentationDocument::open(package.clone())?;
+        validate_operation(package, &model, operation, self.media_inputs)?;
+        Ok(PatchEffects::default())
+    }
+
+    fn apply(&mut self, package: &mut Package, operation: &Operation) -> Result<PatchEffects> {
+        self.validate(package, operation)
+    }
 }
 
 fn validate_patch_operations(

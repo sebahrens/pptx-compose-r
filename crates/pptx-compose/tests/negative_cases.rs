@@ -12,6 +12,7 @@ use pptx_compose::{
         pptx::presentation as core_presentation,
     },
     edit::media_inputs::{MediaBinding, MediaInputs, MediaSource},
+    edit::patch::parse_patch,
     edit::selectors::{self, Selector},
 };
 use serde_json::{Value, json};
@@ -157,16 +158,17 @@ fn assert_patch_failure(
     media_inputs: Option<MediaInputs>,
     expected: ErrorCode,
 ) -> Result<()> {
-    let document = PresentationDocument::from_bytes(deck.to_vec())?;
+    let mut document = PresentationDocument::from_bytes(deck)?;
     let before = document.write_vec_with_options(WriteOptions {
         mode: WriteMode::Preserve,
         ..WriteOptions::default()
     })?;
+    let patch = parse_patch(patch)?;
     let error = document
         .apply_patch_with_options(
-            &patch,
+            patch,
+            media_inputs.unwrap_or_default(),
             ApplyPatchOptions {
-                media_inputs: media_inputs.unwrap_or_default(),
                 ..ApplyPatchOptions::default()
             },
         )

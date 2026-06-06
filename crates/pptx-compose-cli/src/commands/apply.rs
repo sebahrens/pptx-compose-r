@@ -1,7 +1,13 @@
 use std::{fs, path::Path};
 
 use pptx_compose::{
-    ApplyPatchOptions, PresentationDocument, WriteMode, WriteOptions, core::error::Error,
+    ApplyPatchOptions, PresentationDocument, WriteMode, WriteOptions,
+    core::error::{Error, ErrorCode, ErrorLocation},
+    edit::{
+        diffs::{SEMANTIC_DIFF_SCHEMA, SEMANTIC_DIFF_VERSION, SemanticDiff},
+        media_inputs::MediaInputs,
+        patch::{Patch, parse_patch},
+    },
 };
 
 use crate::{
@@ -24,22 +30,22 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
         permissions.authorize_write(diff, PathIntent::DiffOutput)?;
     }
 
-    let patch = read_patch_json(&patch)?;
-    let document = PresentationDocument::open_path(&input).map_err(CliError::from_error)?;
+    let patch = read_patch(&patch)?;
+    let mut document = PresentationDocument::open_path(&input).map_err(CliError::from_error)?;
     if args.dry_run {
-        let result = document
+        let report = document
             .apply_patch_with_options(
-                &patch,
+                patch,
+                MediaInputs::default(),
                 ApplyPatchOptions {
                     dry_run: true,
                     validate: true,
-                    ..ApplyPatchOptions::default()
                 },
             )
             .map_err(apply_error)?;
         let sink = OutputSink::default();
-        sink.emit_patch_report(&result.report, args.report)?;
-        sink.emit_diff(&result.diff, args.diff)?;
+        sink.emit_patch_report(&report, args.report)?;
+        sink.emit_diff(&empty_diff(), args.diff)?;
         return Ok(());
     }
 
@@ -55,13 +61,13 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
         .and_then(|output| permissions.authorize_write(output, PathIntent::OutputPptx))?;
     enforce_apply_write_guards(&input, &output, args.overwrite, args.in_place)?;
 
-    let apply_result = document
+    let apply_report = document
         .apply_patch_with_options(
-            &patch,
+            patch,
+            MediaInputs::default(),
             ApplyPatchOptions {
                 dry_run: false,
                 validate: true,
-                ..ApplyPatchOptions::default()
             },
         )
         .map_err(apply_error)?;
@@ -69,12 +75,12 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
     document
         .write_path_with_options(&output, write_options)
         .map_err(CliError::from_error)?;
-    OutputSink::default().emit_optional_patch_report(&apply_result.report, args.report)?;
+    OutputSink::default().emit_optional_patch_report(&apply_report, args.report)?;
 
     Ok(())
 }
 
-fn read_patch_json(path: &Path) -> Result<serde_json::Value, CliError> {
+fn read_patch(path: &Path) -> Result<Patch, CliError> {
     let bytes = fs::read(path).map_err(|source| {
         CliError::invalid_input_with_source(
             InvalidInputCause::PatchSchema,
@@ -82,13 +88,62 @@ fn read_patch_json(path: &Path) -> Result<serde_json::Value, CliError> {
             source,
         )
     })?;
-    serde_json::from_slice(&bytes).map_err(|source| {
+    let value = serde_json::from_slice(&bytes).map_err(|source| {
         CliError::invalid_input_with_source(
             InvalidInputCause::PatchSchema,
             "Patch input is not valid JSON.",
             source,
         )
-    })
+    })?;
+    reject_known_unsupported_operations(&value).map_err(CliError::from_error)?;
+    parse_patch(value).map_err(apply_error)
+}
+
+fn reject_known_unsupported_operations(patch: &serde_json::Value) -> Result<(), Error> {
+    let Some(operations) = patch
+        .get("operations")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(());
+    };
+
+    for operation in operations {
+        let Some(op_name) = operation.get("op").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if matches!(
+            op_name,
+            "edit_chart" | "replace_chart_data" | "replace_chart" | "update_chart"
+        ) {
+            let operation_id = operation
+                .get("operation_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            return Err(Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Chart editing is not supported by V1 patch operations.",
+            )
+            .with_location(ErrorLocation {
+                operation_id,
+                operation: Some(op_name.to_owned()),
+                ..ErrorLocation::default()
+            })
+            .with_suggestion(
+                "Leave chart parts unchanged or use raw XML tools when explicitly enabled.",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn empty_diff() -> SemanticDiff {
+    SemanticDiff {
+        schema: SEMANTIC_DIFF_SCHEMA.to_owned(),
+        version: SEMANTIC_DIFF_VERSION,
+        changes: Vec::new(),
+        changed_parts: Vec::new(),
+    }
 }
 
 pub(crate) fn write_options_from_args(args: &ApplyArgs) -> WriteOptions {
