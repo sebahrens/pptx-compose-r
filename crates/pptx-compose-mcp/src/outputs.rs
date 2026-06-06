@@ -1,7 +1,12 @@
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use pptx_compose::core::error::{Error as CoreError, ErrorCategory, ErrorSeverity};
 use pptx_compose::json::{
     schema_versions::{ERROR_SCHEMA, ERROR_VERSION, RESULT_SCHEMA, RESULT_VERSION},
-    schemas::{ResultEnvelope, ResultStatus},
+    schemas::{PatchReport, ResultEnvelope, ResultStatus},
 };
 use rmcp::model::CallToolResult;
 use schemars::JsonSchema;
@@ -116,13 +121,51 @@ impl_success_value!(
 
 impl ApplyPatchOutput {
     #[must_use]
-    pub fn applied(session_id: &str, revision: u64, dry_run: bool, report: Value) -> Self {
+    pub fn applied(
+        session_id: &str,
+        revision: u64,
+        dry_run: bool,
+        client_request_id: &str,
+        transaction_id: &str,
+        mut report: PatchReport,
+    ) -> Self {
+        report.client_request_id = Some(client_request_id.to_owned());
+        report.request_id = Some(client_request_id.to_owned());
+        report.transaction_id = Some(transaction_id.to_owned());
+        let changed_parts = report.changed_parts.clone();
         Self(success_envelope(json!({
             "session_id": session_id,
             "revision": revision,
             "dry_run": dry_run,
+            "client_request_id": client_request_id,
+            "request_id": client_request_id,
+            "transaction_id": transaction_id,
+            "changed_parts": changed_parts,
             "report": report
         })))
+    }
+}
+
+impl ExportOutput {
+    #[must_use]
+    pub fn exported(
+        session_id: String,
+        client_request_id: Option<String>,
+        transaction_id: String,
+        changed_parts: Vec<String>,
+        details: Value,
+    ) -> Self {
+        let mut result = json!({
+            "session_id": session_id,
+            "client_request_id": client_request_id,
+            "request_id": client_request_id,
+            "transaction_id": transaction_id,
+            "changed_parts": changed_parts,
+        });
+        if let (Some(result), Some(details)) = (result.as_object_mut(), details.as_object()) {
+            result.extend(details.clone());
+        }
+        Self(success_envelope(result))
     }
 }
 
@@ -224,6 +267,17 @@ fn success_envelope(result: Value) -> ResultEnvelope {
         warnings: Vec::new(),
         next_cursor: None,
     }
+}
+
+#[must_use]
+pub fn transaction_id() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("txn_{nanos:x}_{counter:x}")
 }
 
 const fn severity(severity: ErrorSeverity) -> &'static str {

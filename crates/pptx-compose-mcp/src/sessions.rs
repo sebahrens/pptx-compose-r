@@ -43,6 +43,7 @@ pub struct Session {
     pub revision: u64,
     pub package: PresentationDocument,
     pub media: HashMap<String, MediaHandle>,
+    pub changed_parts: Vec<String>,
     pub expires_at: SystemTime,
     pub mem_bytes: u64,
     apply_lock: Arc<Mutex<()>>,
@@ -162,6 +163,7 @@ impl SessionStore {
             revision,
             package,
             media: HashMap::new(),
+            changed_parts: Vec::new(),
             expires_at,
             mem_bytes,
             apply_lock: Arc::new(Mutex::new(())),
@@ -453,12 +455,22 @@ impl SessionStore {
         if !dry_run {
             session.package = package;
             session.revision = u64::from(report.new_revision);
+            session
+                .changed_parts
+                .extend(report.changed_parts.iter().cloned());
+            session.changed_parts.sort();
+            session.changed_parts.dedup();
         }
 
         Ok(ApplyResult {
             revision: session.revision,
             report,
         })
+    }
+
+    pub fn changed_parts(&self, session_id: &str) -> Result<Vec<String>> {
+        let session = self.get(session_id)?;
+        Ok(session.changed_parts)
     }
 
     pub fn export_bytes(

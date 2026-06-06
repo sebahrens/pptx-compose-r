@@ -184,6 +184,8 @@ pub struct InlineMediaInput {
 #[serde(deny_unknown_fields)]
 pub struct ApplyPatchInput {
     pub session_id: String,
+    #[serde(default)]
+    pub client_request_id: Option<String>,
     pub patch: Patch,
     #[serde(default)]
     pub dry_run: bool,
@@ -212,6 +214,8 @@ pub struct CloseInput {
 #[serde(deny_unknown_fields)]
 pub struct ExportInput {
     pub session_id: String,
+    #[serde(default)]
+    pub client_request_id: Option<String>,
     pub expected_revision: Option<u64>,
     pub output_path: Option<String>,
     #[serde(default)]
@@ -703,15 +707,23 @@ impl PptxServer {
         &self,
         input: rmcp::handler::server::wrapper::Parameters<ApplyPatchInput>,
     ) -> Result<Json<outputs::ApplyPatchOutput>, rmcp::model::CallToolResult> {
+        let input = input.0;
+        let client_request_id = input
+            .client_request_id
+            .clone()
+            .unwrap_or_else(|| input.patch.client_request_id.clone());
+        let transaction_id = outputs::transaction_id();
         let result = self
             .sessions
-            .apply_patch(&input.0.session_id, input.0.patch, input.0.dry_run)
+            .apply_patch(&input.session_id, input.patch, input.dry_run)
             .map_err(outputs::map_error)?;
         Ok(Json(outputs::ApplyPatchOutput::applied(
-            &input.0.session_id,
+            &input.session_id,
             result.revision,
-            input.0.dry_run,
-            serde_json::json!(result.report),
+            input.dry_run,
+            &client_request_id,
+            &transaction_id,
+            result.report,
         )))
     }
 
@@ -756,6 +768,11 @@ impl PptxServer {
         input: rmcp::handler::server::wrapper::Parameters<ExportInput>,
     ) -> Result<Json<outputs::ExportOutput>, rmcp::model::CallToolResult> {
         let input = input.0;
+        let transaction_id = outputs::transaction_id();
+        let changed_parts = self
+            .sessions
+            .changed_parts(&input.session_id)
+            .map_err(outputs::map_error)?;
         if let Some(output_path) = input.output_path {
             self.permission_policy
                 .check_write_with_overwrite(&output_path, input.overwrite)
@@ -769,28 +786,39 @@ impl PptxServer {
                     input.overwrite,
                 )
                 .map_err(outputs::map_error)?;
-            return Ok(Json(outputs::ExportOutput::success(serde_json::json!({
-                "session_id": input.session_id,
-                "output_path": output_path,
-                "byte_length": byte_length,
-                "inline": null
-            }))));
+            return Ok(Json(outputs::ExportOutput::exported(
+                input.session_id,
+                input.client_request_id,
+                transaction_id,
+                changed_parts,
+                serde_json::json!({
+                    "output_path": output_path,
+                    "byte_length": byte_length,
+                    "sha256": null,
+                    "inline": null
+                }),
+            )));
         }
 
         let bytes = self
             .sessions
             .export_bytes(&input.session_id, input.expected_revision)
             .map_err(outputs::map_error)?;
-        Ok(Json(outputs::ExportOutput::success(serde_json::json!({
-            "session_id": input.session_id,
-            "output_path": null,
-            "byte_length": bytes.len(),
-            "sha256": sessions::sha256_hex(&bytes),
-            "inline": {
-                "encoding": "base64",
-                "data": encode_base64(&bytes)
-            }
-        }))))
+        Ok(Json(outputs::ExportOutput::exported(
+            input.session_id,
+            input.client_request_id,
+            transaction_id,
+            changed_parts,
+            serde_json::json!({
+                "output_path": null,
+                "byte_length": bytes.len(),
+                "sha256": sessions::sha256_hex(&bytes),
+                "inline": {
+                    "encoding": "base64",
+                    "data": encode_base64(&bytes)
+                }
+            }),
+        )))
     }
 
     /// Release session resources.

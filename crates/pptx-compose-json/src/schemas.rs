@@ -34,6 +34,12 @@ pub struct PatchReport {
     pub schema: String,
     #[serde(default = "patch_report_version")]
     pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_id: Option<String>,
     pub status: PatchStatus,
     pub dry_run: bool,
     pub document_id: String,

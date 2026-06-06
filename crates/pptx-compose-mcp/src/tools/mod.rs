@@ -108,6 +108,7 @@ async fn apply_rejects_stale_revision() {
         .pptx_apply_patch(rmcp::handler::server::wrapper::Parameters(
             crate::ApplyPatchInput {
                 session_id: opened.session_id.clone(),
+                client_request_id: None,
                 patch: replace_text_patch(&opened.document_id, opened.revision),
                 dry_run: false,
             },
@@ -120,6 +121,7 @@ async fn apply_rejects_stale_revision() {
         .pptx_apply_patch(rmcp::handler::server::wrapper::Parameters(
             crate::ApplyPatchInput {
                 session_id: opened.session_id.clone(),
+                client_request_id: None,
                 patch: empty_patch(&opened.document_id, opened.revision),
                 dry_run: false,
             },
@@ -165,6 +167,7 @@ async fn tools_read_apply_and_export_mutated_deck() {
         .pptx_apply_patch(rmcp::handler::server::wrapper::Parameters(
             crate::ApplyPatchInput {
                 session_id: opened.session_id.clone(),
+                client_request_id: Some("tool-apply-request".to_owned()),
                 patch: replace_text_patch(&opened.document_id, opened.revision),
                 dry_run: false,
             },
@@ -172,6 +175,28 @@ async fn tools_read_apply_and_export_mutated_deck() {
         .await
         .expect("patch applies");
     assert_eq!(applied.0.0.result["revision"], 2);
+    assert_eq!(
+        applied.0.0.result["client_request_id"],
+        "tool-apply-request"
+    );
+    assert_eq!(applied.0.0.result["request_id"], "tool-apply-request");
+    assert!(
+        applied.0.0.result["transaction_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("txn_"))
+    );
+    assert_eq!(
+        applied.0.0.result["changed_parts"],
+        serde_json::json!(["ppt/slides/slide1.xml"])
+    );
+    assert_eq!(
+        applied.0.0.result["report"]["client_request_id"],
+        "tool-apply-request"
+    );
+    assert_eq!(
+        applied.0.0.result["report"]["transaction_id"],
+        applied.0.0.result["transaction_id"]
+    );
     assert_eq!(applied.0.0.result["report"]["status"], "applied");
 
     let slide = server
@@ -198,6 +223,7 @@ async fn tools_read_apply_and_export_mutated_deck() {
         .pptx_export(rmcp::handler::server::wrapper::Parameters(
             crate::ExportInput {
                 session_id: opened.session_id,
+                client_request_id: Some("tool-export-request".to_owned()),
                 expected_revision: Some(2),
                 output_path: None,
                 overwrite: false,
@@ -205,6 +231,20 @@ async fn tools_read_apply_and_export_mutated_deck() {
         ))
         .await
         .expect("deck exports");
+    assert_eq!(
+        exported.0.0.result["client_request_id"],
+        "tool-export-request"
+    );
+    assert_eq!(exported.0.0.result["request_id"], "tool-export-request");
+    assert!(
+        exported.0.0.result["transaction_id"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("txn_"))
+    );
+    assert_eq!(
+        exported.0.0.result["changed_parts"],
+        serde_json::json!(["ppt/slides/slide1.xml"])
+    );
     let encoded = exported.0.0.result["inline"]["data"]
         .as_str()
         .expect("inline export has base64 data");

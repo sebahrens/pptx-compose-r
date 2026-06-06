@@ -414,6 +414,9 @@ where
         report: PatchReport {
             schema: PATCH_REPORT_SCHEMA.to_owned(),
             version: PATCH_REPORT_VERSION,
+            client_request_id: None,
+            request_id: None,
+            transaction_id: None,
             status: if context.dry_run {
                 PatchStatus::DryRunSuccess
             } else {
@@ -488,6 +491,9 @@ where
     Ok(PatchReport {
         schema: PATCH_REPORT_SCHEMA.to_owned(),
         version: PATCH_REPORT_VERSION,
+        client_request_id: Some(patch.client_request_id.clone()),
+        request_id: None,
+        transaction_id: None,
         status: if dry_run {
             PatchStatus::DryRunSuccess
         } else {

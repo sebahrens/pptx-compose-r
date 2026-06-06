@@ -218,6 +218,9 @@ impl PresentationDocument {
             return Ok(PatchReport {
                 schema: pptx_compose_json::schema_versions::PATCH_REPORT_SCHEMA.to_owned(),
                 version: pptx_compose_json::schema_versions::PATCH_REPORT_VERSION,
+                client_request_id: Some(patch.client_request_id),
+                request_id: None,
+                transaction_id: None,
                 status: pptx_compose_json::schemas::PatchStatus::DryRunSuccess,
                 dry_run: true,
                 document_id: document_id.clone(),
