@@ -242,6 +242,7 @@ pub enum JsonError {
     MalformedLegacyEnvelope(String),
     NotFound { kind: &'static str, id: String },
     Projection(String),
+    ResourceLimitExceeded(String),
 }
 
 pub fn agent_view_json_schema() -> Result<Value, JsonError> {

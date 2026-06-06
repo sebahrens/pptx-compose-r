@@ -50,6 +50,8 @@ pub const DEFAULT_LIMITS: &[DefaultLimit] = &[
     },
 ];
 
+pub const MAX_PAGE_LIMIT: u32 = 100;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CursorScope<'a> {
     pub document_id: &'a str,
@@ -98,16 +100,30 @@ pub fn default_limit(mode: &str) -> Option<u32> {
         .map(|entry| entry.limit)
 }
 
+pub fn bounded_limit(mode: &str, requested: Option<u32>) -> Result<u32, JsonError> {
+    let limit = requested.unwrap_or_else(|| default_limit(mode).unwrap_or(MAX_PAGE_LIMIT));
+    if limit == 0 || limit > MAX_PAGE_LIMIT {
+        return Err(JsonError::ResourceLimitExceeded(format!(
+            "{mode} limit must be between 1 and {MAX_PAGE_LIMIT}."
+        )));
+    }
+    Ok(limit)
+}
+
+pub fn cursor_offset(cursor: Option<&str>, scope: CursorScope<'_>) -> Result<u32, JsonError> {
+    match cursor {
+        Some(encoded) => Ok(Cursor::decode(encoded, scope)?.offset),
+        None => Ok(0),
+    }
+}
+
 pub fn paginate<'a, T>(
     items: &'a [T],
     limit: u32,
     cursor: Option<&str>,
     scope: CursorScope<'_>,
 ) -> Result<(Vec<&'a T>, ViewMeta, u32), JsonError> {
-    let start = match cursor {
-        Some(encoded) => Cursor::decode(encoded, scope)?.offset,
-        None => 0,
-    };
+    let start = cursor_offset(cursor, scope)?;
 
     let start = usize::try_from(start).map_err(|err| JsonError::InvalidCursor(err.to_string()))?;
     if start > items.len() {

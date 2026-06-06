@@ -279,6 +279,71 @@ fn find_text_returns_selector_ready_hits() {
 }
 
 #[test]
+fn agent_view_rejects_huge_page_limit() {
+    let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
+    let error = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlidePage,
+            slide_id: None,
+            element_id: None,
+            cursor: None,
+            limit: Some(101),
+        })
+        .expect_err("huge agent view limit is rejected");
+
+    assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
+}
+
+#[test]
+fn find_text_pages_many_matches_without_unbounded_page() {
+    let document = PresentationDocument::from_bytes(repeated_text_deck(150)).expect("deck opens");
+    let first = document
+        .find_text(FindTextRequest {
+            query: "a".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: Some(100),
+        })
+        .expect("first page succeeds");
+
+    assert_eq!(first.matches.len(), 100);
+    assert!(first.view.truncated);
+    assert_eq!(first.omitted_count, 1);
+    assert_eq!(first.matches[0].span.start, 0);
+    assert_eq!(first.matches[99].span.start, 99);
+
+    let second = document
+        .find_text(FindTextRequest {
+            query: "a".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: first.view.next_cursor,
+            limit: Some(100),
+        })
+        .expect("second page succeeds");
+
+    assert_eq!(second.matches.len(), 50);
+    assert!(!second.view.truncated);
+    assert_eq!(second.omitted_count, 0);
+    assert_eq!(second.matches[0].span.start, 100);
+    assert_eq!(second.matches[49].span.start, 149);
+}
+
+#[test]
+fn find_text_rejects_huge_page_limit() {
+    let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
+    let error = document
+        .find_text(FindTextRequest {
+            query: "Original".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: Some(101),
+        })
+        .expect_err("huge find_text limit is rejected");
+
+    assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
+}
+
+#[test]
 fn agent_text_view_does_not_emit_unaddressable_run_or_paragraph_ids() {
     let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
     let view = document
@@ -1130,6 +1195,14 @@ fn unique_dir() -> std::path::PathBuf {
 fn _assert_no_internal_parser_types_in_primary_api(_path: &Path) {}
 
 fn text_deck() -> Vec<u8> {
+    text_deck_with_slide(&text_slide())
+}
+
+fn repeated_text_deck(count: usize) -> Vec<u8> {
+    text_deck_with_slide(&text_slide_with_text(&"a".repeat(count)))
+}
+
+fn text_deck_with_slide(slide_xml: &str) -> Vec<u8> {
     zip_entries(
         [
             ("[Content_Types].xml", content_types().as_bytes()),
@@ -1139,7 +1212,7 @@ fn text_deck() -> Vec<u8> {
                 "ppt/_rels/presentation.xml.rels",
                 presentation_rels().as_bytes(),
             ),
-            ("ppt/slides/slide1.xml", text_slide().as_bytes()),
+            ("ppt/slides/slide1.xml", slide_xml.as_bytes()),
         ],
         CompressionMethod::Stored,
     )
@@ -1317,7 +1390,12 @@ fn image_slide_rels() -> String {
 }
 
 fn text_slide() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    text_slide_with_text("Original title")
+}
+
+fn text_slide_with_text(text: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <p:cSld>
     <p:spTree>
@@ -1326,12 +1404,12 @@ fn text_slide() -> String {
       <p:sp>
         <p:nvSpPr><p:cNvPr id="3" name="Title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
         <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
-        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Original title</a:t></a:r></a:p></p:txBody>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>{text}</a:t></a:r></a:p></p:txBody>
       </p:sp>
     </p:spTree>
   </p:cSld>
 </p:sld>"#
-        .to_owned()
+    )
 }
 
 fn image_slide() -> String {

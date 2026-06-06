@@ -41,7 +41,7 @@ use super::{
     ElementView, FindTextResult, FindTextScope, ImageView, IntrinsicSizePx, Paragraph,
     PresentationView, Run, SelectorGuards, SlideView, StyleSummary, TextMatch, TextSpan, TextView,
     XmlLocation,
-    pagination::{CursorScope, ViewMeta, default_limit, paginate},
+    pagination::{CursorScope, ViewMeta, bounded_limit, cursor_offset, paginate},
 };
 use crate::{
     schema_versions::{AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION},
@@ -106,9 +106,7 @@ pub struct FindTextRequest {
 pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonError> {
     let context = ViewContext::new(pkg)?;
     let mode = req.mode.as_token();
-    let limit = req
-        .limit
-        .unwrap_or_else(|| default_limit(mode).unwrap_or(20));
+    let limit = bounded_limit(mode, req.limit)?;
     let scope = CursorScope {
         document_id: &context.document_id,
         revision: context.revision,
@@ -267,17 +265,16 @@ pub fn find_text(pkg: &PptxPackage, req: FindTextRequest) -> Result<FindTextResu
 
     let context = ViewContext::new(pkg)?;
     let mode = "find_text";
-    let limit = req
-        .limit
-        .unwrap_or_else(|| default_limit(mode).unwrap_or(50));
+    let limit = bounded_limit(mode, req.limit)?;
     let scope = CursorScope {
         document_id: &context.document_id,
         revision: context.revision,
         mode,
         collection: None,
     };
-    let matches = collect_text_matches(&context, &req.query, &req.scope)?;
-    let (page, meta, omitted_count) = paginate(&matches, limit, req.cursor.as_deref(), scope)?;
+    let start = cursor_offset(req.cursor.as_deref(), scope)?;
+    let matches = collect_text_matches(&context, &req.query, &req.scope, start, limit)?;
+    let (page, meta, omitted_count) = match_page(matches, limit, start, scope)?;
 
     Ok(FindTextResult {
         schema: "pptx-compose.find_text.v1".to_owned(),
@@ -288,7 +285,7 @@ pub fn find_text(pkg: &PptxPackage, req: FindTextRequest) -> Result<FindTextResu
         scope: req.scope,
         view: meta,
         omitted_count,
-        matches: page.into_iter().cloned().collect(),
+        matches: page,
     })
 }
 
@@ -377,8 +374,12 @@ fn collect_text_matches(
     context: &ViewContext,
     query: &str,
     scope: &FindTextScope,
+    start: u32,
+    limit: u32,
 ) -> Result<Vec<TextMatch>, JsonError> {
     let mut matches = Vec::new();
+    let mut seen = 0_u32;
+    let stop_after = start.saturating_add(limit).saturating_add(1);
     for slide in &context.slides {
         if let FindTextScope::Slide { slide_id } = scope
             && slide.detail.id != *slide_id
@@ -390,6 +391,13 @@ fn collect_text_matches(
                 continue;
             };
             for span in find_query_spans(&text.plain, query)? {
+                if seen < start {
+                    seen = seen.saturating_add(1);
+                    continue;
+                }
+                if seen >= stop_after {
+                    return Ok(matches);
+                }
                 matches.push(TextMatch {
                     slide_id: slide.detail.id.clone(),
                     slide_index: slide.detail.index,
@@ -412,6 +420,7 @@ fn collect_text_matches(
                         },
                     },
                 });
+                seen = seen.saturating_add(1);
             }
         }
     }
@@ -426,6 +435,38 @@ fn collect_text_matches(
     }
 
     Ok(matches)
+}
+
+fn match_page(
+    mut matches: Vec<TextMatch>,
+    limit: u32,
+    start: u32,
+    scope: CursorScope<'_>,
+) -> Result<(Vec<TextMatch>, ViewMeta, u32), JsonError> {
+    let limit_usize =
+        usize::try_from(limit).map_err(|err| JsonError::InvalidCursor(err.to_string()))?;
+    let truncated = matches.len() > limit_usize;
+    if truncated {
+        matches.truncate(limit_usize);
+    }
+    let next_cursor = if truncated {
+        Some(super::pagination::Cursor::encode(
+            start.saturating_add(limit),
+            scope,
+        )?)
+    } else {
+        None
+    };
+    Ok((
+        matches,
+        ViewMeta {
+            mode: scope.mode.to_owned(),
+            limit,
+            next_cursor,
+            truncated,
+        },
+        u32::from(truncated),
+    ))
 }
 
 fn find_query_spans(text: &str, query: &str) -> Result<Vec<TextSpan>, JsonError> {

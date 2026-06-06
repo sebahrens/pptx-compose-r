@@ -36,6 +36,7 @@ impl Cli {
         let config = ServerConfig {
             enable_raw_xml_tools: self.enable_raw_xml_tools
                 || env_flag("PPTX_COMPOSE_MCP_ENABLE_RAW_XML"),
+            ..ServerConfig::default()
         };
         let permission_policy = PermissionPolicy::new(
             workspace,

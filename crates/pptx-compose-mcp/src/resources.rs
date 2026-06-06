@@ -562,10 +562,13 @@ fn write_query(
 }
 
 fn json_error(error: JsonError) -> Error {
-    Error::new(
-        ErrorCode::InvalidInput,
-        format!("Could not build resource view: {error:?}."),
-    )
+    match error {
+        JsonError::ResourceLimitExceeded(message) => Error::resource_limit_exceeded(message),
+        other => Error::new(
+            ErrorCode::InvalidInput,
+            format!("Could not build resource view: {other:?}."),
+        ),
+    }
 }
 
 fn invalid_uri(input: &str, message: &str) -> Error {

@@ -139,6 +139,9 @@ fn legacy_json_error(error: pptx_compose::json::schemas::JsonError) -> CliError 
         | pptx_compose::json::schemas::JsonError::Projection(message) => {
             pptx_compose::core::error::Error::new(ErrorCode::InvalidInput, message)
         }
+        pptx_compose::json::schemas::JsonError::ResourceLimitExceeded(message) => {
+            pptx_compose::core::error::Error::resource_limit_exceeded(message)
+        }
         pptx_compose::json::schemas::JsonError::NotFound { kind, id } => {
             pptx_compose::core::error::Error::new(
                 ErrorCode::SelectorNotFound,

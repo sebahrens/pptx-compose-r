@@ -39,10 +39,21 @@ use sessions::SessionStore;
 const RAW_GET_PART_XML: &str = "pptx_get_part_xml";
 const RAW_REPLACE_PART_XML: &str = "pptx_replace_part_xml";
 const MAX_INLINE_MEDIA_BYTES: usize = 16 * 1024 * 1024;
+const DEFAULT_MAX_INLINE_EXPORT_BYTES: usize = 16 * 1024 * 1024;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ServerConfig {
     pub enable_raw_xml_tools: bool,
+    pub max_inline_export_bytes: usize,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            enable_raw_xml_tools: false,
+            max_inline_export_bytes: DEFAULT_MAX_INLINE_EXPORT_BYTES,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -228,6 +239,8 @@ pub struct ExportInput {
     pub client_request_id: Option<String>,
     pub expected_revision: Option<u64>,
     pub output_path: Option<String>,
+    #[serde(default)]
+    pub inline: bool,
     #[serde(default)]
     pub overwrite: bool,
 }
@@ -810,10 +823,29 @@ impl PptxServer {
             )));
         }
 
+        if !input.inline {
+            return Err(outputs::map_error(
+                pptx_compose::core::error::Error::new(
+                    pptx_compose::core::error::ErrorCode::InvalidInput,
+                    "pptx_export requires output_path unless inline is explicitly true.",
+                )
+                .with_suggestion("Set output_path for file export, or set inline=true for a size-limited JSON export."),
+            ));
+        }
         let bytes = self
             .sessions
             .export_bytes(&input.session_id, input.expected_revision)
             .map_err(outputs::map_error)?;
+        if bytes.len() > self.config.max_inline_export_bytes {
+            return Err(outputs::map_error(
+                pptx_compose::core::error::Error::resource_limit_exceeded(format!(
+                    "Inline export is {} bytes, exceeding max_inline_export_bytes {}.",
+                    bytes.len(),
+                    self.config.max_inline_export_bytes
+                ))
+                .with_suggestion("Export to output_path instead of requesting inline PPTX bytes."),
+            ));
+        }
         Ok(Json(outputs::ExportOutput::exported(
             input.session_id,
             input.client_request_id,

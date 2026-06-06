@@ -53,6 +53,7 @@ pub fn assert_raw_tools_disabled_by_default() {
 
     let raw_enabled_server = PptxServer::with_config(ServerConfig {
         enable_raw_xml_tools: true,
+        ..ServerConfig::default()
     });
     let raw_enabled_tools = exposed_tool_names(&raw_enabled_server);
 
@@ -226,6 +227,7 @@ async fn tools_read_apply_and_export_mutated_deck() {
                 client_request_id: Some("tool-export-request".to_owned()),
                 expected_revision: Some(2),
                 output_path: None,
+                inline: true,
                 overwrite: false,
             },
         ))
@@ -256,6 +258,75 @@ async fn tools_read_apply_and_export_mutated_deck() {
         .expect("slide entry exists");
     let slide_xml = std::str::from_utf8(&slide.bytes).expect("slide XML is UTF-8");
     assert!(slide_xml.contains(">Updated title<"));
+}
+
+#[tokio::test]
+async fn export_requires_explicit_inline_opt_in_without_path() {
+    let server = PptxServer::default();
+    let opened = open_fixture(&server);
+
+    let result = server
+        .pptx_export(rmcp::handler::server::wrapper::Parameters(
+            crate::ExportInput {
+                session_id: opened.session_id,
+                client_request_id: None,
+                expected_revision: Some(opened.revision),
+                output_path: None,
+                inline: false,
+                overwrite: false,
+            },
+        ))
+        .await;
+    let Err(error) = result else {
+        panic!("pathless export without inline opt-in is rejected");
+    };
+    let envelope = error
+        .structured_content
+        .expect("inline opt-in error has structured content");
+
+    assert_eq!(error.is_error, Some(true));
+    assert_eq!(envelope["error"]["code"], "invalid_input");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("inline is explicitly true"))
+    );
+}
+
+#[tokio::test]
+async fn inline_export_enforces_configured_byte_limit() {
+    let server = PptxServer::with_config(crate::ServerConfig {
+        max_inline_export_bytes: 1,
+        ..crate::ServerConfig::default()
+    });
+    let opened = open_fixture(&server);
+
+    let result = server
+        .pptx_export(rmcp::handler::server::wrapper::Parameters(
+            crate::ExportInput {
+                session_id: opened.session_id,
+                client_request_id: None,
+                expected_revision: Some(opened.revision),
+                output_path: None,
+                inline: true,
+                overwrite: false,
+            },
+        ))
+        .await;
+    let Err(error) = result else {
+        panic!("oversized inline export is rejected");
+    };
+    let envelope = error
+        .structured_content
+        .expect("inline size error has structured content");
+
+    assert_eq!(error.is_error, Some(true));
+    assert_eq!(envelope["error"]["code"], "resource_limit_exceeded");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("max_inline_export_bytes"))
+    );
 }
 
 #[tokio::test]

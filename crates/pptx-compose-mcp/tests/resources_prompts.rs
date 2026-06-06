@@ -427,6 +427,7 @@ async fn mcp_client_can_drive_protocol_tools_and_structured_errors() {
             "client_request_id": "protocol-export",
             "expected_revision": revision + 1,
             "output_path": null,
+            "inline": true,
             "overwrite": false
         }),
     )
