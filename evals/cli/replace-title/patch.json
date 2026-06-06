@@ -1,0 +1,19 @@
+{
+  "schema": "pptx-compose.patch.v1",
+  "version": 1,
+  "document_id": "sha256:b23c066863474994680e679fd557d9a153679f90bed0104375cdbec50029e2fc",
+  "base_revision": 1,
+  "client_request_id": "eval-replace-title",
+  "operations": [
+    {
+      "op": "replace_text",
+      "operation_id": "op-replace-title",
+      "element_id": "slide-1-title",
+      "text": "Quarterly Plan",
+      "match": "Old Title",
+      "mode": "whole_element",
+      "format_policy": "preserve_existing_runs",
+      "overflow_policy": "allow"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schema": "pptx-compose.patch.v1",
+  "version": 1,
+  "document_id": "sha256:b23c066863474994680e679fd557d9a153679f90bed0104375cdbec50029e2fc",
+  "base_revision": 1,
+  "client_request_id": "eval-add-image",
+  "operations": [
+    {
+      "op": "add_image",
+      "operation_id": "op-add-image",
+      "slide_id": "slide-1",
+      "media_ref": "hero",
+      "content_type": "image/png",
+      "bounds": {
+        "x": 914400,
+        "y": 914400,
+        "cx": 1828800,
+        "cy": 1371600
+      },
+      "name": "Hero image",
+      "alt_text": "A staged image",
+      "fit": "contain",
+      "dedupe": "never"
+    }
+  ]
+}

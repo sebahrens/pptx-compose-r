@@ -1,6 +1,8 @@
 use std::{fs, path::Path};
 
-use pptx_compose::{ApplyPatchOptions, PresentationDocument, WriteMode, WriteOptions};
+use pptx_compose::{
+    ApplyPatchOptions, PresentationDocument, WriteMode, WriteOptions, core::error::Error,
+};
 
 use crate::{
     CliError, InvalidInputCause,
@@ -33,7 +35,7 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
                     validate: true,
                 },
             )
-            .map_err(CliError::from_error)?;
+            .map_err(apply_error)?;
         let sink = OutputSink::default();
         sink.emit_patch_report(&result.report, args.report)?;
         sink.emit_diff(&result.diff, args.diff)?;
@@ -60,7 +62,7 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
                 validate: true,
             },
         )
-        .map_err(CliError::from_error)?;
+        .map_err(apply_error)?;
     let write_options = write_options_from_args(&args);
     document
         .write_path_with_options(&output, write_options)
@@ -97,6 +99,18 @@ pub(crate) fn write_options_from_args(args: &ApplyArgs) -> WriteOptions {
         overwrite: args.overwrite,
         validate: true,
         atomic: true,
+    }
+}
+
+fn apply_error(error: Error) -> CliError {
+    if error.code() == pptx_compose::core::error::ErrorCode::InvalidInput {
+        CliError::invalid_input_with_source(
+            InvalidInputCause::PatchSchema,
+            "Patch input failed schema validation.",
+            error,
+        )
+    } else {
+        CliError::from_error(error)
     }
 }
 
@@ -168,7 +182,7 @@ mod test_support {
         fs::create_dir_all(&root).expect("test dir creates");
         fs::write(&input, include_bytes!("../../../../fixtures/minimal.pptx"))
             .expect("input fixture writes");
-        fs::write(&patch, br#"{"operations":[]}"#).expect("patch fixture writes");
+        fs::write(&patch, valid_noop_patch()).expect("patch fixture writes");
         fs::write(&output, b"original-output").expect("existing output writes");
 
         let args = args(&input, &patch, &output, false, false);
@@ -195,7 +209,7 @@ mod test_support {
         fs::create_dir_all(&root).expect("test dir creates");
         fs::write(&input, include_bytes!("../../../../fixtures/minimal.pptx"))
             .expect("input fixture writes");
-        fs::write(&patch, br#"{"operations":[]}"#).expect("patch fixture writes");
+        fs::write(&patch, valid_noop_patch()).expect("patch fixture writes");
         fs::write(&output, b"replace-me").expect("existing output writes");
 
         let args = args(&input, &patch, &output, true, true);
@@ -223,7 +237,7 @@ mod test_support {
         fs::create_dir_all(&root).expect("test dir creates");
         fs::write(&input, include_bytes!("../../../../fixtures/minimal.pptx"))
             .expect("input fixture writes");
-        fs::write(&patch, br#"{"operations":[]}"#).expect("patch fixture writes");
+        fs::write(&patch, valid_noop_patch()).expect("patch fixture writes");
 
         let mut args = args(&input, &patch, &output, false, false);
         args.dry_run = true;
@@ -278,6 +292,17 @@ mod test_support {
             temp_dir: fs::canonicalize(root).expect("temp canonicalizes"),
             keep_temp: false,
         }
+    }
+
+    fn valid_noop_patch() -> &'static [u8] {
+        br#"{
+            "schema": "pptx-compose.patch.v1",
+            "version": 1,
+            "document_id": "sha256:b23c066863474994680e679fd557d9a153679f90bed0104375cdbec50029e2fc",
+            "base_revision": 1,
+            "client_request_id": "apply-test-noop",
+            "operations": []
+        }"#
     }
 
     fn unique_dir() -> std::path::PathBuf {

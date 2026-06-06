@@ -1,0 +1,15 @@
+{
+  "schema": "pptx-compose.patch.v1",
+  "version": 1,
+  "document_id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "base_revision": 1,
+  "client_request_id": "eval-stale-revision",
+  "operations": [
+    {
+      "op": "replace_text",
+      "operation_id": "op-stale-replace-title",
+      "element_id": "slide-1-title",
+      "text": "Outdated edit"
+    }
+  ]
+}

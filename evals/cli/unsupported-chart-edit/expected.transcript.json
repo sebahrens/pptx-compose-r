@@ -1,0 +1,26 @@
+{
+  "schema": "pptx-compose.cli_eval_transcript.v1",
+  "version": 1,
+  "case": "unsupported-chart-edit",
+  "command": ["--json-errors", "apply", "{input}", "{patch}", "--dry-run"],
+  "expected_exit": 24,
+  "stdout_json": null,
+  "stderr_json": {
+    "schema": "pptx-compose.error.v1",
+    "version": 1,
+    "status": "error",
+    "error": {
+      "code": "unsupported_edit",
+      "message": "Chart editing is not supported by V1 patch operations.",
+      "severity": "error",
+      "category": "edit",
+      "retryable": false,
+      "state_changed": false,
+      "location": {
+        "operation_id": "op-edit-chart",
+        "operation": "edit_chart"
+      },
+      "suggestions": ["Leave chart parts unchanged or use raw XML tools when explicitly enabled."]
+    }
+  }
+}

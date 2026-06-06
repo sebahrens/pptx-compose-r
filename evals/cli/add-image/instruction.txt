@@ -1,0 +1,1 @@
+Add the staged image to the first slide.

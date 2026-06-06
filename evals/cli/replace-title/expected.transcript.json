@@ -1,0 +1,25 @@
+{
+  "schema": "pptx-compose.cli_eval_transcript.v1",
+  "version": 1,
+  "case": "replace-title",
+  "command": ["--json-errors", "apply", "{input}", "{patch}", "--dry-run"],
+  "expected_exit": 0,
+  "stdout_json": {
+    "schema": "pptx-compose.patch_report.v1",
+    "version": 1,
+    "status": "dry_run_success",
+    "dry_run": true,
+    "document_id": "sha256:b23c066863474994680e679fd557d9a153679f90bed0104375cdbec50029e2fc",
+    "base_revision": 1,
+    "new_document_id": "sha256:b23c066863474994680e679fd557d9a153679f90bed0104375cdbec50029e2fc",
+    "new_revision": 1,
+    "operation_reports": [],
+    "changed_parts": [],
+    "validation": {
+      "status": "valid",
+      "errors": 0,
+      "warnings": 0
+    }
+  },
+  "stderr_json": null
+}

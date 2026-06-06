@@ -1,0 +1,15 @@
+{
+  "schema": "pptx-compose.patch.v1",
+  "version": 1,
+  "document_id": "sha256:b23c066863474994680e679fd557d9a153679f90bed0104375cdbec50029e2fc",
+  "base_revision": 1,
+  "client_request_id": "eval-unsupported-chart-edit",
+  "operations": [
+    {
+      "op": "edit_chart",
+      "operation_id": "op-edit-chart",
+      "element_id": "chart-1",
+      "data": []
+    }
+  ]
+}

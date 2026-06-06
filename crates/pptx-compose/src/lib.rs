@@ -11,7 +11,7 @@ pub use pptx_compose_edit as edit;
 pub use pptx_compose_json as json;
 
 use core::{
-    error::{Error, ErrorCode, Result},
+    error::{Error, ErrorCode, ErrorLocation, Result},
     provenance::revision,
     zip::{
         reader::{RawEntry, from_bytes},
@@ -19,6 +19,7 @@ use core::{
     },
 };
 use pptx_compose_edit::diffs::SemanticDiff;
+use pptx_compose_edit::patch::{DocumentState, parse_patch, validate_envelope};
 use pptx_compose_json::schemas::{
     PatchReport, PatchStatus, PatchValidationSummary, ValidationStatus,
 };
@@ -136,7 +137,6 @@ impl PresentationDocument {
         patch: &serde_json::Value,
         options: ApplyPatchOptions,
     ) -> Result<ApplyPatchResult> {
-        let _patch = patch;
         if options.validate {
             self.validate()?;
         }
@@ -149,6 +149,10 @@ impl PresentationDocument {
                 source,
             )
         })?;
+        reject_known_unsupported_operations(patch)?;
+        let patch = parse_patch(patch.clone())?;
+        validate_envelope(&patch, &DocumentState::new(document_id.clone(), revision))?;
+
         let dry_run = options.dry_run;
         Ok(ApplyPatchResult {
             report: PatchReport {
@@ -325,6 +329,44 @@ fn temp_sibling_path(output_path: &Path) -> PathBuf {
         .unwrap_or("output.pptx");
     let suffix = format!("{}.{}.tmp", std::process::id(), unique_counter());
     output_path.with_file_name(format!(".{file_name}.{suffix}"))
+}
+
+fn reject_known_unsupported_operations(patch: &serde_json::Value) -> Result<()> {
+    let Some(operations) = patch
+        .get("operations")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(());
+    };
+
+    for operation in operations {
+        let Some(op_name) = operation.get("op").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if matches!(
+            op_name,
+            "edit_chart" | "replace_chart_data" | "replace_chart" | "update_chart"
+        ) {
+            let operation_id = operation
+                .get("operation_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            return Err(Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Chart editing is not supported by V1 patch operations.",
+            )
+            .with_location(ErrorLocation {
+                operation_id,
+                operation: Some(op_name.to_owned()),
+                ..ErrorLocation::default()
+            })
+            .with_suggestion(
+                "Leave chart parts unchanged or use raw XML tools when explicitly enabled.",
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn unique_counter() -> u64 {

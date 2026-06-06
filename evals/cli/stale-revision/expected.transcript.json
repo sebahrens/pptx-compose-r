@@ -1,0 +1,23 @@
+{
+  "schema": "pptx-compose.cli_eval_transcript.v1",
+  "version": 1,
+  "case": "stale-revision",
+  "command": ["--json-errors", "apply", "{input}", "{patch}", "--dry-run"],
+  "expected_exit": 21,
+  "stdout_json": null,
+  "stderr_json": {
+    "schema": "pptx-compose.error.v1",
+    "version": 1,
+    "status": "error",
+    "error": {
+      "code": "stale_patch",
+      "message": "Patch document_id or base_revision does not match the current document.",
+      "severity": "error",
+      "category": "patch",
+      "retryable": false,
+      "state_changed": false,
+      "location": {},
+      "suggestions": ["Inspect the deck again and regenerate the patch."]
+    }
+  }
+}
