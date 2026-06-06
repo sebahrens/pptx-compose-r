@@ -661,7 +661,38 @@ fn system_time_json(time: SystemTime) -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0);
-    format!("{seconds}")
+    unix_seconds_rfc3339(seconds)
+}
+
+fn unix_seconds_rfc3339(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    let second_of_day = seconds % 86_400;
+    let (year, month, day) = civil_from_unix_days(days);
+    let hour = second_of_day / 3_600;
+    let minute = (second_of_day % 3_600) / 60;
+    let second = second_of_day % 60;
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+fn civil_from_unix_days(days: u64) -> (i64, u64, u64) {
+    let z = i128::from(days) + 719_468;
+    let era = z / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    (
+        i64::try_from(year).unwrap_or(i64::MAX),
+        u64::try_from(month).unwrap_or(1),
+        u64::try_from(day).unwrap_or(1),
+    )
 }
 
 fn image_dimensions(content_type: &str, bytes: &[u8]) -> Option<ImageDimensions> {
@@ -761,6 +792,15 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 #[test]
+fn system_time_json_formats_expires_at_as_rfc3339_utc() {
+    let formatted = system_time_json(UNIX_EPOCH + Duration::from_secs(1_749_081_600));
+
+    assert_eq!(formatted, "2025-06-05T00:00:00Z");
+    assert!(is_rfc3339_utc_seconds(&formatted));
+}
+
+#[cfg(test)]
+#[test]
 fn revision_increments_on_apply() {
     let store = SessionStore::default();
     let opened = store
@@ -804,6 +844,21 @@ fn session_ttl_eviction() {
         .open_package(test_empty_deck(), &test_minimal_pptx_bytes())
         .expect("expired session was cleaned up");
     assert_ne!(opened.session_id, reopened.session_id);
+}
+
+#[cfg(test)]
+fn is_rfc3339_utc_seconds(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 20
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b'Z'
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            matches!(index, 4 | 7 | 10 | 13 | 16 | 19) || byte.is_ascii_digit()
+        })
 }
 
 #[cfg(test)]
