@@ -137,7 +137,8 @@ impl AddImage {
         package
             .insert_zip_entry(media_part.zip_entry_name(), media.bytes)
             .map_err(|error| error.with_location(self.location(None)))?;
-        ensure_content_type(package, &media_part, extension, &self.content_type);
+        let content_type_changed =
+            ensure_content_type(package, &media_part, extension, &self.content_type);
 
         let slide_part = target.part.clone();
         let target_value = relative_target(&slide_part, &media_part);
@@ -146,19 +147,24 @@ impl AddImage {
 
         let created_element_id = insert_picture(package, target, self, &rel_id)?;
         let rels_part = rels_part_name_for(&slide_part)?;
-        let content_types_part = content_types_part()?;
         package.mark_dirty(slide_part.clone());
         package.mark_dirty(rels_part.clone());
-        package.mark_dirty(content_types_part);
+        if content_type_changed {
+            package.mark_dirty(content_types_part()?);
+        }
         package.mark_dirty(media_part.clone());
 
+        let mut changed_parts = vec![
+            slide_part.zip_entry_name().to_owned(),
+            rels_part.zip_entry_name().to_owned(),
+            media_part.zip_entry_name().to_owned(),
+        ];
+        if content_type_changed {
+            changed_parts.push("[Content_Types].xml".to_owned());
+        }
+
         Ok(PatchEffects {
-            changed_parts: vec![
-                slide_part.zip_entry_name().to_owned(),
-                rels_part.zip_entry_name().to_owned(),
-                media_part.zip_entry_name().to_owned(),
-                "[Content_Types].xml".to_owned(),
-            ],
+            changed_parts,
             target: Some(OperationTarget {
                 slide_id: target.slide_id.clone(),
                 element_id: created_element_id.clone(),
@@ -180,18 +186,18 @@ impl AddImage {
     }
 }
 
-fn ensure_content_type(
+pub(super) fn ensure_content_type(
     package: &mut Package,
     media_part: &PartName,
     extension: &str,
     content_type: &str,
-) {
+) -> bool {
     if package
         .content_types()
         .default_for_ext(extension)
         .is_some_and(|existing| existing == content_type)
     {
-        return;
+        return false;
     }
 
     if package.content_types().default_for_ext(extension).is_none() {
@@ -203,6 +209,7 @@ fn ensure_content_type(
             .content_types_mut()
             .insert_override(media_part.clone(), content_type);
     }
+    true
 }
 
 fn add_slide_relationship(
@@ -865,6 +872,70 @@ fn wires_part_rel_ctype() {
         .validate(&media_inputs())
         .expect_err("missing media_ref is rejected");
     assert_eq!(error.code(), ErrorCode::MissingMediaRef);
+}
+
+#[cfg(test)]
+#[test]
+fn reuses_existing_content_type_default_without_dirtying_content_types() {
+    let slide_part = test_part("ppt/slides/slide1.xml");
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", slide_xml().as_bytes().to_vec())
+        .expect("slide inserted");
+    package
+        .insert_zip_entry(
+            "ppt/slides/_rels/slide1.xml.rels",
+            rels_xml().as_bytes().to_vec(),
+        )
+        .expect("rels inserted");
+    package
+        .content_types_mut()
+        .insert_default("png", "image/png");
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(slide_part.clone()),
+        "rId2",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout",
+        "../slideLayouts/slideLayout1.xml",
+    ));
+
+    let operation = AddImage {
+        operation_id: "op-1".to_owned(),
+        slide_id: "slide-1".to_owned(),
+        media_ref: "hero".to_owned(),
+        content_type: "image/png".to_owned(),
+        bounds: Bounds {
+            x: 10,
+            y: 20,
+            cx: 300,
+            cy: 400,
+        },
+        name: None,
+        alt_text: None,
+        fit: ImageFit::Stretch,
+        dedupe: ImageDedupe::Never,
+    };
+    let target = ResolvedSlide {
+        slide_id: "slide-1".to_owned(),
+        part: slide_part,
+    };
+
+    let effects = operation
+        .apply(&mut package, &target, &media_inputs())
+        .expect("image is added");
+
+    assert_eq!(
+        effects.changed_parts,
+        vec![
+            "ppt/slides/slide1.xml",
+            "ppt/slides/_rels/slide1.xml.rels",
+            "ppt/media/image1.png"
+        ]
+    );
+    assert!(
+        !package
+            .dirty_parts()
+            .contains(&content_types_part().expect("valid part"))
+    );
 }
 
 #[cfg(test)]

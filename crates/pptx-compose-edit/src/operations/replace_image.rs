@@ -19,7 +19,7 @@ use pptx_compose_json::schemas::OperationTarget;
 
 use crate::{
     media_inputs::MediaInputs,
-    operations::ResolvedElement,
+    operations::{ResolvedElement, add_image::ensure_content_type},
     patch::{PatchEffects, ReplaceImageOperation},
 };
 
@@ -148,9 +148,8 @@ impl ReplaceImage {
         package
             .insert_zip_entry(new_media_part.zip_entry_name(), media.bytes)
             .map_err(|error| error.with_location(self.location(Some(target), None)))?;
-        package
-            .content_types_mut()
-            .insert_override(new_media_part.clone(), self.content_type.clone());
+        let content_type_changed =
+            ensure_content_type(package, &new_media_part, extension, &self.content_type);
 
         let target_value = relative_target(&target.part, &new_media_part);
         retarget_relationship(
@@ -167,16 +166,20 @@ impl ReplaceImage {
         let rels_part = rels_part_name_for(&target.part)?;
         package.mark_dirty(rels_part.clone());
         package.mark_dirty(new_media_part.clone());
-        if let Ok(content_types_part) = PartName::from_zip_entry("[Content_Types].xml") {
-            package.mark_dirty(content_types_part);
+        if content_type_changed {
+            package.mark_dirty(content_types_part()?);
+        }
+
+        let mut changed_parts = vec![
+            rels_part.zip_entry_name().to_owned(),
+            new_media_part.zip_entry_name().to_owned(),
+        ];
+        if content_type_changed {
+            changed_parts.push("[Content_Types].xml".to_owned());
         }
 
         Ok(PatchEffects {
-            changed_parts: vec![
-                rels_part.zip_entry_name().to_owned(),
-                new_media_part.zip_entry_name().to_owned(),
-                "[Content_Types].xml".to_owned(),
-            ],
+            changed_parts,
             target: Some(OperationTarget {
                 slide_id: target.slide_id.clone(),
                 element_id: target.element_id.clone(),
@@ -498,6 +501,10 @@ fn rels_part_name_for(part_name: &PartName) -> Result<PartName> {
     PartName::from_zip_entry(rels_path.as_str())
 }
 
+fn content_types_part() -> Result<PartName> {
+    PartName::from_zip_entry("[Content_Types].xml")
+}
+
 #[cfg(test)]
 pub mod retargets_not_shared {
     use std::collections::HashMap;
@@ -573,11 +580,12 @@ pub mod retargets_not_shared {
 
         assert_eq!(
             effects.changed_parts,
-            vec![
-                "ppt/slides/_rels/slide1.xml.rels",
-                "ppt/media/image2.png",
-                "[Content_Types].xml"
-            ]
+            vec!["ppt/slides/_rels/slide1.xml.rels", "ppt/media/image2.png"]
+        );
+        assert!(
+            !package
+                .dirty_parts()
+                .contains(&content_types_part().expect("valid part"))
         );
         let slide1_target = relationship_target(&package, &slide1, "rId5");
         let slide2_target = relationship_target(&package, &slide2, "rId7");
@@ -610,6 +618,60 @@ pub mod retargets_not_shared {
             .validate(&linked_package, &target(&slide1), &media_inputs())
             .expect_err("r:link image replacement is unsupported");
         assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+    }
+
+    #[test]
+    fn retarget_adds_content_type_default_when_needed() {
+        let slide = part("ppt/slides/slide1.xml");
+        let mut package = Package::new();
+        package
+            .insert_zip_entry(slide.zip_entry_name(), slide_xml("rId5").into_bytes())
+            .expect("slide inserted");
+        package
+            .insert_zip_entry(
+                "ppt/slides/_rels/slide1.xml.rels",
+                rels_xml("../media/image1.png", "rId5").into_bytes(),
+            )
+            .expect("slide rels inserted");
+        package
+            .insert_zip_entry("ppt/media/image1.png", one_by_one_png())
+            .expect("old media inserted");
+        package.push_relationship(Relationship::internal(
+            RelationshipSource::Part(slide.clone()),
+            "rId5",
+            IMAGE_REL_TYPE,
+            "../media/image1.png",
+        ));
+
+        let operation = ReplaceImage {
+            operation_id: "op-1".to_owned(),
+            element_id: "slide-1:pic-1".to_owned(),
+            media_ref: "replacement".to_owned(),
+            content_type: "image/png".to_owned(),
+            allow_shared_mutation: false,
+        };
+        let effects = operation
+            .apply(&mut package, &target(&slide), &media_inputs())
+            .expect("image replacement retargets");
+
+        assert_eq!(
+            effects.changed_parts,
+            vec![
+                "ppt/slides/_rels/slide1.xml.rels",
+                "ppt/media/image2.png",
+                "[Content_Types].xml"
+            ]
+        );
+        let new_media = part("ppt/media/image2.png");
+        assert_eq!(
+            package.content_types().resolve(&new_media),
+            Some("image/png")
+        );
+        assert!(
+            package
+                .dirty_parts()
+                .contains(&content_types_part().expect("valid part"))
+        );
     }
 
     fn relationship_target(package: &Package, source: &PartName, rel_id: &str) -> PartName {
