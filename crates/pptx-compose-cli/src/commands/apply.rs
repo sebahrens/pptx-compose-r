@@ -226,7 +226,7 @@ fn dry_run_writes_no_pptx() {
 mod test_support {
     use std::{fs, path::Path};
 
-    use pptx_compose::WriteMode;
+    use pptx_compose::{PresentationDocument, WriteMode};
 
     use super::{apply, write_options_from_args};
     use crate::{cli::ApplyArgs, exit, exit::exit_code_for, permissions::PermissionContext};
@@ -351,15 +351,24 @@ mod test_support {
         }
     }
 
-    fn valid_noop_patch() -> &'static [u8] {
-        br#"{
+    fn valid_noop_patch() -> Vec<u8> {
+        let document_id =
+            PresentationDocument::from_bytes(include_bytes!("../../../../fixtures/minimal.pptx"))
+                .expect("fixture opens")
+                .validate()
+                .expect("fixture validates")
+                .document_id;
+        format!(
+            r#"{{
             "schema": "pptx-compose.patch.v1",
             "version": 1,
-            "document_id": "sha256:b23c066863474994680e679fd557d9a153679f90bed0104375cdbec50029e2fc",
+            "document_id": "{document_id}",
             "base_revision": 1,
             "client_request_id": "apply-test-noop",
             "operations": []
-        }"#
+        }}"#
+        )
+        .into_bytes()
     }
 
     fn unique_dir() -> std::path::PathBuf {

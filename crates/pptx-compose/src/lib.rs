@@ -25,7 +25,7 @@ use core::{
         relationships::{Relationship, RelationshipSet, RelationshipSource, TargetMode},
     },
     pptx::presentation as core_presentation,
-    provenance::revision,
+    provenance::{document_id::document_id as provenance_document_id, revision},
     xml::{document::XmlElement, parser::parse_document},
     zip::{
         ZipEntryMetadata,
@@ -46,7 +46,6 @@ use pptx_compose_json::{
     agent_view::views::ViewRequest,
     schemas::{PatchReport, ValidationReport},
 };
-use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PresentationDocument {
@@ -167,7 +166,7 @@ impl PresentationDocument {
             let _report = self.validate()?;
         }
 
-        let document_id = sha256_hex(&self.source_bytes);
+        let document_id = document_id_from_entries(&self.entries)?;
         let revision = u32::try_from(revision::on_open().value()).map_err(|source| {
             Error::with_source(
                 ErrorCode::InternalError,
@@ -343,7 +342,7 @@ impl PresentationDocument {
         let package = package_from_entries(&self.entries)?;
         pptx_compose_edit::reports::validation_report(
             core::validation::validate_package(&package, core::validation::ValidationMode::Edited),
-            sha256_hex(&self.source_bytes),
+            document_id_from_entries(&self.entries)?,
             u32::try_from(revision::on_open().value()).map_err(|source| {
                 Error::with_source(
                     ErrorCode::InternalError,
@@ -412,17 +411,6 @@ fn json_error(error: pptx_compose_json::schemas::JsonError) -> Error {
     }
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity("sha256:".len() + 64);
-    output.push_str("sha256:");
-    for byte in digest {
-        use std::fmt::Write as _;
-        write!(&mut output, "{byte:02x}").expect("writing to String succeeds");
-    }
-    output
-}
-
 fn package_from_entries(entries: &[RawEntry]) -> Result<Package> {
     let mut package = Package::new();
     for entry in entries {
@@ -435,6 +423,22 @@ fn package_from_entries(entries: &[RawEntry]) -> Result<Package> {
     hydrate_content_types(&mut package)?;
     hydrate_relationships(&mut package)?;
     Ok(package)
+}
+
+fn document_id_from_entries(entries: &[RawEntry]) -> Result<String> {
+    let content_types_bytes = entries
+        .iter()
+        .find(|entry| !entry.meta.is_dir && entry.name.as_str() == "/[Content_Types].xml")
+        .map(|entry| entry.bytes.as_slice())
+        .ok_or_else(|| Error::unsupported_package("Package is missing [Content_Types].xml."))?;
+
+    let ordinary_parts = entries
+        .iter()
+        .filter(|entry| !entry.meta.is_dir && entry.name.as_str() != "/[Content_Types].xml")
+        .map(|entry| (entry.name.clone(), entry.bytes.as_slice()))
+        .collect::<Vec<_>>();
+
+    Ok(provenance_document_id(&ordinary_parts, content_types_bytes))
 }
 
 fn package_to_zip_bytes(package: &Package) -> Result<Vec<u8>> {

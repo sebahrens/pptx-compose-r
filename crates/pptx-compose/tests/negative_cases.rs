@@ -10,6 +10,8 @@ use pptx_compose::{
             relationships::{Relationship, RelationshipSource},
         },
         pptx::presentation as core_presentation,
+        provenance::document_id::document_id as provenance_document_id,
+        zip::reader::{RawEntry, from_bytes},
     },
     edit::media_inputs::{MediaBinding, MediaInputs, MediaSource},
     edit::patch::parse_patch,
@@ -216,15 +218,23 @@ fn patch_with_operation(operation: Value) -> Value {
 }
 
 fn document_id(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
+    let entries = from_bytes(bytes).expect("package entries read");
+    document_id_from_entries(&entries)
+}
 
-    let digest = Sha256::digest(bytes);
-    let mut output = String::from("sha256:");
-    for byte in digest {
-        use std::fmt::Write as _;
-        write!(&mut output, "{byte:02x}").expect("writing to String succeeds");
-    }
-    output
+fn document_id_from_entries(entries: &[RawEntry]) -> String {
+    let content_types_bytes = entries
+        .iter()
+        .find(|entry| !entry.meta.is_dir && entry.name.as_str() == "/[Content_Types].xml")
+        .map(|entry| entry.bytes.as_slice())
+        .expect("package has content types");
+    let ordinary_parts = entries
+        .iter()
+        .filter(|entry| !entry.meta.is_dir && entry.name.as_str() != "/[Content_Types].xml")
+        .map(|entry| (entry.name.clone(), entry.bytes.as_slice()))
+        .collect::<Vec<_>>();
+
+    provenance_document_id(&ordinary_parts, content_types_bytes)
 }
 
 fn media_inputs(

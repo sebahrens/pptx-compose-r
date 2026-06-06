@@ -3,6 +3,10 @@ use std::{fs, io::Cursor, path::Path};
 use pptx_compose::{
     AgentViewOptions, ApplyPatchOptions, MediaInputs, OpenOptions, Patch, PresentationDocument,
     WriteMode, WriteOptions,
+    core::{
+        provenance::document_id::document_id as provenance_document_id,
+        zip::reader::{RawEntry, from_bytes},
+    },
 };
 
 #[test]
@@ -81,6 +85,25 @@ fn exposes_required_070_api_and_defaults() {
     fs::remove_dir_all(root).expect("test dir removes");
 }
 
+#[test]
+fn no_edit_rezip_preserves_canonical_document_id() {
+    let bytes = include_bytes!("../../../fixtures/minimal.pptx");
+    let document = PresentationDocument::from_bytes(bytes).expect("fixture opens");
+    let original_id = document_id(bytes);
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Deterministic,
+            ..WriteOptions::default()
+        })
+        .expect("deterministic no-edit write succeeds");
+    assert_eq!(document_id(&written), original_id);
+
+    let reopened = PresentationDocument::from_bytes(&written).expect("written deck reopens");
+    let validation = reopened.validate().expect("validation report builds");
+    assert_eq!(validation.document_id, original_id);
+}
+
 fn noop_patch(bytes: &[u8]) -> Patch {
     serde_json::from_value(serde_json::json!({
         "schema": "pptx-compose.patch.v1",
@@ -94,15 +117,23 @@ fn noop_patch(bytes: &[u8]) -> Patch {
 }
 
 fn document_id(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
+    let entries = from_bytes(bytes).expect("package entries read");
+    document_id_from_entries(&entries)
+}
 
-    let digest = Sha256::digest(bytes);
-    let mut output = String::from("sha256:");
-    for byte in digest {
-        use std::fmt::Write as _;
-        write!(&mut output, "{byte:02x}").expect("writing to String succeeds");
-    }
-    output
+fn document_id_from_entries(entries: &[RawEntry]) -> String {
+    let content_types_bytes = entries
+        .iter()
+        .find(|entry| !entry.meta.is_dir && entry.name.as_str() == "/[Content_Types].xml")
+        .map(|entry| entry.bytes.as_slice())
+        .expect("package has content types");
+    let ordinary_parts = entries
+        .iter()
+        .filter(|entry| !entry.meta.is_dir && entry.name.as_str() != "/[Content_Types].xml")
+        .map(|entry| (entry.name.clone(), entry.bytes.as_slice()))
+        .collect::<Vec<_>>();
+
+    provenance_document_id(&ordinary_parts, content_types_bytes)
 }
 
 fn unique_dir() -> std::path::PathBuf {
