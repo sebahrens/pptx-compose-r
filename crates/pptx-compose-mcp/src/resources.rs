@@ -1,10 +1,11 @@
 use std::{fmt, str::FromStr};
 
 use pptx_compose::{
+    AgentViewOptions,
     core::error::{Error, ErrorCode},
     edit::patch::{PATCH_SCHEMA, PATCH_VERSION, Patch},
     json::{
-        agent_view::views::{ViewMode, ViewRequest, build_view, package_from_pptx_bytes},
+        agent_view::views::ViewMode,
         schema_versions::{AGENT_VIEW_SCHEMA, ERROR_SCHEMA, PATCH_REPORT_SCHEMA},
         schemas::{ErrorEnvelope, JsonError, PatchReport, agent_view_json_schema},
     },
@@ -332,18 +333,15 @@ fn session_view(
     limit: Option<u32>,
 ) -> Result<Value, Error> {
     let session = sessions.get(session_id)?;
-    let package = package_from_pptx_bytes(session.package.source_bytes()).map_err(json_error)?;
-    build_view(
-        &package,
-        ViewRequest {
+    session
+        .package
+        .to_agent_json_with_options(AgentViewOptions {
             mode,
             slide_id,
             element_id,
             cursor,
             limit,
-        },
-    )
-    .map_err(json_error)
+        })
 }
 
 fn schema_resource(name: &str, version: &str) -> Result<Value, Error> {

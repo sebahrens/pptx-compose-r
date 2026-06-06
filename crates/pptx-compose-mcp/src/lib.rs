@@ -24,9 +24,13 @@ pub mod sessions;
 pub mod tools;
 
 use pptx_compose::{
+    AgentViewOptions,
     core::error::Error as CoreError,
     edit::patch::Patch,
-    json::agent_view::{FindTextResult, FindTextScope, views::FindTextRequest},
+    json::agent_view::{
+        FindTextResult, FindTextScope,
+        views::{FindTextRequest, ViewMode},
+    },
 };
 use prompts::PromptRegistry;
 use resources::{ResourceRegistry, ResourceUri};
@@ -194,6 +198,12 @@ pub struct ValidatePatchInput {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ValidateInput {
+    pub session_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CloseInput {
     pub session_id: String,
 }
@@ -357,6 +367,34 @@ fn invalid_base64_error(message: &'static str) -> pptx_compose::core::error::Err
     )
 }
 
+fn encode_base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let first = chunk[0];
+        let second = *chunk.get(1).unwrap_or(&0);
+        let third = *chunk.get(2).unwrap_or(&0);
+
+        output.push(char::from(ALPHABET[usize::from(first >> 2)]));
+        output.push(char::from(
+            ALPHABET[usize::from(((first & 0x03) << 4) | (second >> 4))],
+        ));
+        if chunk.len() > 1 {
+            output.push(char::from(
+                ALPHABET[usize::from(((second & 0x0f) << 2) | (third >> 6))],
+            ));
+        } else {
+            output.push('=');
+        }
+        if chunk.len() > 2 {
+            output.push(char::from(ALPHABET[usize::from(third & 0x3f)]));
+        } else {
+            output.push('=');
+        }
+    }
+    output
+}
+
 #[tool_router(router = build_tool_router)]
 impl PptxServer {
     /// Open a deck into a session.
@@ -398,11 +436,21 @@ impl PptxServer {
     )]
     pub async fn pptx_get_document_summary(
         &self,
-        _input: rmcp::handler::server::wrapper::Parameters<SummaryInput>,
-    ) -> rmcp::Json<outputs::DocumentSummaryOutput> {
-        rmcp::Json(outputs::DocumentSummaryOutput::stub(
-            "pptx_get_document_summary",
-        ))
+        input: rmcp::handler::server::wrapper::Parameters<SummaryInput>,
+    ) -> Result<Json<outputs::DocumentSummaryOutput>, rmcp::model::CallToolResult> {
+        let content = self
+            .resource_registry
+            .read_resource(
+                &ResourceUri::SessionSummary {
+                    session_id: input.0.session_id,
+                },
+                &self.sessions,
+            )
+            .await
+            .map_err(outputs::map_error)?;
+        Ok(Json(outputs::DocumentSummaryOutput::success(
+            content.content,
+        )))
     }
 
     /// Page through slide summaries.
@@ -418,9 +466,22 @@ impl PptxServer {
     )]
     pub async fn pptx_list_slides(
         &self,
-        _input: rmcp::handler::server::wrapper::Parameters<ListSlidesInput>,
-    ) -> rmcp::Json<outputs::ListSlidesOutput> {
-        rmcp::Json(outputs::ListSlidesOutput::stub("pptx_list_slides"))
+        input: rmcp::handler::server::wrapper::Parameters<ListSlidesInput>,
+    ) -> Result<Json<outputs::ListSlidesOutput>, rmcp::model::CallToolResult> {
+        let input = input.0;
+        let content = self
+            .resource_registry
+            .read_resource(
+                &ResourceUri::SessionSlides {
+                    session_id: input.session_id,
+                    cursor: input.cursor,
+                    limit: input.limit,
+                },
+                &self.sessions,
+            )
+            .await
+            .map_err(outputs::map_error)?;
+        Ok(Json(outputs::ListSlidesOutput::success(content.content)))
     }
 
     /// Return one slide view.
@@ -436,9 +497,26 @@ impl PptxServer {
     )]
     pub async fn pptx_get_slide(
         &self,
-        _input: rmcp::handler::server::wrapper::Parameters<GetSlideInput>,
-    ) -> rmcp::Json<outputs::SlideOutput> {
-        rmcp::Json(outputs::SlideOutput::stub("pptx_get_slide"))
+        input: rmcp::handler::server::wrapper::Parameters<GetSlideInput>,
+    ) -> Result<Json<outputs::SlideOutput>, rmcp::model::CallToolResult> {
+        let input = input.0;
+        if let Some(expected_revision) = input.expected_revision {
+            self.sessions
+                .check_revision(&input.session_id, expected_revision)
+                .map_err(outputs::map_error)?;
+        }
+        let content = self
+            .resource_registry
+            .read_resource(
+                &ResourceUri::SessionSlide {
+                    session_id: input.session_id,
+                    slide_id: input.slide_id,
+                },
+                &self.sessions,
+            )
+            .await
+            .map_err(outputs::map_error)?;
+        Ok(Json(outputs::SlideOutput::success(content.content)))
     }
 
     /// Page through slide elements.
@@ -454,9 +532,28 @@ impl PptxServer {
     )]
     pub async fn pptx_list_elements(
         &self,
-        _input: rmcp::handler::server::wrapper::Parameters<ListElementsInput>,
-    ) -> rmcp::Json<outputs::ListElementsOutput> {
-        rmcp::Json(outputs::ListElementsOutput::stub("pptx_list_elements"))
+        input: rmcp::handler::server::wrapper::Parameters<ListElementsInput>,
+    ) -> Result<Json<outputs::ListElementsOutput>, rmcp::model::CallToolResult> {
+        let input = input.0;
+        let session = self
+            .sessions
+            .get(&input.session_id)
+            .map_err(outputs::map_error)?;
+        let result = session
+            .package
+            .to_agent_json_with_options(AgentViewOptions {
+                mode: if input.slide_id.is_some() {
+                    ViewMode::SlideDetail
+                } else {
+                    ViewMode::SlidePage
+                },
+                slide_id: input.slide_id,
+                element_id: None,
+                cursor: input.cursor,
+                limit: input.limit,
+            })
+            .map_err(outputs::map_error)?;
+        Ok(Json(outputs::ListElementsOutput::success(result)))
     }
 
     /// Return one element detail.
@@ -472,9 +569,21 @@ impl PptxServer {
     )]
     pub async fn pptx_get_element(
         &self,
-        _input: rmcp::handler::server::wrapper::Parameters<GetElementInput>,
-    ) -> rmcp::Json<outputs::ElementOutput> {
-        rmcp::Json(outputs::ElementOutput::stub("pptx_get_element"))
+        input: rmcp::handler::server::wrapper::Parameters<GetElementInput>,
+    ) -> Result<Json<outputs::ElementOutput>, rmcp::model::CallToolResult> {
+        let input = input.0;
+        let content = self
+            .resource_registry
+            .read_resource(
+                &ResourceUri::SessionElement {
+                    session_id: input.session_id,
+                    element_id: input.element_id,
+                },
+                &self.sessions,
+            )
+            .await
+            .map_err(outputs::map_error)?;
+        Ok(Json(outputs::ElementOutput::success(content.content)))
     }
 
     /// Search text in scoped slides.
@@ -570,11 +679,13 @@ impl PptxServer {
         input: rmcp::handler::server::wrapper::Parameters<ValidatePatchInput>,
     ) -> Result<Json<outputs::ValidatePatchOutput>, rmcp::model::CallToolResult> {
         self.sessions
-            .check_patch_envelope(&input.0.session_id, &input.0.patch)
-            .map_err(outputs::map_error)?;
-        Ok(rmcp::Json(outputs::ValidatePatchOutput::stub(
-            "pptx_validate_patch",
-        )))
+            .validate_patch(&input.0.session_id, input.0.patch)
+            .map(|report| {
+                Json(outputs::ValidatePatchOutput::success(serde_json::json!(
+                    report
+                )))
+            })
+            .map_err(outputs::map_error)
     }
 
     /// Apply an atomic patch to the session.
@@ -592,22 +703,15 @@ impl PptxServer {
         &self,
         input: rmcp::handler::server::wrapper::Parameters<ApplyPatchInput>,
     ) -> Result<Json<outputs::ApplyPatchOutput>, rmcp::model::CallToolResult> {
-        self.sessions
-            .check_patch_envelope(&input.0.session_id, &input.0.patch)
-            .map_err(outputs::map_error)?;
-        let revision = self
+        let result = self
             .sessions
-            .record_apply(
-                &input.0.session_id,
-                u64::from(input.0.patch.base_revision),
-                input.0.dry_run,
-                true,
-            )
+            .apply_patch(&input.0.session_id, input.0.patch, input.0.dry_run)
             .map_err(outputs::map_error)?;
         Ok(Json(outputs::ApplyPatchOutput::applied(
             &input.0.session_id,
-            revision,
+            result.revision,
             input.0.dry_run,
+            serde_json::json!(result.report),
         )))
     }
 
@@ -622,8 +726,18 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_validate(&self) -> rmcp::Json<outputs::ValidateOutput> {
-        rmcp::Json(outputs::ValidateOutput::stub("pptx_validate"))
+    pub async fn pptx_validate(
+        &self,
+        input: rmcp::handler::server::wrapper::Parameters<ValidateInput>,
+    ) -> Result<Json<outputs::ValidateOutput>, rmcp::model::CallToolResult> {
+        let session = self
+            .sessions
+            .get(&input.0.session_id)
+            .map_err(outputs::map_error)?;
+        let report = session.package.validate().map_err(outputs::map_error)?;
+        Ok(Json(outputs::ValidateOutput::success(serde_json::json!(
+            report
+        ))))
     }
 
     /// Write or return PPTX output.
@@ -641,13 +755,42 @@ impl PptxServer {
         &self,
         input: rmcp::handler::server::wrapper::Parameters<ExportInput>,
     ) -> Result<Json<outputs::ExportOutput>, rmcp::model::CallToolResult> {
-        if let Some(output_path) = input.0.output_path {
+        let input = input.0;
+        if let Some(output_path) = input.output_path {
             self.permission_policy
-                .check_write_with_overwrite(output_path, input.0.overwrite)
+                .check_write_with_overwrite(&output_path, input.overwrite)
                 .map_err(|error| outputs::map_error(error.into_core_error()))?;
+            let byte_length = self
+                .sessions
+                .export_path(
+                    &input.session_id,
+                    input.expected_revision,
+                    &output_path,
+                    input.overwrite,
+                )
+                .map_err(outputs::map_error)?;
+            return Ok(Json(outputs::ExportOutput::success(serde_json::json!({
+                "session_id": input.session_id,
+                "output_path": output_path,
+                "byte_length": byte_length,
+                "inline": null
+            }))));
         }
 
-        Ok(Json(outputs::ExportOutput::stub("pptx_export")))
+        let bytes = self
+            .sessions
+            .export_bytes(&input.session_id, input.expected_revision)
+            .map_err(outputs::map_error)?;
+        Ok(Json(outputs::ExportOutput::success(serde_json::json!({
+            "session_id": input.session_id,
+            "output_path": null,
+            "byte_length": bytes.len(),
+            "sha256": sessions::sha256_hex(&bytes),
+            "inline": {
+                "encoding": "base64",
+                "data": encode_base64(&bytes)
+            }
+        }))))
     }
 
     /// Release session resources.

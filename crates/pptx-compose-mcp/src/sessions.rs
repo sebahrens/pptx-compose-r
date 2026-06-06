@@ -7,17 +7,18 @@ use std::{
 };
 
 use pptx_compose::{
-    PresentationDocument,
+    ApplyPatchOptions, PresentationDocument, WriteOptions,
     core::{
         error::{Error, ErrorCode, ErrorLocation, Result},
-        opc::{part::Part, part_name::PartName},
-        provenance::{document_id::document_id, revision},
+        opc::part_name::PartName,
+        provenance::revision,
         zip::reader::from_bytes,
     },
     edit::{
         media_inputs::{MediaBinding, MediaInputs, MediaLimits, MediaSource},
         patch::Patch,
     },
+    json::schemas::PatchReport,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -46,6 +47,7 @@ pub struct Session {
     pub mem_bytes: u64,
     apply_lock: Arc<Mutex<()>>,
     next_media_index: u64,
+    staged_media: HashMap<String, StagedMedia>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
@@ -63,6 +65,12 @@ pub struct MediaHandle {
 pub struct ImageDimensions {
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StagedMedia {
+    content_type: String,
+    bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
@@ -145,7 +153,7 @@ impl SessionStore {
                 "Session TTL overflowed system time.",
             )
         })?;
-        let metadata = package_metadata(bytes)?;
+        let metadata = package_metadata(&package, bytes)?;
         let session_id = unique_prefixed_id("sess");
         let revision = revision::on_open().value();
         let session = Session {
@@ -158,6 +166,7 @@ impl SessionStore {
             mem_bytes,
             apply_lock: Arc::new(Mutex::new(())),
             next_media_index: 1,
+            staged_media: HashMap::new(),
         };
 
         let mut sessions = self.lock_sessions()?;
@@ -365,8 +374,126 @@ impl SessionStore {
 
         session.mem_bytes = next_mem;
         session.next_media_index = session.next_media_index.saturating_add(1);
+        session.staged_media.insert(
+            media_ref.clone(),
+            StagedMedia {
+                content_type: content_type.to_owned(),
+                bytes,
+            },
+        );
         session.media.insert(media_ref, handle.clone());
         Ok(handle)
+    }
+
+    pub fn validate_patch(&self, session_id: &str, patch: Patch) -> Result<PatchReport> {
+        self.check_patch_envelope(session_id, &patch)?;
+        let session = self.get(session_id)?;
+        session.package.clone().apply_patch_with_options(
+            patch,
+            media_inputs(&session),
+            ApplyPatchOptions {
+                dry_run: true,
+                validate: true,
+            },
+        )
+    }
+
+    pub fn apply_patch(
+        &self,
+        session_id: &str,
+        patch: Patch,
+        dry_run: bool,
+    ) -> Result<ApplyResult> {
+        let expected_revision = self.check_patch_envelope(session_id, &patch)?;
+        let apply_lock = self.get(session_id)?.apply_lock.clone();
+        let _apply_guard = apply_lock.lock().map_err(|_| {
+            Error::new(
+                ErrorCode::InternalError,
+                "Session apply lock was poisoned by a previous failure.",
+            )
+        })?;
+
+        let (mut package, media) = {
+            let mut sessions = self.lock_sessions()?;
+            remove_expired(&mut sessions, SystemTime::now());
+            let session = sessions
+                .get(session_id)
+                .ok_or_else(|| missing_session(session_id))?;
+            if session.revision != expected_revision {
+                return Err(stale_revision_error(
+                    session_id,
+                    session.revision,
+                    expected_revision,
+                ));
+            }
+            (session.package.clone(), media_inputs(session))
+        };
+
+        let report = package.apply_patch_with_options(
+            patch,
+            media,
+            ApplyPatchOptions {
+                dry_run,
+                validate: true,
+            },
+        )?;
+
+        let mut sessions = self.lock_sessions()?;
+        remove_expired(&mut sessions, SystemTime::now());
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| missing_session(session_id))?;
+        if session.revision != expected_revision {
+            return Err(stale_revision_error(
+                session_id,
+                session.revision,
+                expected_revision,
+            ));
+        }
+        if !dry_run {
+            session.package = package;
+            session.revision = u64::from(report.new_revision);
+        }
+
+        Ok(ApplyResult {
+            revision: session.revision,
+            report,
+        })
+    }
+
+    pub fn export_bytes(
+        &self,
+        session_id: &str,
+        expected_revision: Option<u64>,
+    ) -> Result<Vec<u8>> {
+        let session = self.get(session_id)?;
+        check_optional_revision(session_id, session.revision, expected_revision)?;
+        session.package.write_vec()
+    }
+
+    pub fn export_path(
+        &self,
+        session_id: &str,
+        expected_revision: Option<u64>,
+        path: impl AsRef<Path>,
+        overwrite: bool,
+    ) -> Result<u64> {
+        let session = self.get(session_id)?;
+        check_optional_revision(session_id, session.revision, expected_revision)?;
+        session.package.write_path_with_options(
+            path,
+            WriteOptions {
+                overwrite,
+                ..WriteOptions::default()
+            },
+        )?;
+        u64::try_from(session.package.write_vec()?.len()).map_err(|source| {
+            Error::with_source(
+                ErrorCode::InternalError,
+                "Exported PPTX length exceeds reportable range.",
+                source,
+            )
+        })
     }
 
     fn lock_sessions(&self) -> Result<MutexGuard<'_, HashMap<String, Session>>> {
@@ -377,6 +504,35 @@ impl SessionStore {
             )
         })
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApplyResult {
+    pub revision: u64,
+    pub report: PatchReport,
+}
+
+fn media_inputs(session: &Session) -> MediaInputs {
+    MediaInputs::with_limits(
+        session
+            .staged_media
+            .iter()
+            .map(|(media_ref, media)| {
+                (
+                    media_ref.clone(),
+                    MediaBinding {
+                        content_type: media.content_type.clone(),
+                        declared_sha256: None,
+                        declared_byte_length: u64::try_from(media.bytes.len()).ok(),
+                        source: MediaSource::Bytes(media.bytes.clone()),
+                    },
+                )
+            })
+            .collect(),
+        MediaLimits {
+            max_media_bytes: session.mem_bytes,
+        },
+    )
 }
 
 impl SessionApplyGuard {
@@ -392,9 +548,8 @@ struct PackageMetadata {
     slide_count: u32,
 }
 
-fn package_metadata(bytes: &[u8]) -> Result<PackageMetadata> {
+fn package_metadata(package: &PresentationDocument, bytes: &[u8]) -> Result<PackageMetadata> {
     let entries = from_bytes(bytes)?;
-    let mut parts = Vec::new();
     let mut content_types = None;
     let mut slide_count = 0_u32;
     for entry in entries {
@@ -408,19 +563,13 @@ fn package_metadata(bytes: &[u8]) -> Result<PackageMetadata> {
         if is_slide_part(part_name.as_str()) {
             slide_count = slide_count.saturating_add(1);
         }
-        let part = Part::from_zip_entry(entry.meta.original_name, entry.bytes)?;
-        parts.push((part.name().clone(), part.bytes().to_vec()));
     }
-    parts.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
-    let content_types = content_types
+    let _content_types = content_types
         .ok_or_else(|| Error::unsupported_package("Package is missing [Content_Types].xml."))?;
-    let borrowed_parts = parts
-        .iter()
-        .map(|(name, bytes)| (name.clone(), bytes.as_slice()))
-        .collect::<Vec<_>>();
+    let validation = package.validate()?;
 
     Ok(PackageMetadata {
-        document_id: document_id(&borrowed_parts, &content_types),
+        document_id: validation.document_id,
         slide_count,
     })
 }
@@ -464,6 +613,23 @@ fn stale_document_error(session_id: &str, current_revision: u64) -> Error {
         current_revision: Some(current_revision),
         ..ErrorLocation::default()
     })
+}
+
+fn check_optional_revision(
+    session_id: &str,
+    current_revision: u64,
+    expected_revision: Option<u64>,
+) -> Result<()> {
+    if let Some(expected_revision) = expected_revision
+        && current_revision != expected_revision
+    {
+        return Err(stale_revision_error(
+            session_id,
+            current_revision,
+            expected_revision,
+        ));
+    }
+    Ok(())
 }
 
 fn unique_prefixed_id(prefix: &str) -> String {

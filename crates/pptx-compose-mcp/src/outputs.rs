@@ -90,13 +90,38 @@ impl FindTextOutput {
     }
 }
 
+macro_rules! impl_success_value {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            impl $name {
+                #[must_use]
+                pub fn success(result: Value) -> Self {
+                    Self(success_envelope(result))
+                }
+            }
+        )+
+    };
+}
+
+impl_success_value!(
+    DocumentSummaryOutput,
+    ListSlidesOutput,
+    SlideOutput,
+    ListElementsOutput,
+    ElementOutput,
+    ValidatePatchOutput,
+    ValidateOutput,
+    ExportOutput,
+);
+
 impl ApplyPatchOutput {
     #[must_use]
-    pub fn applied(session_id: &str, revision: u64, dry_run: bool) -> Self {
+    pub fn applied(session_id: &str, revision: u64, dry_run: bool, report: Value) -> Self {
         Self(success_envelope(json!({
             "session_id": session_id,
             "revision": revision,
-            "dry_run": dry_run
+            "dry_run": dry_run,
+            "report": report
         })))
     }
 }
