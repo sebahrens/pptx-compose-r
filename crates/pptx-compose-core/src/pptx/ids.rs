@@ -8,6 +8,7 @@ pub struct SpTreePath {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ElementKind {
+    TextBox,
     Shape,
     Picture,
     Group,
@@ -20,7 +21,7 @@ impl ElementKind {
     #[must_use]
     pub const fn agent_prefix(self) -> &'static str {
         match self {
-            Self::Shape => "shape",
+            Self::TextBox | Self::Shape => "shape",
             Self::Picture => "pic",
             Self::Group => "group",
             Self::GraphicFrame => "graphic",
@@ -91,6 +92,7 @@ fn walk_children(
 
 fn element_kind(element: &XmlElement) -> ElementKind {
     match element.name.local_name.as_str() {
+        "sp" if is_text_box(element) => ElementKind::TextBox,
         "sp" => ElementKind::Shape,
         "pic" => ElementKind::Picture,
         "grpSp" => ElementKind::Group,
@@ -98,6 +100,36 @@ fn element_kind(element: &XmlElement) -> ElementKind {
         "cxnSp" => ElementKind::Connector,
         _ => ElementKind::Other,
     }
+}
+
+fn is_text_box(element: &XmlElement) -> bool {
+    first_descendant(element, "cNvSpPr")
+        .and_then(|element| attr(element, "txBox"))
+        .is_some_and(parse_bool)
+}
+
+fn first_descendant<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a XmlElement> {
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        if child.name.local_name == local_name {
+            return Some(child);
+        }
+        if let Some(descendant) = first_descendant(child, local_name) {
+            return Some(descendant);
+        }
+    }
+    None
+}
+
+fn attr<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.local_name == local_name)
+        .map(|attribute| attribute.value.as_str())
+}
+
+fn parse_bool(value: &str) -> bool {
+    matches!(value, "1" | "true" | "True" | "TRUE")
 }
 
 fn dotted_path(path: &[u32]) -> String {
