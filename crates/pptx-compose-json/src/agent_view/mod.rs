@@ -4,6 +4,10 @@ use serde_json::Value;
 
 use crate::binary_encoding::{InlineBinaryPolicy, inline_payload};
 
+pub mod pagination;
+
+use pagination::ViewMeta;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentView {
@@ -12,6 +16,8 @@ pub struct AgentView {
     pub document_id: String,
     pub revision: u32,
     pub view_id: String,
+    pub view: ViewMeta,
+    pub omitted_count: u32,
     pub capabilities: Capabilities,
     pub presentation: PresentationView,
     pub slides: Vec<SlideView>,
@@ -196,6 +202,13 @@ pub mod schema {
                 "document_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "revision": 1,
                 "view_id": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                "view": {
+                    "mode": "slide_page",
+                    "limit": 20,
+                    "next_cursor": null,
+                    "truncated": false
+                },
+                "omitted_count": 0,
                 "capabilities": {
                     "operations": [
                         "replace_text",
@@ -314,6 +327,7 @@ pub mod binary {
         AgentView, Bounds, Capabilities, Editable, EditableSupport, ElementKind, ElementView,
         ImageView, IntrinsicSizePx, PresentationView, SlideView, XmlLocation,
     };
+    use crate::agent_view::pagination::ViewMeta;
     use crate::binary_encoding::InlineBinaryPolicy;
     use crate::schema_versions::AGENT_VIEW_SCHEMA;
 
@@ -327,6 +341,13 @@ pub mod binary {
             revision: 1,
             view_id: "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
                 .to_owned(),
+            view: ViewMeta {
+                mode: "slide_page".to_owned(),
+                limit: 20,
+                next_cursor: None,
+                truncated: false,
+            },
+            omitted_count: 0,
             capabilities: Capabilities {
                 operations: vec!["replace_image".to_owned()],
                 media_content_types: vec!["image/png".to_owned()],

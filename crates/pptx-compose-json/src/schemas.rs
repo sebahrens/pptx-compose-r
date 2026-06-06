@@ -231,6 +231,7 @@ pub enum ErrorCode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JsonError {
     SerializeSchema(String),
+    InvalidCursor(String),
 }
 
 pub fn agent_view_json_schema() -> Result<Value, JsonError> {
