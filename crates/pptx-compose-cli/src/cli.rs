@@ -43,6 +43,9 @@ pub enum Commands {
     Inspect(InspectArgs),
     Validate(ValidateArgs),
     Apply(ApplyArgs),
+    ToJson(LegacyToJsonArgs),
+    ToPptx(LegacyToPptxArgs),
+    Convert(LegacyConvertArgs),
     #[command(subcommand)]
     Media(MediaCmd),
     Schema(SchemaArgs),
@@ -101,6 +104,32 @@ pub struct ApplyArgs {
     pub in_place: bool,
     #[arg(long)]
     pub deterministic: bool,
+}
+
+#[derive(Args, Debug, Eq, PartialEq)]
+pub struct LegacyToJsonArgs {
+    pub input: PathBuf,
+    pub output: PathBuf,
+    #[arg(long)]
+    pub compat_json: bool,
+}
+
+#[derive(Args, Debug, Eq, PartialEq)]
+pub struct LegacyToPptxArgs {
+    pub input: PathBuf,
+    pub output: PathBuf,
+    #[arg(long)]
+    pub compat_json: bool,
+    #[arg(long)]
+    pub overwrite: bool,
+}
+
+#[derive(Args, Debug, Eq, PartialEq)]
+pub struct LegacyConvertArgs {
+    pub input: PathBuf,
+    pub output: PathBuf,
+    #[arg(long)]
+    pub compat_json: bool,
 }
 
 #[derive(Debug, Eq, PartialEq, Subcommand)]

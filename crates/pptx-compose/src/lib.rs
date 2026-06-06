@@ -28,9 +28,10 @@ use core::{
     provenance::revision,
     xml::{document::XmlElement, parser::parse_document},
     zip::{
+        ZipEntryMetadata,
         reader::{RawEntry, from_bytes},
         sniff::sniff_package,
-        writer::{self as zip_writer, WriteEntry},
+        writer::{self as zip_writer, PackageZipWriter, WriteEntry},
     },
 };
 use pptx_compose_edit::{
@@ -121,6 +122,13 @@ impl PresentationDocument {
     pub fn to_legacy_json(&self) -> Result<serde_json::Value> {
         let package = package_from_entries(&self.entries)?;
         pptx_compose_json::legacy_path_map::to_legacy_map(&package).map_err(json_error)
+    }
+
+    pub fn from_legacy_json(value: serde_json::Value) -> Result<Self> {
+        let package =
+            pptx_compose_json::legacy_path_map::from_legacy_map(value).map_err(json_error)?;
+        let bytes = package_to_zip_bytes(&package)?;
+        Self::from_bytes(bytes)
     }
 
     pub fn write_vec_with_options(&self, options: WriteOptions) -> Result<Vec<u8>> {
@@ -427,6 +435,34 @@ fn package_from_entries(entries: &[RawEntry]) -> Result<Package> {
     hydrate_content_types(&mut package)?;
     hydrate_relationships(&mut package)?;
     Ok(package)
+}
+
+fn package_to_zip_bytes(package: &Package) -> Result<Vec<u8>> {
+    let mut output = Cursor::new(Vec::new());
+    {
+        let options = zip_writer::WriteOptions::default();
+        let mut writer = PackageZipWriter::new(&mut output, &options);
+        for (index, part) in package.parts().iter().enumerate() {
+            let meta = dirty_zip_metadata(index, part.original_zip_entry_name(), part.bytes());
+            writer.write_dirty(part.original_zip_entry_name(), part.bytes(), &meta)?;
+        }
+        writer.finish()?;
+    }
+    Ok(output.into_inner())
+}
+
+fn dirty_zip_metadata(index: usize, name: &str, bytes: &[u8]) -> ZipEntryMetadata {
+    ZipEntryMetadata {
+        entry_index: index,
+        original_name: name.to_owned(),
+        compression_method: zip::CompressionMethod::Deflated,
+        crc32: 0,
+        compressed_size: 0,
+        uncompressed_size: bytes.len() as u64,
+        last_modified: None,
+        external_attrs: None,
+        is_dir: false,
+    }
 }
 
 fn hydrate_content_types(package: &mut Package) -> Result<()> {

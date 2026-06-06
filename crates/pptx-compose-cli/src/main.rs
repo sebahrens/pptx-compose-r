@@ -9,6 +9,7 @@ mod permissions;
 use clap::Parser;
 use cli::{Cli, Commands, MediaCmd};
 use commands::apply::apply;
+use commands::legacy::{run_convert, run_to_json, run_to_pptx};
 use exit::exit_code_for;
 use output::OutputSink;
 use permissions::{PathIntent, PermissionContext};
@@ -40,6 +41,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Inspect(args) => inspect(args, &permissions),
         Commands::Validate(args) => validate(args, &permissions),
         Commands::Apply(args) => apply(args, &permissions),
+        Commands::ToJson(args) => run_to_json(args, &permissions),
+        Commands::ToPptx(args) => run_to_pptx(args, &permissions),
+        Commands::Convert(args) => run_convert(args, &permissions),
         Commands::Media(MediaCmd::List(args)) => media_list(args, &permissions),
         Commands::Media(MediaCmd::Get(args)) => media_get(args, &permissions),
         Commands::Schema(args) => schema(args),

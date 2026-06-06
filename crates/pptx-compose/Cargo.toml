@@ -12,6 +12,7 @@ pptx-compose-edit = { path = "../pptx-compose-edit" }
 pptx-compose-json = { path = "../pptx-compose-json" }
 serde_json.workspace = true
 sha2.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 serde = { version = "=1.0.228", features = ["derive"] }
