@@ -430,7 +430,11 @@ impl PresentationDocument {
                 ),
             )
         })?;
-        let temp_path = temp_sibling_path(output_path);
+        let temp_path = options
+            .atomic_temp_path
+            .clone()
+            .unwrap_or_else(|| temp_output_path(output_path, None));
+        let mut created_temp = false;
         let write_result = (|| {
             let output = FsOpenOptions::new()
                 .write(true)
@@ -443,7 +447,8 @@ impl PresentationDocument {
                         source,
                     )
                 })?;
-            let output = self.write_to_writer(output, options)?;
+            created_temp = true;
+            let output = self.write_to_writer(output, options.clone())?;
             output.sync_all().map_err(|source| {
                 Error::with_source(
                     ErrorCode::WriteFailed,
@@ -491,7 +496,7 @@ impl PresentationDocument {
             Ok(())
         })();
 
-        if write_result.is_err() {
+        if write_result.is_err() && created_temp && !options.keep_temp {
             let _ = fs::remove_file(&temp_path);
         }
         write_result
@@ -714,13 +719,18 @@ fn semantic_changes(operations: &[Operation], report: &PatchReport) -> Vec<DiffC
         .collect()
 }
 
-fn temp_sibling_path(output_path: &Path) -> PathBuf {
+#[must_use]
+pub fn temp_output_path(output_path: &Path, temp_dir: Option<&Path>) -> PathBuf {
     let file_name = output_path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("output.pptx");
     let suffix = format!("{}.{}.tmp", std::process::id(), unique_counter());
-    output_path.with_file_name(format!(".{file_name}.{suffix}"))
+    let temp_name = format!(".{file_name}.{suffix}");
+    match temp_dir {
+        Some(dir) => dir.join(temp_name),
+        None => output_path.with_file_name(temp_name),
+    }
 }
 
 fn output_exists_error(output_path: &Path) -> Error {

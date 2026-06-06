@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use pptx_compose_core::zip::{limits::ResourceLimits, writer::WriteMode};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -62,12 +64,14 @@ impl Default for ApplyPatchOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WriteOptions {
     pub mode: WriteMode,
     pub overwrite: bool,
     pub validate: bool,
     pub atomic: bool,
+    pub atomic_temp_path: Option<PathBuf>,
+    pub keep_temp: bool,
 }
 
 impl Default for WriteOptions {
@@ -77,6 +81,8 @@ impl Default for WriteOptions {
             overwrite: false,
             validate: true,
             atomic: true,
+            atomic_temp_path: None,
+            keep_temp: false,
         }
     }
 }

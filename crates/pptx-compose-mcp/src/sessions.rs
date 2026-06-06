@@ -514,6 +514,7 @@ impl SessionStore {
         expected_revision: u64,
         path: impl AsRef<Path>,
         overwrite: bool,
+        temp_path: impl Into<std::path::PathBuf>,
     ) -> Result<u64> {
         let session = self.get(session_id)?;
         if session.revision != expected_revision {
@@ -527,6 +528,7 @@ impl SessionStore {
             path,
             WriteOptions {
                 overwrite,
+                atomic_temp_path: Some(temp_path.into()),
                 ..WriteOptions::default()
             },
         )?;

@@ -37,6 +37,8 @@ fn exposes_required_070_api_and_defaults() {
             overwrite: false,
             validate: true,
             atomic: true,
+            atomic_temp_path: None,
+            keep_temp: false,
         }
     );
 

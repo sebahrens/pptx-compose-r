@@ -12,6 +12,7 @@ use pptx_compose::{
         media_inputs::{MediaInputs, MediaLimits, MediaManifest},
         patch::{Patch, parse_patch},
     },
+    temp_output_path,
 };
 
 use crate::{
@@ -92,7 +93,13 @@ pub(crate) fn apply(
             },
         )
         .map_err(apply_error)?;
-    let write_options = write_options_from_args(&args);
+    let mut write_options = write_options_from_args(&args);
+    if write_options.atomic {
+        let temp_path = temp_output_path(&output, Some(&permissions.temp_dir));
+        write_options.atomic_temp_path =
+            Some(permissions.authorize_write(&temp_path, PathIntent::TempFile)?);
+    }
+    write_options.keep_temp = permissions.keep_temp;
     let backup = if in_place_output && !args.no_backup {
         let backup = available_backup_path(&input);
         permissions.authorize_write(&backup, PathIntent::OutputPptx)?;
@@ -290,6 +297,7 @@ pub(crate) fn write_options_from_args(args: &ApplyArgs) -> WriteOptions {
         overwrite: args.overwrite || args.in_place,
         validate: true,
         atomic: true,
+        ..WriteOptions::default()
     }
 }
 
@@ -429,6 +437,11 @@ fn in_place_no_backup_suppresses_backup() {
 #[test]
 fn in_place_apply_restores_from_backup_on_write_failure() {
     test_support::in_place_apply_restores_from_backup_on_write_failure();
+}
+
+#[test]
+fn apply_uses_configured_temp_dir_for_atomic_write() {
+    test_support::apply_uses_configured_temp_dir_for_atomic_write();
 }
 
 #[cfg(test)]
@@ -680,6 +693,48 @@ mod test_support {
         assert_eq!(
             fs::read(root.join("input.pptx.bak")).expect("backup reads"),
             input_bytes
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn apply_uses_configured_temp_dir_for_atomic_write() {
+        let root = unique_dir();
+        let workspace = root.join("workspace");
+        let temp_dir = root.join("tmp");
+        let input = workspace.join("input.pptx");
+        let patch = workspace.join("patch.json");
+        let output = workspace.join("output.pptx");
+        fs::create_dir_all(&workspace).expect("workspace dir creates");
+        fs::create_dir_all(&temp_dir).expect("temp dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
+
+        apply(
+            args(&input, &patch, &output, false, false),
+            &permissions_with_temp(&workspace, &temp_dir, false),
+            OpenOptions::default(),
+        )
+        .expect("apply succeeds with separate configured temp dir");
+
+        assert!(output.exists(), "apply writes the explicit output path");
+        let workspace_entries = fs::read_dir(&workspace)
+            .expect("workspace reads")
+            .map(|entry| entry.expect("workspace entry reads").file_name())
+            .collect::<Vec<_>>();
+        assert!(
+            !workspace_entries
+                .iter()
+                .any(|name| name.to_string_lossy().starts_with(".output.pptx.")),
+            "atomic temp output must not be created as an output sibling"
+        );
+        assert!(
+            fs::read_dir(&temp_dir)
+                .expect("temp dir reads")
+                .next()
+                .is_none(),
+            "successful apply removes the temporary output"
         );
 
         fs::remove_dir_all(root).expect("test dir removes");
@@ -1079,10 +1134,14 @@ mod test_support {
     }
 
     fn permissions(root: &Path) -> PermissionContext {
+        permissions_with_temp(root, root, false)
+    }
+
+    fn permissions_with_temp(root: &Path, temp_dir: &Path, keep_temp: bool) -> PermissionContext {
         PermissionContext {
             workspace: fs::canonicalize(root).expect("workspace canonicalizes"),
-            temp_dir: fs::canonicalize(root).expect("temp canonicalizes"),
-            keep_temp: false,
+            temp_dir: fs::canonicalize(temp_dir).expect("temp canonicalizes"),
+            keep_temp,
         }
     }
 

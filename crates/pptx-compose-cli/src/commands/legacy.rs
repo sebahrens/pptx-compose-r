@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use pptx_compose::{
     OpenOptions, PresentationDocument, WriteMode, WriteOptions, core::error::ErrorCode,
-    json::legacy_path_map,
+    json::legacy_path_map, temp_output_path,
 };
 
 use crate::{
@@ -66,6 +66,8 @@ pub(crate) fn run_to_pptx(
     let legacy_json = read_legacy_json(&input)?;
     let document =
         PresentationDocument::from_legacy_json(legacy_json).map_err(CliError::from_error)?;
+    let temp_path = temp_output_path(&output, Some(&permissions.temp_dir));
+    let temp_path = permissions.authorize_write(&temp_path, PathIntent::TempFile)?;
     document
         .write_path_with_options(
             &output,
@@ -74,6 +76,8 @@ pub(crate) fn run_to_pptx(
                 overwrite: args.overwrite,
                 validate: true,
                 atomic: true,
+                atomic_temp_path: Some(temp_path),
+                keep_temp: permissions.keep_temp,
             },
         )
         .map_err(CliError::from_error)

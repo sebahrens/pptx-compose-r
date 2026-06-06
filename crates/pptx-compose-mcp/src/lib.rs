@@ -993,6 +993,14 @@ impl PptxServer {
                 .permission_policy
                 .check_write_with_overwrite(&output_path, input.overwrite)
                 .map_err(|error| outputs::map_error(error.into_core_error()))?;
+            let temp_path = pptx_compose::temp_output_path(
+                &output_path,
+                Some(&self.permission_policy.temp_dir),
+            );
+            let temp_path = self
+                .permission_policy
+                .check_write_with_overwrite(&temp_path, true)
+                .map_err(|error| outputs::map_error(error.into_core_error()))?;
             let byte_length = self
                 .sessions
                 .export_path(
@@ -1000,6 +1008,7 @@ impl PptxServer {
                     input.expected_revision,
                     &output_path,
                     input.overwrite,
+                    temp_path,
                 )
                 .map_err(outputs::map_error)?;
             return Ok(Json(outputs::ExportOutput::exported(
