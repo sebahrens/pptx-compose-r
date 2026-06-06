@@ -10,6 +10,7 @@ publish = false
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json.workspace = true
 quick-xml.workspace = true
+unicode-normalization.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
