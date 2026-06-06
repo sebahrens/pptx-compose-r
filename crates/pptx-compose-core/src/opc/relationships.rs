@@ -133,6 +133,13 @@ impl RelationshipSet {
     }
 
     #[must_use]
+    pub fn get_mut(&mut self, id: &str) -> Option<&mut Relationship> {
+        self.rels
+            .iter_mut()
+            .find(|relationship| relationship.id == id)
+    }
+
+    #[must_use]
     pub fn allocate_id(&self) -> String {
         let existing = self
             .rels
@@ -190,6 +197,47 @@ impl RelationshipGraph {
     #[must_use]
     pub fn set_for(&self, source: &PartName) -> Option<&RelationshipSet> {
         self.sets.get(source)
+    }
+
+    #[must_use]
+    pub fn set_for_mut(&mut self, source: &PartName) -> Option<&mut RelationshipSet> {
+        self.sets.get_mut(source)
+    }
+
+    pub fn replace(&mut self, replacement: Relationship) -> Result<()> {
+        let RelationshipSource::Part(source) = &replacement.source else {
+            return Err(Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Only part relationship replacement is supported.",
+            ));
+        };
+
+        let set = self.sets.get_mut(source).ok_or_else(|| {
+            Error::unsupported_package(format!("Relationship set for {source} is missing."))
+        })?;
+        let existing = set.get_mut(&replacement.id).ok_or_else(|| {
+            Error::unsupported_package(format!(
+                "Relationship {} is missing from set for {source}.",
+                replacement.id
+            ))
+        })?;
+        *existing = replacement.clone();
+
+        let graph_relationship = self
+            .relationships
+            .iter_mut()
+            .find(|relationship| {
+                relationship.source == replacement.source && relationship.id == replacement.id
+            })
+            .ok_or_else(|| {
+                Error::unsupported_package(format!(
+                    "Relationship {} is missing from the package graph.",
+                    replacement.id
+                ))
+            })?;
+        *graph_relationship = replacement;
+
+        Ok(())
     }
 
     #[must_use]

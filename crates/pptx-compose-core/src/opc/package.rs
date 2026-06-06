@@ -73,6 +73,11 @@ impl Package {
     }
 
     #[must_use]
+    pub fn relationships_mut(&mut self) -> &mut RelationshipGraph {
+        &mut self.relationships
+    }
+
+    #[must_use]
     pub fn slide_ids(&self) -> &[SlideIdEntry] {
         &self.slide_ids
     }

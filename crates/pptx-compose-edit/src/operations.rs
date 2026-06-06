@@ -2,6 +2,7 @@ use pptx_compose_core::{opc::part_name::PartName, pptx::ids::ElementKind};
 
 pub mod add_text_box;
 pub mod move_resize;
+pub mod replace_image;
 pub mod replace_text;
 pub mod set_alt_text;
 
