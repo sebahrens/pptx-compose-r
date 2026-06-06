@@ -33,6 +33,8 @@ pub struct GlobalArgs {
     #[arg(long)]
     pub keep_temp: bool,
     #[arg(long, value_name = "N")]
+    pub max_compressed_bytes: Option<u64>,
+    #[arg(long, value_name = "N")]
     pub max_uncompressed_bytes: Option<u64>,
     #[arg(long, value_name = "N")]
     pub max_part_count: Option<u64>,

@@ -3,7 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions as FsOpenOptions},
-    io::{Cursor, Write},
+    io::{Cursor, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -37,7 +37,7 @@ use core::{
     zip::{
         ZipEntryMetadata,
         limits::{OpenOptions as CoreOpenOptions, ResourceLimits},
-        reader::{RawEntry, from_bytes_with_options},
+        reader::{RawEntry, from_bytes_with_options, open_reader_with_options},
         sniff::sniff_package,
         writer::{self as zip_writer, DirtyEntry, PackageZipWriter, WriteEntry},
     },
@@ -88,6 +88,14 @@ impl PresentationDocument {
 
     pub fn open_path_with_options(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self> {
         let path = path.as_ref();
+        let metadata = fs::metadata(path).map_err(|source| {
+            Error::with_source(
+                ErrorCode::InvalidInput,
+                format!("Could not read PPTX input metadata {}.", path.display()),
+                source,
+            )
+        })?;
+        ensure_facade_compressed_package_size(metadata.len(), options.resource_limits())?;
         let bytes = fs::read(path).map_err(|source| {
             Error::with_source(
                 ErrorCode::InvalidInput,
@@ -128,11 +136,69 @@ impl PresentationDocument {
     where
         R: std::io::Read,
     {
-        let mut bytes = Vec::new();
+        Self::open_reader_with_options(&mut reader, OpenOptions::default())
+    }
+
+    pub fn open_reader_with_options<R>(mut reader: R, options: OpenOptions) -> Result<Self>
+    where
+        R: std::io::Read,
+    {
+        let bytes = read_compressed_input_with_limit(&mut reader, options.resource_limits())?;
+        Self::from_bytes_with_options(bytes, options)
+    }
+
+    pub fn open_seek_reader<R>(mut reader: R) -> Result<Self>
+    where
+        R: std::io::Read + std::io::Seek,
+    {
+        Self::open_seek_reader_with_options(&mut reader, OpenOptions::default())
+    }
+
+    pub fn open_seek_reader_with_options<R>(mut reader: R, options: OpenOptions) -> Result<Self>
+    where
+        R: std::io::Read + std::io::Seek,
+    {
+        let entries = open_reader_with_options(
+            &mut reader,
+            &CoreOpenOptions {
+                resource_limits: options.resource_limits().clone(),
+            },
+        )?;
+        package_from_entries_with_limits(&entries, options.resource_limits())?;
+        let mut source_bytes = Vec::new();
         reader
-            .read_to_end(&mut bytes)
+            .rewind()
+            .map_err(|source| Error::parse_error("Could not rewind PPTX input stream.", source))?;
+        reader
+            .read_to_end(&mut source_bytes)
             .map_err(|source| Error::parse_error("Could not read PPTX input stream.", source))?;
-        Self::from_bytes(bytes)
+        Ok(Self {
+            source_path: None,
+            source_bytes,
+            entries,
+            resource_limits: options.resource_limits,
+            dirty_parts: BTreeSet::new(),
+            revision: revision::on_open(),
+        })
+    }
+
+    #[must_use]
+    pub fn compressed_package_bytes(&self) -> u64 {
+        u64::try_from(self.source_bytes.len()).unwrap_or(u64::MAX)
+    }
+
+    pub fn document_id(&self) -> Result<String> {
+        document_id_from_entries(&self.entries)
+    }
+
+    #[must_use]
+    pub fn slide_count(&self) -> u32 {
+        self.entries
+            .iter()
+            .filter(|entry| !entry.meta.is_dir && is_slide_part_name(entry.name.as_str()))
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX)
     }
 
     pub fn to_agent_json(&self) -> Result<serde_json::Value> {
@@ -681,6 +747,46 @@ fn json_error(error: pptx_compose_json::schemas::JsonError) -> Error {
     }
 }
 
+fn read_compressed_input_with_limit<R>(
+    reader: &mut R,
+    resource_limits: &ResourceLimits,
+) -> Result<Vec<u8>>
+where
+    R: Read,
+{
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|source| Error::parse_error("Could not read PPTX input stream.", source))?;
+        if count == 0 {
+            break;
+        }
+        let next_len = bytes
+            .len()
+            .checked_add(count)
+            .and_then(|len| u64::try_from(len).ok())
+            .unwrap_or(u64::MAX);
+        ensure_facade_compressed_package_size(next_len, resource_limits)?;
+        bytes.extend_from_slice(&buffer[..count]);
+    }
+    Ok(bytes)
+}
+
+fn ensure_facade_compressed_package_size(
+    compressed_package_bytes: u64,
+    resource_limits: &ResourceLimits,
+) -> Result<()> {
+    if compressed_package_bytes > resource_limits.max_compressed_package_bytes {
+        return Err(Error::resource_limit_exceeded(format!(
+            "ZIP package exceeded the maximum compressed size of {} bytes.",
+            resource_limits.max_compressed_package_bytes
+        )));
+    }
+    Ok(())
+}
+
 fn package_from_entries_with_limits(
     entries: &[RawEntry],
     resource_limits: &ResourceLimits,
@@ -722,6 +828,16 @@ fn document_id_from_entries(entries: &[RawEntry]) -> Result<String> {
         .collect::<Vec<_>>();
 
     Ok(provenance_document_id(&ordinary_parts, content_types_bytes))
+}
+
+fn is_slide_part_name(part_name: &str) -> bool {
+    let Some(file_name) = part_name.strip_prefix("/ppt/slides/slide") else {
+        return false;
+    };
+    let Some(index) = file_name.strip_suffix(".xml") else {
+        return false;
+    };
+    !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn next_revision_value(revision: revision::Revision) -> Result<u32> {

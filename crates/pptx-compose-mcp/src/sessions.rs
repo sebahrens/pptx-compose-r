@@ -119,20 +119,28 @@ impl SessionStore {
     }
 
     pub fn open_path(&self, path: impl AsRef<Path>) -> Result<OpenSession> {
-        let path = path.as_ref();
-        let bytes = fs::read(path).map_err(|source| {
-            Error::with_source(
-                ErrorCode::InvalidInput,
-                format!("Could not read PPTX input {}.", path.display()),
-                source,
-            )
-        })?;
-        let package = PresentationDocument::from_bytes(bytes.clone())?;
-        self.open_package(package, &bytes)
+        let package = PresentationDocument::open_path(path)?;
+        self.open_loaded_package(package)
     }
 
     pub fn open_package(&self, package: PresentationDocument, bytes: &[u8]) -> Result<OpenSession> {
         let mem_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let metadata = package_metadata_from_bytes(&package, bytes)?;
+        self.insert_session(package, mem_bytes, metadata)
+    }
+
+    fn open_loaded_package(&self, package: PresentationDocument) -> Result<OpenSession> {
+        let mem_bytes = package.compressed_package_bytes();
+        let metadata = package_metadata(&package)?;
+        self.insert_session(package, mem_bytes, metadata)
+    }
+
+    fn insert_session(
+        &self,
+        package: PresentationDocument,
+        mem_bytes: u64,
+        metadata: PackageMetadata,
+    ) -> Result<OpenSession> {
         if mem_bytes > self.max_session_mem_bytes {
             return Err(Error::resource_limit_exceeded(format!(
                 "Opened PPTX is {mem_bytes} bytes, exceeding max_session_mem_bytes {}.",
@@ -147,7 +155,6 @@ impl SessionStore {
                 "Session TTL overflowed system time.",
             )
         })?;
-        let metadata = package_metadata(&package, bytes)?;
         let session_id = unique_prefixed_id("sess");
         let revision = revision::on_open().value();
         let session = Session {
@@ -530,7 +537,19 @@ struct PackageMetadata {
     slide_count: u32,
 }
 
-fn package_metadata(package: &PresentationDocument, bytes: &[u8]) -> Result<PackageMetadata> {
+fn package_metadata(package: &PresentationDocument) -> Result<PackageMetadata> {
+    let validation = package.validate()?;
+
+    Ok(PackageMetadata {
+        document_id: validation.document_id,
+        slide_count: package.slide_count(),
+    })
+}
+
+fn package_metadata_from_bytes(
+    package: &PresentationDocument,
+    bytes: &[u8],
+) -> Result<PackageMetadata> {
     let entries = from_bytes(bytes)?;
     let mut content_types = None;
     let mut slide_count = 0_u32;
@@ -890,6 +909,39 @@ fn session_ttl_eviction() {
 }
 
 #[cfg(test)]
+#[test]
+fn open_path_accounts_loaded_package_without_extra_session_copy() {
+    let bytes = test_minimal_pptx_bytes();
+    let root = test_unique_dir();
+    let input = root.join("input.pptx");
+    fs::write(&input, &bytes).expect("fixture writes");
+    let store = SessionStore::with_config(SessionConfig {
+        ttl: DEFAULT_SESSION_TTL,
+        max_sessions: 8,
+        max_session_mem_bytes: bytes
+            .len()
+            .checked_sub(1)
+            .and_then(|len| u64::try_from(len).ok())
+            .expect("fixture length fits u64"),
+    });
+
+    let error = store
+        .open_path(&input)
+        .expect_err("session memory limit rejects oversized path open");
+
+    assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
+    assert!(
+        store
+            .inner
+            .lock()
+            .expect("session map lock succeeds")
+            .is_empty(),
+        "rejected open must not create a session"
+    );
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[cfg(test)]
 fn is_rfc3339_utc_seconds(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 20
@@ -1023,6 +1075,25 @@ fn test_text_content_types() -> String {
   <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
 </Types>"#
         .to_owned()
+}
+
+#[cfg(test)]
+fn test_unique_dir() -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "pptx-compose-mcp-sessions-{}-{}",
+        std::process::id(),
+        test_unique_counter()
+    ));
+    fs::create_dir_all(&root).expect("test dir creates");
+    root
+}
+
+#[cfg(test)]
+fn test_unique_counter() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 #[cfg(test)]

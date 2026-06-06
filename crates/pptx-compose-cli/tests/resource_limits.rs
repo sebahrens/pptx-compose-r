@@ -10,6 +10,34 @@ use std::{
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 #[test]
+fn global_compressed_limit_changes_inspect_open_limit() {
+    let root = unique_dir();
+    let input = root.join("input.pptx");
+    let package = minimal_package::<0>([]);
+    fs::write(&input, &package).expect("package writes");
+    let max_compressed = package
+        .len()
+        .checked_sub(1)
+        .expect("test package is non-empty")
+        .to_string();
+
+    let output_result = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
+        .args([
+            "--json-errors",
+            "--max-compressed-bytes",
+            &max_compressed,
+            "inspect",
+        ])
+        .arg(&input)
+        .args(["--format", "agent-json"])
+        .output()
+        .expect("pptx-compose should run");
+
+    assert_resource_limit_exit(&output_result);
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
 fn global_uncompressed_limit_changes_open_limit() {
     let root = unique_dir();
     let input = root.join("input.pptx");

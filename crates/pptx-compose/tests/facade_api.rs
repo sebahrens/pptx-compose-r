@@ -123,6 +123,28 @@ fn open_options_apply_resource_limits_at_facade_boundary() {
 }
 
 #[test]
+fn compressed_limit_rejects_path_and_reader_before_zip_parse() {
+    let bytes = include_bytes!("../../../fixtures/minimal.pptx");
+    let options = OpenOptions::with_resource_limits(ResourceLimits {
+        max_compressed_package_bytes: u64::try_from(bytes.len() - 1)
+            .expect("fixture length fits u64"),
+        ..ResourceLimits::default()
+    });
+    let root = unique_dir();
+    let input = root.join("input.pptx");
+    fs::write(&input, bytes).expect("fixture writes");
+
+    let path_error = PresentationDocument::open_path_with_options(&input, options.clone())
+        .expect_err("path open must reject oversized compressed package");
+    let reader_error = PresentationDocument::open_reader_with_options(Cursor::new(bytes), options)
+        .expect_err("reader open must reject oversized compressed package");
+
+    assert_eq!(path_error.code(), ErrorCode::ResourceLimitExceeded);
+    assert_eq!(reader_error.code(), ErrorCode::ResourceLimitExceeded);
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
 fn concurrent_non_overwrite_writes_do_not_clobber_output() {
     use std::sync::{Arc, Barrier};
     use std::thread;

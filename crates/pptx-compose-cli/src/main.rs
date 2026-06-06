@@ -92,6 +92,9 @@ fn capabilities(sink: OutputSink) -> Result<(), CliError> {
 
 fn open_options_from_global_args(global: &cli::GlobalArgs) -> Result<OpenOptions, CliError> {
     let mut resource_limits = ResourceLimits::default();
+    if let Some(max_compressed_bytes) = global.max_compressed_bytes {
+        resource_limits.max_compressed_package_bytes = max_compressed_bytes;
+    }
     if let Some(max_uncompressed_bytes) = global.max_uncompressed_bytes {
         resource_limits.max_uncompressed_package_bytes = max_uncompressed_bytes;
     }
