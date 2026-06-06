@@ -112,6 +112,42 @@ fn no_edit_rezip_preserves_canonical_document_id() {
 }
 
 #[test]
+fn zip_directory_entries_do_not_affect_identity_or_validation_and_are_preserved() {
+    let without_dirs = text_deck();
+    let with_dirs = text_deck_with_directories();
+    assert_eq!(document_id(&with_dirs), document_id(&without_dirs));
+
+    let without_dirs_doc = PresentationDocument::from_bytes(&without_dirs).expect("deck opens");
+    let with_dirs_doc = PresentationDocument::from_bytes(&with_dirs).expect("deck with dirs opens");
+    let without_dirs_validation = without_dirs_doc.validate().expect("deck validates");
+    let with_dirs_validation = with_dirs_doc.validate().expect("deck with dirs validates");
+    assert_eq!(with_dirs_validation.status, without_dirs_validation.status);
+    assert_eq!(
+        with_dirs_validation.document_id,
+        without_dirs_validation.document_id
+    );
+
+    let written = with_dirs_doc
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("deck with dirs writes");
+    let written_entries = from_bytes(&written).expect("written entries read");
+    assert!(
+        written_entries
+            .iter()
+            .any(|entry| entry.meta.is_dir && entry.meta.original_name == "ppt/")
+    );
+    assert!(
+        written_entries
+            .iter()
+            .any(|entry| entry.meta.is_dir && entry.meta.original_name == "ppt/slides/")
+    );
+    assert_eq!(document_id(&written), document_id(&without_dirs));
+}
+
+#[test]
 fn find_text_returns_selector_ready_hits() {
     let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
     let result = document
@@ -582,6 +618,33 @@ fn text_deck() -> Vec<u8> {
         ],
         CompressionMethod::Stored,
     )
+}
+
+fn text_deck_with_directories() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    {
+        let mut writer = ZipWriter::new(Cursor::new(&mut bytes));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        writer.add_directory("ppt/", options).expect("add ppt dir");
+        writer
+            .add_directory("ppt/slides/", options)
+            .expect("add slides dir");
+        for (name, data) in [
+            ("[Content_Types].xml", content_types().into_bytes()),
+            ("_rels/.rels", root_rels().into_bytes()),
+            ("ppt/presentation.xml", presentation().into_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().into_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", text_slide().into_bytes()),
+        ] {
+            writer.start_file(name, options).expect("start ZIP entry");
+            writer.write_all(&data).expect("write ZIP entry");
+        }
+        writer.finish().expect("finish ZIP");
+    }
+    bytes
 }
 
 fn zip_entries<const N: usize>(entries: [(&str, &[u8]); N], method: CompressionMethod) -> Vec<u8> {

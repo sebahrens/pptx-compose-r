@@ -483,6 +483,9 @@ fn json_error(error: pptx_compose_json::schemas::JsonError) -> Error {
 fn package_from_entries(entries: &[RawEntry]) -> Result<Package> {
     let mut package = Package::new();
     for entry in entries {
+        if entry.meta.is_dir {
+            continue;
+        }
         package.insert_part(Part::from_zip_entry(
             entry.meta.original_name.clone(),
             entry.bytes.clone(),
@@ -662,6 +665,9 @@ fn write_entries_for_package<'a>(
     let mut write_entries = source_entries
         .iter()
         .filter_map(|entry| {
+            if entry.meta.is_dir {
+                return Some(WriteEntry::Clean(entry));
+            }
             let part = parts_by_name.get(&entry.name)?;
             dirty_metas.get(part.name()).map_or_else(
                 || Some(WriteEntry::Clean(entry)),

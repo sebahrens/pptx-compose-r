@@ -398,6 +398,9 @@ fn package_metadata(bytes: &[u8]) -> Result<PackageMetadata> {
     let mut content_types = None;
     let mut slide_count = 0_u32;
     for entry in entries {
+        if entry.meta.is_dir {
+            continue;
+        }
         let part_name = PartName::from_zip_entry(entry.meta.original_name.as_str())?;
         if part_name.as_str() == "/[Content_Types].xml" {
             content_types = Some(entry.bytes.clone());
