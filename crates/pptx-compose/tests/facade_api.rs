@@ -201,6 +201,35 @@ fn replace_text_apply_writes_only_dirtied_slide_part() {
         .expect("slide entry exists");
     let slide_xml = std::str::from_utf8(&slide.bytes).expect("slide XML is UTF-8");
     assert!(slide_xml.contains(">Updated title<"));
+
+    let root = unique_dir();
+    let output = root.join("replace-text-output.pptx");
+    document
+        .write_path_with_options(
+            &output,
+            WriteOptions {
+                mode: WriteMode::Preserve,
+                ..WriteOptions::default()
+            },
+        )
+        .expect("edited deck writes to path");
+    let path_written = fs::read(&output).expect("written path reads");
+    fs::remove_dir_all(root).expect("test dir removes");
+    assert_ne!(path_written, bytes);
+
+    let path_written_entries = from_bytes(&path_written).expect("path-written entries read");
+    let path_changed_parts = original_entries
+        .iter()
+        .zip(path_written_entries.iter())
+        .filter_map(|(original, written)| {
+            if original.bytes == written.bytes {
+                None
+            } else {
+                Some(original.name.zip_entry_name().to_owned())
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(path_changed_parts, vec!["ppt/slides/slide1.xml"]);
 }
 
 #[test]
