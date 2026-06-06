@@ -6,8 +6,8 @@ use rmcp::{
     model::{
         AnnotateAble, GetPromptRequestParams, GetPromptResult, ListPromptsResult,
         ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams, Prompt,
-        PromptMessage, PromptMessageRole, RawResource, ReadResourceRequestParams,
-        ReadResourceResult, Resource, ResourceContents, ServerInfo,
+        PromptMessage, PromptMessageRole, RawResource, RawResourceTemplate,
+        ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents, ServerInfo,
     },
     service::{RequestContext, RoleServer},
     tool, tool_handler, tool_router,
@@ -142,6 +142,16 @@ fn mcp_error(error: CoreError) -> ErrorData {
 
 fn mcp_resource(descriptor: resources::ResourceDescriptor) -> Resource {
     RawResource::new(descriptor.uri, descriptor.name)
+        .with_title(descriptor.title)
+        .with_description(descriptor.description)
+        .with_mime_type(descriptor.mime_type)
+        .no_annotation()
+}
+
+fn mcp_resource_template(
+    descriptor: resources::ResourceTemplateDescriptor,
+) -> rmcp::model::ResourceTemplate {
+    RawResourceTemplate::new(descriptor.uri_template, descriptor.name)
         .with_title(descriptor.title)
         .with_description(descriptor.description)
         .with_mime_type(descriptor.mime_type)
@@ -964,7 +974,13 @@ impl ServerHandler for PptxServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
-        Ok(ListResourceTemplatesResult::with_all_items(Vec::new()))
+        Ok(ListResourceTemplatesResult::with_all_items(
+            self.resource_registry
+                .list_resource_templates()
+                .into_iter()
+                .map(mcp_resource_template)
+                .collect(),
+        ))
     }
 }
 

@@ -62,6 +62,17 @@ pub struct ResourceDescriptor {
     pub read_only: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceTemplateDescriptor {
+    pub uri_template: String,
+    pub name: String,
+    pub title: String,
+    pub description: String,
+    pub mime_type: String,
+    pub read_only: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceContent {
@@ -94,6 +105,11 @@ impl ResourceRegistry {
             resources.extend(session_resource_descriptors(session_id));
         }
         resources
+    }
+
+    #[must_use]
+    pub fn list_resource_templates(&self) -> Vec<ResourceTemplateDescriptor> {
+        session_resource_template_descriptors()
     }
 
     pub async fn read_resource(
@@ -467,6 +483,59 @@ fn session_resource_descriptors(session_id: &str) -> Vec<ResourceDescriptor> {
     .collect()
 }
 
+fn session_resource_template_descriptors() -> Vec<ResourceTemplateDescriptor> {
+    [
+        (
+            "pptx://sessions/{session_id}/summary",
+            "session-summary",
+            "Session summary",
+            "Bounded deck summary for an open PPTX session.",
+        ),
+        (
+            "pptx://sessions/{session_id}/slides",
+            "session-slides",
+            "Session slides",
+            "Paginated slide summaries for an open PPTX session.",
+        ),
+        (
+            "pptx://sessions/{session_id}/slides/{slide_id}",
+            "session-slide",
+            "Session slide",
+            "One slide view for an open PPTX session.",
+        ),
+        (
+            "pptx://sessions/{session_id}/elements/{element_id}",
+            "session-element",
+            "Session element",
+            "One element detail view for an open PPTX session.",
+        ),
+        (
+            "pptx://sessions/{session_id}/media/{media_id}/metadata",
+            "session-media-metadata",
+            "Session media metadata",
+            "Metadata for a staged media handle in an open PPTX session.",
+        ),
+        (
+            "pptx://sessions/{session_id}/validation/latest",
+            "session-latest-validation",
+            "Latest validation",
+            "Latest validation report for an open PPTX session.",
+        ),
+    ]
+    .into_iter()
+    .map(
+        |(uri_template, name, title, description)| ResourceTemplateDescriptor {
+            uri_template: uri_template.to_owned(),
+            name: name.to_owned(),
+            title: title.to_owned(),
+            description: description.to_owned(),
+            mime_type: "application/json".to_owned(),
+            read_only: true,
+        },
+    )
+    .collect()
+}
+
 fn write_query(
     formatter: &mut fmt::Formatter<'_>,
     cursor: Option<&str>,
@@ -519,6 +588,23 @@ mod tests {
                 && resource.name == "capabilities"
                 && resource.read_only
         }));
+    }
+
+    #[test]
+    fn lists_session_resource_templates_without_session() {
+        let templates = ResourceRegistry::default().list_resource_templates();
+        let uri_templates = templates
+            .iter()
+            .map(|template| template.uri_template.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(uri_templates.contains(&"pptx://sessions/{session_id}/summary"));
+        assert!(uri_templates.contains(&"pptx://sessions/{session_id}/slides"));
+        assert!(uri_templates.contains(&"pptx://sessions/{session_id}/slides/{slide_id}"));
+        assert!(uri_templates.contains(&"pptx://sessions/{session_id}/elements/{element_id}"));
+        assert!(uri_templates.contains(&"pptx://sessions/{session_id}/media/{media_id}/metadata"));
+        assert!(uri_templates.contains(&"pptx://sessions/{session_id}/validation/latest"));
+        assert!(templates.iter().all(|template| template.read_only));
     }
 
     #[tokio::test]

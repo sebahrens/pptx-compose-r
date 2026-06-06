@@ -6,7 +6,7 @@ use pptx_compose_mcp::{
     resources::{ResourceRegistry, ResourceUri},
     sessions::SessionStore,
 };
-use rmcp::{ClientHandler, ServiceExt, model::ClientInfo};
+use rmcp::{ClientHandler, ServerHandler, ServiceExt, model::ClientInfo};
 
 #[derive(Clone, Debug, Default)]
 struct TestClient;
@@ -31,6 +31,19 @@ async fn resources_and_prompts_match_072_contract() {
     assert!(resource_uris.contains(&"pptx://schemas/patch-report/v1"));
     assert!(resource_uris.contains(&"pptx://schemas/error/v1"));
     assert!(resources.iter().all(|resource| resource.read_only));
+
+    let templates = registry.list_resource_templates();
+    let uri_templates = templates
+        .iter()
+        .map(|template| template.uri_template.as_str())
+        .collect::<Vec<_>>();
+    assert!(uri_templates.contains(&"pptx://sessions/{session_id}/summary"));
+    assert!(uri_templates.contains(&"pptx://sessions/{session_id}/slides"));
+    assert!(uri_templates.contains(&"pptx://sessions/{session_id}/slides/{slide_id}"));
+    assert!(uri_templates.contains(&"pptx://sessions/{session_id}/elements/{element_id}"));
+    assert!(uri_templates.contains(&"pptx://sessions/{session_id}/media/{media_id}/metadata"));
+    assert!(uri_templates.contains(&"pptx://sessions/{session_id}/validation/latest"));
+    assert!(templates.iter().all(|template| template.read_only));
 
     let prompts = PromptRegistry::new();
     let prompt_names = prompts
@@ -115,6 +128,10 @@ async fn mcp_client_can_enumerate_and_read_072_resources_and_prompts() {
         .await
         .expect("client starts");
 
+    let info = ServerHandler::get_info(&PptxServer::default());
+    assert!(info.capabilities.resources.is_some());
+    assert!(info.capabilities.prompts.is_some());
+
     let resources = client.list_resources(None).await.expect("resources list");
     let resource_uris = resources
         .resources
@@ -133,6 +150,29 @@ async fn mcp_client_can_enumerate_and_read_072_resources_and_prompts() {
             .await
             .unwrap_or_else(|error| panic!("resource {uri} reads: {error}"));
         assert_eq!(content.contents.len(), 1);
+    }
+
+    let templates = client
+        .list_resource_templates(None)
+        .await
+        .expect("resource templates list");
+    let uri_templates = templates
+        .resource_templates
+        .iter()
+        .map(|template| template.raw.uri_template.as_str())
+        .collect::<Vec<_>>();
+    for uri_template in [
+        "pptx://sessions/{session_id}/summary",
+        "pptx://sessions/{session_id}/slides",
+        "pptx://sessions/{session_id}/slides/{slide_id}",
+        "pptx://sessions/{session_id}/elements/{element_id}",
+        "pptx://sessions/{session_id}/media/{media_id}/metadata",
+        "pptx://sessions/{session_id}/validation/latest",
+    ] {
+        assert!(
+            uri_templates.contains(&uri_template),
+            "missing resource template {uri_template}"
+        );
     }
 
     let prompts = client.list_prompts(None).await.expect("prompts list");
