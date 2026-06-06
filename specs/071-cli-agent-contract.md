@@ -70,6 +70,7 @@ Rules:
 - Must fail if output exists unless `--overwrite` is explicit.
 - Must fail if output equals input unless `--in-place` is explicit.
 - Must validate edited output before final write by default.
+- Must write deterministic ZIP framing/order/metadata by default, while still raw-copying clean part payload bytes.
 - Must emit a patch report with operations, changed parts, generated IDs, warnings, and output document fingerprint.
 
 ### `media`

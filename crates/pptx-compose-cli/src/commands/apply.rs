@@ -176,11 +176,7 @@ fn empty_diff() -> SemanticDiff {
 
 pub(crate) fn write_options_from_args(args: &ApplyArgs) -> WriteOptions {
     WriteOptions {
-        mode: if args.deterministic {
-            WriteMode::Deterministic
-        } else {
-            WriteMode::Preserve
-        },
+        mode: WriteMode::Deterministic,
         overwrite: args.overwrite,
         validate: true,
         atomic: true,
@@ -242,6 +238,18 @@ fn refuses_existing_output_without_overwrite() {
 #[test]
 fn overwrite_succeeds_and_deterministic_selects_mode() {
     test_support::overwrite_succeeds_and_deterministic_selects_mode();
+}
+
+#[cfg(test)]
+#[test]
+fn default_apply_selects_deterministic_mode() {
+    test_support::default_apply_selects_deterministic_mode();
+}
+
+#[cfg(test)]
+#[test]
+fn repeated_apply_without_flag_is_byte_identical() {
+    test_support::repeated_apply_without_flag_is_byte_identical();
 }
 
 #[cfg(test)]
@@ -330,6 +338,55 @@ mod test_support {
             fs::read(&output).expect("output reads"),
             b"replace-me",
             "output should be replaced"
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn default_apply_selects_deterministic_mode() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let output = root.join("output.pptx");
+        fs::create_dir_all(&root).expect("test dir creates");
+        fs::write(&input, include_bytes!("../../../../fixtures/minimal.pptx"))
+            .expect("input fixture writes");
+        fs::write(&patch, valid_noop_patch()).expect("patch fixture writes");
+
+        let args = args(&input, &patch, &output, false, false);
+        let write_options = write_options_from_args(&args);
+        assert_eq!(write_options.mode, WriteMode::Deterministic);
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn repeated_apply_without_flag_is_byte_identical() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let first_output = root.join("first.pptx");
+        let second_output = root.join("second.pptx");
+        fs::create_dir_all(&root).expect("test dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
+
+        apply(
+            args(&input, &patch, &first_output, false, false),
+            &permissions(&root),
+            OpenOptions::default(),
+        )
+        .expect("first apply succeeds");
+        apply(
+            args(&input, &patch, &second_output, false, false),
+            &permissions(&root),
+            OpenOptions::default(),
+        )
+        .expect("second apply succeeds");
+
+        assert_eq!(
+            fs::read(&first_output).expect("first output reads"),
+            fs::read(&second_output).expect("second output reads")
         );
 
         fs::remove_dir_all(root).expect("test dir removes");
