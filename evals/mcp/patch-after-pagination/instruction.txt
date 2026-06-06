@@ -1,0 +1,1 @@
+Page through slide summaries, inspect the target slide, then replace the title using the current session revision.

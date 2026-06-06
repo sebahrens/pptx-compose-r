@@ -1,0 +1,23 @@
+{
+  "schema": "pptx-compose.patch.v1",
+  "version": 1,
+  "document_id": "sha256:5aec353488af9781b58006c600039722d5f3a6bb1f0c4d8667f8f98a03e33e2e",
+  "base_revision": 1,
+  "client_request_id": "eval-add-text-box",
+  "operations": [
+    {
+      "op": "add_text_box",
+      "operation_id": "op-add-text-box",
+      "slide_id": "slide-1",
+      "text": "Prepared by Finance",
+      "bounds": {
+        "x": 914400,
+        "y": 914400,
+        "cx": 3657600,
+        "cy": 914400
+      },
+      "name": "Finance label",
+      "alt_text": "Finance label text box"
+    }
+  ]
+}

@@ -1,13 +1,13 @@
 {
   "schema": "pptx-compose.patch.v1",
   "version": 1,
-  "document_id": "sha256:5a5f3d46b642af04b0276c50dd3a2203809f262208823840e2ad803101ec5c81",
-  "base_revision": 1,
-  "client_request_id": "eval-replace-title",
+  "document_id": "{document_id}",
+  "base_revision": "{revision}",
+  "client_request_id": "eval-mcp-patch-after-pagination",
   "operations": [
     {
       "op": "replace_text",
-      "operation_id": "op-replace-title",
+      "operation_id": "op-mcp-replace-title",
       "element_id": "slide-1:shape-2",
       "text": "Quarterly Plan",
       "match": "Media fixture with image",

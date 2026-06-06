@@ -1,0 +1,23 @@
+{
+  "schema": "pptx-compose.cli_eval_transcript.v1",
+  "version": 1,
+  "case": "missing-media",
+  "command": ["--json-errors", "apply", "{input}", "{patch}", "--dry-run"],
+  "expected_exit": 23,
+  "stdout_json": null,
+  "stderr_json": {
+    "schema": "pptx-compose.error.v1",
+    "version": 1,
+    "status": "error",
+    "error": {
+      "code": "missing_media_ref",
+      "message": "No media input is bound for media_ref `missing`.",
+      "severity": "error",
+      "category": "media",
+      "retryable": false,
+      "state_changed": false,
+      "location": {},
+      "suggestions": []
+    }
+  }
+}

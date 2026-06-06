@@ -1,0 +1,1 @@
+Replace the existing image on the first slide while preserving the picture element.

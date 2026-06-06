@@ -1,0 +1,1 @@
+Open the malformed deck through MCP, validate it, and explain the structured validation failure without editing the package.

@@ -1,0 +1,10 @@
+{
+  "schema": "pptx-compose.mcp_eval_refusal.v1",
+  "version": 1,
+  "case": "validation-error-explain",
+  "refusal": {
+    "reason": "malformed input validation failure",
+    "must_not_edit": true,
+    "expected_error_codes": ["malformed_xml"]
+  }
+}

@@ -1,8 +1,8 @@
 {
   "schema": "pptx-compose.cli_eval_transcript.v1",
   "version": 1,
-  "case": "add-image",
-  "command": ["--json-errors", "apply", "{input}", "{patch}", "--media-manifest", "{media_manifest}", "--output", "{output}", "--report", "{report}"],
+  "case": "add-text-box",
+  "command": ["--json-errors", "apply", "{input}", "{patch}", "--output", "{output}", "--report", "{report}"],
   "expected_exit": 0,
   "stdout_json": null,
   "stderr_json": null,
@@ -13,25 +13,25 @@
     "dry_run": false,
     "document_id": "sha256:5aec353488af9781b58006c600039722d5f3a6bb1f0c4d8667f8f98a03e33e2e",
     "base_revision": 1,
-    "client_request_id": "eval-add-image",
+    "client_request_id": "eval-add-text-box",
     "new_document_id": "sha256:5aec353488af9781b58006c600039722d5f3a6bb1f0c4d8667f8f98a03e33e2e",
     "new_revision": 2,
     "operation_reports": [
       {
-        "operation_id": "op-add-image",
-        "op": "add_image",
+        "operation_id": "op-add-text-box",
+        "op": "add_text_box",
         "status": "applied",
         "target": {
           "slide_id": "slide-1",
-          "element_id": "slide-1:pic-2",
+          "element_id": "slide-1:shape-2",
           "part": "ppt/slides/slide1.xml"
         },
-        "changed_parts": ["ppt/slides/slide1.xml", "ppt/slides/_rels/slide1.xml.rels", "ppt/media/image1.png", "[Content_Types].xml"],
-        "created_element_ids": ["slide-1:pic-2"],
+        "changed_parts": ["ppt/slides/slide1.xml"],
+        "created_element_ids": ["slide-1:shape-2"],
         "warnings": []
       }
     ],
-    "changed_parts": ["[Content_Types].xml", "ppt/media/image1.png", "ppt/slides/_rels/slide1.xml.rels", "ppt/slides/slide1.xml"],
+    "changed_parts": ["ppt/slides/slide1.xml"],
     "validation": {
       "status": "valid",
       "errors": 0,

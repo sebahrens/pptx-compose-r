@@ -1,0 +1,21 @@
+{
+  "schema": "pptx-compose.patch.v1",
+  "version": 1,
+  "document_id": "{document_id}",
+  "base_revision": "{revision}",
+  "client_request_id": "eval-mcp-media-import-add-image",
+  "operations": [
+    {
+      "op": "add_image",
+      "operation_id": "op-mcp-add-image",
+      "slide_id": "slide-1",
+      "media_ref": "{media_ref}",
+      "content_type": "image/png",
+      "bounds": { "x": 914400, "y": 914400, "cx": 1828800, "cy": 1371600 },
+      "name": "Imported image",
+      "alt_text": "Imported inline PNG",
+      "fit": "contain",
+      "dedupe": "never"
+    }
+  ]
+}

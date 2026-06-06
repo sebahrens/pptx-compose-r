@@ -1,0 +1,13 @@
+{
+  "schema": "pptx-compose.media_manifest.v1",
+  "version": 1,
+  "media": {
+    "hero": {
+      "inline": {
+        "encoding": "base64",
+        "content_type": "image/png",
+        "data": "iVBORw0KGgpwcHR4LWNvbXBvc2UtZXZhbC1pbWFnZQ=="
+      }
+    }
+  }
+}

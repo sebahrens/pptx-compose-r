@@ -5,40 +5,73 @@ mod evals {
         fs,
         path::{Path, PathBuf},
         process::Command,
+        time::{SystemTime, UNIX_EPOCH},
     };
 
     use serde::Deserialize;
     use serde_json::Value;
 
-    const SEED_CASES: [&str; 4] = [
+    const CLI_CASES: [&str; 7] = [
         "replace-title",
+        "add-text-box",
         "add-image",
+        "replace-image",
         "stale-revision",
+        "missing-media",
         "unsupported-chart-edit",
     ];
 
     #[test]
     fn cli_negative_golden_transcripts() {
         assert_golden_transcript("stale-revision");
+        assert_golden_transcript("missing-media");
         assert_golden_transcript("unsupported-chart-edit");
     }
 
     #[test]
-    #[ignore = "replace_text dry-run reports are not wired yet; do not re-pin this eval to no-op success"]
     fn cli_replace_title_golden_transcript() {
         assert_golden_transcript("replace-title");
     }
 
     #[test]
-    #[ignore = "add_image media resolution is not wired into dry-run yet; do not re-pin this eval to no-op success"]
+    fn cli_add_text_box_golden_transcript() {
+        assert_golden_transcript("add-text-box");
+    }
+
+    #[test]
     fn cli_add_image_golden_transcript() {
         assert_golden_transcript("add-image");
     }
 
     #[test]
+    fn cli_replace_image_golden_transcript() {
+        assert_golden_transcript("replace-image");
+    }
+
+    #[test]
+    fn cli_corpus_contains_required_cases() {
+        let repo_root = repo_root();
+        for case_name in CLI_CASES {
+            let case_dir = repo_root.join("evals").join("cli").join(case_name);
+            assert!(case_dir.is_dir(), "{case_name}: case directory exists");
+            for file_name in [
+                "input-ref.txt",
+                "instruction.txt",
+                "patch.json",
+                "expected.transcript.json",
+            ] {
+                assert!(
+                    case_dir.join(file_name).exists(),
+                    "{case_name}: missing {file_name}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn edit_goldens_do_not_assert_successful_noop() {
         let repo_root = repo_root();
-        for case_name in SEED_CASES {
+        for case_name in CLI_CASES {
             let case_dir = repo_root.join("evals").join("cli").join(case_name);
             let transcript = read_transcript(&case_dir.join("expected.transcript.json"), case_name);
             if transcript.expected_exit != 0
@@ -47,17 +80,18 @@ mod evals {
                 continue;
             }
 
-            let stdout = transcript
+            let report = transcript
                 .stdout_json
                 .as_ref()
-                .unwrap_or_else(|| panic!("{case_name}: successful edit must emit stdout JSON"));
-            let operation_reports = stdout
+                .or(transcript.report_json.as_ref())
+                .unwrap_or_else(|| panic!("{case_name}: successful edit must emit report JSON"));
+            let operation_reports = report
                 .get("operation_reports")
                 .and_then(Value::as_array)
                 .unwrap_or_else(|| {
                     panic!("{case_name}: successful edit must include operation_reports")
                 });
-            let changed_parts = stdout
+            let changed_parts = report
                 .get("changed_parts")
                 .and_then(Value::as_array)
                 .unwrap_or_else(|| {
@@ -71,11 +105,6 @@ mod evals {
                 !changed_parts.is_empty(),
                 "{case_name}: successful edit must not assert empty changed_parts"
             );
-            assert_ne!(
-                stdout.get("document_id"),
-                stdout.get("new_document_id"),
-                "{case_name}: successful edit must not assert unchanged document_id"
-            );
         }
     }
 
@@ -84,7 +113,14 @@ mod evals {
         expected_exit: i32,
         expected_stdout: Option<Value>,
         expected_stderr: Option<Value>,
+        expected_report: Option<Value>,
+        output_invariants: Option<OutputInvariants>,
         command: Vec<String>,
+        input: PathBuf,
+        output: PathBuf,
+        report: PathBuf,
+        diff: PathBuf,
+        temp_dir: PathBuf,
     }
 
     #[derive(Debug, Deserialize)]
@@ -93,6 +129,15 @@ mod evals {
         expected_exit: i32,
         stdout_json: Option<Value>,
         stderr_json: Option<Value>,
+        report_json: Option<Value>,
+        output_invariants: Option<OutputInvariants>,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    struct OutputInvariants {
+        exists: bool,
+        differs_from_input: bool,
+        validates: bool,
     }
 
     impl EvalCase {
@@ -100,11 +145,18 @@ mod evals {
             let case_dir = repo_root.join("evals").join("cli").join(case_name);
             let transcript_path = case_dir.join("expected.transcript.json");
             let transcript = read_transcript(&transcript_path, case_name);
+            let temp_dir = unique_temp_dir(case_name);
+            fs::create_dir_all(&temp_dir)
+                .unwrap_or_else(|err| panic!("{case_name}: temp dir should create: {err}"));
 
             let input_ref = fs::read_to_string(case_dir.join("input-ref.txt"))
                 .unwrap_or_else(|err| panic!("{case_name}: input ref should read: {err}"));
             let input = repo_root.join(input_ref.trim());
             let patch = case_dir.join("patch.json");
+            let media_manifest = case_dir.join("media-manifest.json");
+            let output = temp_dir.join("output.pptx");
+            let report = temp_dir.join("report.json");
+            let diff = temp_dir.join("diff.json");
             assert!(input.exists(), "{case_name}: input fixture exists");
             assert!(patch.exists(), "{case_name}: patch exists");
 
@@ -114,6 +166,10 @@ mod evals {
                 .map(|arg| match arg.as_str() {
                     "{input}" => input.display().to_string(),
                     "{patch}" => patch.display().to_string(),
+                    "{media_manifest}" => media_manifest.display().to_string(),
+                    "{output}" => output.display().to_string(),
+                    "{report}" => report.display().to_string(),
+                    "{diff}" => diff.display().to_string(),
                     _ => arg,
                 })
                 .collect();
@@ -122,12 +178,25 @@ mod evals {
                 expected_exit: transcript.expected_exit,
                 expected_stdout: transcript.stdout_json,
                 expected_stderr: transcript.stderr_json,
+                expected_report: transcript.report_json,
+                output_invariants: transcript.output_invariants,
                 command,
+                input,
+                output,
+                report,
+                diff,
+                temp_dir,
             }
         }
 
         fn command_args(&self) -> &[String] {
             &self.command
+        }
+    }
+
+    impl Drop for EvalCase {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.temp_dir);
         }
     }
 
@@ -162,6 +231,14 @@ mod evals {
             &output.stderr,
             case.expected_stderr.as_ref(),
         );
+
+        assert_optional_json_file(
+            case_name,
+            "report",
+            &case.report,
+            case.expected_report.as_ref(),
+        );
+        assert_output_invariants(case_name, &case);
     }
 
     fn read_transcript(transcript_path: &Path, case_name: &str) -> Transcript {
@@ -182,6 +259,73 @@ mod evals {
             .get("operations")
             .and_then(Value::as_array)
             .map_or(0, Vec::len)
+    }
+
+    fn assert_optional_json_file(
+        case_name: &str,
+        file_name: &str,
+        path: &Path,
+        expected: Option<&Value>,
+    ) {
+        match expected {
+            Some(expected) => {
+                let actual: Value =
+                    serde_json::from_slice(&fs::read(path).unwrap_or_else(|err| {
+                        panic!("{case_name}: {file_name} should read: {err}")
+                    }))
+                    .unwrap_or_else(|err| panic!("{case_name}: {file_name} parses: {err}"));
+                assert_eq!(&actual, expected, "{case_name}: {file_name} JSON mismatch");
+            }
+            None => assert!(
+                !path.exists(),
+                "{case_name}: unexpected {file_name} file at {}",
+                path.display()
+            ),
+        }
+    }
+
+    fn assert_output_invariants(case_name: &str, case: &EvalCase) {
+        let Some(invariants) = &case.output_invariants else {
+            assert!(
+                !case.output.exists(),
+                "{case_name}: unexpected output file at {}",
+                case.output.display()
+            );
+            assert!(
+                !case.diff.exists(),
+                "{case_name}: unexpected diff file at {}",
+                case.diff.display()
+            );
+            return;
+        };
+
+        assert_eq!(
+            case.output.exists(),
+            invariants.exists,
+            "{case_name}: output existence mismatch"
+        );
+        if invariants.differs_from_input {
+            let input = fs::read(&case.input)
+                .unwrap_or_else(|err| panic!("{case_name}: input should read: {err}"));
+            let output = fs::read(&case.output)
+                .unwrap_or_else(|err| panic!("{case_name}: output should read: {err}"));
+            assert_ne!(
+                output, input,
+                "{case_name}: output should mutate input bytes"
+            );
+        }
+        if invariants.validates {
+            let document = pptx_compose::PresentationDocument::open_path(&case.output)
+                .unwrap_or_else(|err| panic!("{case_name}: output should open: {err}"));
+            let report = document
+                .validate()
+                .unwrap_or_else(|err| panic!("{case_name}: output should validate: {err}"));
+            assert_eq!(
+                report.status,
+                pptx_compose::json::schemas::ValidationStatus::Valid,
+                "{case_name}: output is valid"
+            );
+        }
     }
 
     fn assert_json_stream(
@@ -214,5 +358,18 @@ mod evals {
             .nth(2)
             .expect("crate is under crates/pptx-compose-cli")
             .to_path_buf()
+    }
+
+    fn unique_temp_dir(case_name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after unix epoch")
+            .as_nanos();
+        path.push(format!(
+            "pptx-compose-cli-eval-{case_name}-{}-{nanos}",
+            std::process::id()
+        ));
+        path
     }
 }

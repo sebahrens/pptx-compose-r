@@ -3,24 +3,20 @@
   "version": 1,
   "document_id": "sha256:5aec353488af9781b58006c600039722d5f3a6bb1f0c4d8667f8f98a03e33e2e",
   "base_revision": 1,
-  "client_request_id": "eval-add-image",
+  "client_request_id": "eval-missing-media",
   "operations": [
     {
       "op": "add_image",
-      "operation_id": "op-add-image",
+      "operation_id": "op-missing-media",
       "slide_id": "slide-1",
-      "media_ref": "hero",
+      "media_ref": "missing",
       "content_type": "image/png",
       "bounds": {
         "x": 914400,
         "y": 914400,
         "cx": 1828800,
         "cy": 1371600
-      },
-      "name": "Hero image",
-      "alt_text": "A staged image",
-      "fit": "stretch",
-      "dedupe": "never"
+      }
     }
   ]
 }

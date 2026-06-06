@@ -1,0 +1,19 @@
+{
+  "schema": "pptx-compose.mcp_eval_transcript.v1",
+  "version": 1,
+  "case": "patch-after-pagination",
+  "tools": [
+    { "name": "pptx_open", "arguments": { "path": "{input}" }, "expect": { "status": "success" } },
+    { "name": "pptx_list_slides", "arguments": { "session_id": "{session_id}", "cursor": null, "limit": 1 }, "expect": { "status": "success", "view_mode": "slide_page" } },
+    { "name": "pptx_get_slide", "arguments": { "session_id": "{session_id}", "slide_id": "slide-1", "expected_revision": "{revision}" }, "expect": { "status": "success", "view_mode": "slide_detail" } },
+    { "name": "pptx_validate_patch", "arguments": { "session_id": "{session_id}", "patch": "{expected_patch}" }, "expect": { "status": "success", "patch_status": "dry_run_success" } },
+    { "name": "pptx_apply_patch", "arguments": { "session_id": "{session_id}", "patch": "{expected_patch}", "dry_run": false }, "expect": { "status": "success", "revision_increment": 1 } },
+    { "name": "pptx_export", "arguments": { "session_id": "{session_id}", "expected_revision": "{new_revision}", "output_path": null, "overwrite": false }, "expect": { "status": "success", "inline_pptx": true } },
+    { "name": "pptx_close", "arguments": { "session_id": "{session_id}" }, "expect": { "status": "success" } }
+  ],
+  "output_invariants": {
+    "bounded": true,
+    "mutates_output": true,
+    "validates": true
+  }
+}

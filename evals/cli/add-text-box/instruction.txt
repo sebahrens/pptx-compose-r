@@ -1,0 +1,1 @@
+Add a labeled text box to the first slide.

@@ -1,0 +1,1 @@
+Import inline PNG media through MCP and add it to the first slide.

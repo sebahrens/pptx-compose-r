@@ -1,0 +1,1 @@
+Inspect the deck through MCP and answer slide count and title questions without requesting raw package XML.

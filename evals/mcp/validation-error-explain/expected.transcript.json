@@ -1,0 +1,15 @@
+{
+  "schema": "pptx-compose.mcp_eval_transcript.v1",
+  "version": 1,
+  "case": "validation-error-explain",
+  "tools": [
+    { "name": "pptx_open", "arguments": { "path": "{input}" }, "expect": { "status": "success" } },
+    { "name": "pptx_validate", "arguments": { "session_id": "{session_id}" }, "expect": { "status": "success", "validation_status": "invalid" } },
+    { "name": "pptx_close", "arguments": { "session_id": "{session_id}" }, "expect": { "status": "success" } }
+  ],
+  "output_invariants": {
+    "read_only": true,
+    "explains_error": true,
+    "no_raw_xml_required": true
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schema": "pptx-compose.patch.v1",
+  "version": 1,
+  "document_id": "sha256:5a5f3d46b642af04b0276c50dd3a2203809f262208823840e2ad803101ec5c81",
+  "base_revision": 1,
+  "client_request_id": "eval-replace-image",
+  "operations": [
+    {
+      "op": "replace_image",
+      "operation_id": "op-replace-image",
+      "element_id": "slide-1:pic-3",
+      "media_ref": "replacement",
+      "content_type": "image/png"
+    }
+  ]
+}

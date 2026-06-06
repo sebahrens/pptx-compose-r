@@ -1,0 +1,32 @@
+{
+  "schema": "pptx-compose.mcp_eval_transcript.v1",
+  "version": 1,
+  "case": "inspect-large-deck",
+  "tools": [
+    {
+      "name": "pptx_open",
+      "arguments": { "path": "{input}" },
+      "expect": { "status": "success", "result_fields": ["session_id", "document_id", "revision"] }
+    },
+    {
+      "name": "pptx_get_document_summary",
+      "arguments": { "session_id": "{session_id}" },
+      "expect": { "status": "success", "view_mode": "deck_summary" }
+    },
+    {
+      "name": "pptx_list_slides",
+      "arguments": { "session_id": "{session_id}", "cursor": null, "limit": 20 },
+      "expect": { "status": "success", "view_mode": "slide_page" }
+    },
+    {
+      "name": "pptx_close",
+      "arguments": { "session_id": "{session_id}" },
+      "expect": { "status": "success" }
+    }
+  ],
+  "output_invariants": {
+    "bounded": true,
+    "no_raw_xml": true,
+    "read_only": true
+  }
+}
