@@ -1,11 +1,17 @@
 use std::collections::BTreeSet;
 
-use crate::opc::{
-    content_types::ContentTypes,
-    part::{Part, PartStore},
-    part_name::PartName,
-    relationships::{Relationship, RelationshipGraph},
+use crate::{
+    error::{Error, Result},
+    opc::{
+        content_types::ContentTypes,
+        part::{Part, PartStore},
+        part_name::PartName,
+        relationships::{Relationship, RelationshipGraph},
+    },
 };
+
+pub const OFFICE_DOCUMENT_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SlideIdEntry {
@@ -76,7 +82,33 @@ impl Package {
         &self.original_parts
     }
 
-    pub fn insert_part(&mut self, part: Part) -> crate::error::Result<&Part> {
+    pub fn office_document_part(&self) -> Result<PartName> {
+        let root_rels_part = root_relationships_part()?;
+        let root_rels = self.relationships.set_for(&root_rels_part).ok_or_else(|| {
+            Error::malformed_package(
+                "Package root relationships do not contain an Office document relationship.",
+            )
+        })?;
+
+        let relationship = root_rels
+            .rels
+            .iter()
+            .find(|relationship| relationship.rel_type == OFFICE_DOCUMENT_REL_TYPE)
+            .ok_or_else(|| {
+                Error::malformed_package(
+                    "Package root relationships do not contain an Office document relationship.",
+                )
+            })?;
+
+        relationship.resolved_target.clone().ok_or_else(|| {
+            Error::malformed_package(format!(
+                "Office document relationship {} does not resolve to an internal package part.",
+                relationship.id
+            ))
+        })
+    }
+
+    pub fn insert_part(&mut self, part: Part) -> Result<&Part> {
         let name = part.name().clone();
         let inserted = self.parts.insert(part)?;
         self.original_parts.insert(name);
@@ -103,4 +135,59 @@ impl Package {
     pub fn mark_dirty(&mut self, part_name: PartName) {
         self.dirty_parts.insert(part_name);
     }
+}
+
+fn root_relationships_part() -> Result<PartName> {
+    PartName::from_zip_entry("/_rels/.rels")
+}
+
+#[cfg(test)]
+#[test]
+fn discovers_office_document() {
+    use crate::{
+        error::ErrorCode,
+        opc::relationships::{RelationshipSet, RelationshipSource, TargetMode},
+    };
+
+    let root_rels_part = root_relationships_part().expect("root relationships part is valid");
+    let presentation_part =
+        PartName::from_zip_entry("/ppt/presentation.xml").expect("presentation part is valid");
+    let mut package = Package::new();
+    package.relationships.insert_set(RelationshipSet {
+        source: root_rels_part,
+        rels: vec![
+            Relationship {
+                source: RelationshipSource::Package,
+                id: "rUnknown".to_owned(),
+                rel_type: "https://example.test/unknown".to_owned(),
+                target: "custom.xml".to_owned(),
+                mode: TargetMode::Internal,
+                target_mode: TargetMode::Internal,
+                resolved_target: Some(
+                    PartName::from_zip_entry("/custom.xml").expect("unknown target is valid"),
+                ),
+            },
+            Relationship {
+                source: RelationshipSource::Package,
+                id: "rOffice".to_owned(),
+                rel_type: OFFICE_DOCUMENT_REL_TYPE.to_owned(),
+                target: "ppt/presentation.xml".to_owned(),
+                mode: TargetMode::Internal,
+                target_mode: TargetMode::Internal,
+                resolved_target: Some(presentation_part.clone()),
+            },
+        ],
+    });
+
+    assert_eq!(
+        package
+            .office_document_part()
+            .expect("office document resolves"),
+        presentation_part
+    );
+
+    let missing = Package::new()
+        .office_document_part()
+        .expect_err("missing office document is malformed");
+    assert_eq!(missing.code(), ErrorCode::UnsupportedPackage);
 }

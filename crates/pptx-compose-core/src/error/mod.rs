@@ -119,6 +119,11 @@ impl Error {
     }
 
     #[must_use]
+    pub fn malformed_package(message: impl Into<String>) -> Self {
+        Self::unsupported_package(message)
+    }
+
+    #[must_use]
     pub fn unsafe_path(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::UnsafePath, message)
     }
