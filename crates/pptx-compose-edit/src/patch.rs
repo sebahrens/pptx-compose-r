@@ -1,4 +1,7 @@
-use std::{collections::HashSet, error, fmt};
+use std::{
+    collections::{BTreeMap, HashSet},
+    error, fmt,
+};
 
 use pptx_compose_core::{
     error::{Error, ErrorCode, ErrorLocation, Result},
@@ -181,16 +184,29 @@ pub struct Bounds {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct TextBoxStyle {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub font_face: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub font_size: Option<u32>,
+    pub font_size_pt: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bold: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub italic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub align: Option<TextAlign>,
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]

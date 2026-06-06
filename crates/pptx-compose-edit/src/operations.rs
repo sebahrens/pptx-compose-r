@@ -1,5 +1,6 @@
 use pptx_compose_core::{opc::part_name::PartName, pptx::ids::ElementKind};
 
+pub mod add_text_box;
 pub mod move_resize;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
