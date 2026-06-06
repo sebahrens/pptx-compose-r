@@ -1237,9 +1237,76 @@ fn with_operation_location(error: Error, operation_id: &str) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Cursor, Write};
+
+    use pptx_compose_core::zip::{
+        limits::{OpenOptions as CoreOpenOptions, ResourceLimits},
+        reader::from_bytes_with_options,
+    };
+    use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+
+    use super::package_from_entries_with_limits;
+
     #[test]
     fn facade_crate_compiles() {
         let crate_name = env!("CARGO_PKG_NAME");
         assert_eq!(crate_name, "pptx-compose");
     }
+
+    #[test]
+    fn loaded_package_office_document_part_resolves_root_relationship_target() {
+        let bytes = zip_entries([
+            ("[Content_Types].xml", CONTENT_TYPES.as_bytes()),
+            ("_rels/.rels", ROOT_RELS.as_bytes()),
+            ("ppt/presentation.xml", PRESENTATION.as_bytes()),
+        ]);
+        let limits = ResourceLimits::default();
+        let entries = from_bytes_with_options(
+            &bytes,
+            &CoreOpenOptions {
+                resource_limits: limits.clone(),
+            },
+        )
+        .expect("minimal deck zip opens");
+        let package =
+            package_from_entries_with_limits(&entries, &limits).expect("minimal deck hydrates");
+
+        assert_eq!(
+            package
+                .office_document_part()
+                .expect("office document resolves")
+                .as_str(),
+            "/ppt/presentation.xml"
+        );
+    }
+
+    fn zip_entries<const N: usize>(entries: [(&str, &[u8]); N]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut writer = ZipWriter::new(Cursor::new(&mut bytes));
+            let options =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            for (name, data) in entries {
+                writer.start_file(name, options).expect("start ZIP entry");
+                writer.write_all(data).expect("write ZIP entry");
+            }
+            writer.finish().expect("finish ZIP");
+        }
+        bytes
+    }
+
+    const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+</Types>"#;
+
+    const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>"#;
+
+    const PRESENTATION: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>"#;
 }

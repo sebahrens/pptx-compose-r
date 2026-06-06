@@ -6,7 +6,10 @@ use crate::{
         content_types::ContentTypes,
         part::{Part, PartStore},
         part_name::PartName,
-        relationships::{Relationship, RelationshipGraph},
+        relationships::{
+            Relationship, RelationshipGraph, RelationshipSource, TargetMode,
+            resolve_internal_target,
+        },
     },
 };
 
@@ -93,29 +96,30 @@ impl Package {
     }
 
     pub fn office_document_part(&self) -> Result<PartName> {
-        let root_rels_part = root_relationships_part()?;
-        let root_rels = self.relationships.set_for(&root_rels_part).ok_or_else(|| {
-            Error::malformed_package(
-                "Package root relationships do not contain an Office document relationship.",
-            )
-        })?;
-
-        let relationship = root_rels
-            .rels
+        let relationship = self
+            .relationships
             .iter()
-            .find(|relationship| relationship.rel_type == OFFICE_DOCUMENT_REL_TYPE)
+            .find(|relationship| {
+                relationship.source == RelationshipSource::Package
+                    && relationship.rel_type == OFFICE_DOCUMENT_REL_TYPE
+            })
             .ok_or_else(|| {
                 Error::malformed_package(
                     "Package root relationships do not contain an Office document relationship.",
                 )
             })?;
 
-        relationship.resolved_target.clone().ok_or_else(|| {
-            Error::malformed_package(format!(
-                "Office document relationship {} does not resolve to an internal package part.",
+        if relationship.target_mode != TargetMode::Internal {
+            return Err(Error::malformed_package(format!(
+                "Office document relationship {} must be internal.",
                 relationship.id
-            ))
-        })
+            )));
+        }
+
+        relationship.resolved_target.clone().map_or_else(
+            || resolve_internal_target(&relationship.source, &relationship.target),
+            Ok,
+        )
     }
 
     pub fn insert_part(&mut self, part: Part) -> Result<&Part> {
@@ -158,6 +162,7 @@ impl Package {
     }
 }
 
+#[cfg(test)]
 fn root_relationships_part() -> Result<PartName> {
     PartName::from_zip_entry("/_rels/.rels")
 }
