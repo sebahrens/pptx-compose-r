@@ -683,12 +683,8 @@ where
     let mut changed_parts = Vec::new();
 
     for operation in &patch.operations {
-        let validation_effects = executor.validate(&staged, operation)?;
-        let effects = if dry_run {
-            validation_effects
-        } else {
-            executor.apply(&mut staged, operation)?
-        };
+        let _validation_effects = executor.validate(&staged, operation)?;
+        let effects = executor.apply(&mut staged, operation)?;
 
         changed_parts.extend(effects.changed_parts.iter().cloned());
         operation_reports.push(operation_report(

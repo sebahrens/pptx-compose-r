@@ -30,7 +30,9 @@ use core::{
         },
     },
     pptx::presentation as core_presentation,
-    provenance::{document_id::document_id as provenance_document_id, revision},
+    provenance::{
+        checksum::part_checksum, document_id::document_id as provenance_document_id, revision,
+    },
     xml::{document::XmlElement, parser::parse_document_with_limits},
     zip::{
         ZipEntryMetadata,
@@ -41,6 +43,7 @@ use core::{
     },
 };
 use pptx_compose_edit::{
+    diffs::{ChangedPart, DiffChange, PartChangeKind, SemanticDiff},
     operations::{
         ResolvedTarget, add_image::AddImage, add_text_box::AddTextBox, move_resize::MoveResize,
         replace_image::ReplaceImage, replace_text::ReplaceText, set_alt_text::SetAltText,
@@ -70,6 +73,12 @@ pub struct MediaPartInfo {
     pub content_type: Option<String>,
     pub byte_length: u64,
     pub checksum: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApplyPatchOutput {
+    pub report: PatchReport,
+    pub diff: SemanticDiff,
 }
 
 impl PresentationDocument {
@@ -204,6 +213,15 @@ impl PresentationDocument {
         media: MediaInputs,
         options: ApplyPatchOptions,
     ) -> Result<PatchReport> {
+        Ok(self.apply_patch_with_diff(patch, media, options)?.report)
+    }
+
+    pub fn apply_patch_with_diff(
+        &mut self,
+        patch: Patch,
+        media: MediaInputs,
+        options: ApplyPatchOptions,
+    ) -> Result<ApplyPatchOutput> {
         if options.validate {
             let _report = self.validate()?;
         }
@@ -211,31 +229,11 @@ impl PresentationDocument {
         let document_id = document_id_from_entries(&self.entries)?;
         let revision = self.current_revision()?;
         validate_envelope(&patch, &DocumentState::new(document_id.clone(), revision))?;
-        if options.dry_run {
-            let validation = self.validate()?;
-            let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
-            validate_patch_operations(&package, &patch.operations, &media)?;
-            return Ok(PatchReport {
-                schema: pptx_compose_json::schema_versions::PATCH_REPORT_SCHEMA.to_owned(),
-                version: pptx_compose_json::schema_versions::PATCH_REPORT_VERSION,
-                client_request_id: Some(patch.client_request_id),
-                request_id: None,
-                transaction_id: None,
-                status: pptx_compose_json::schemas::PatchStatus::DryRunSuccess,
-                dry_run: true,
-                document_id: document_id.clone(),
-                base_revision: revision,
-                new_document_id: document_id,
-                new_revision: revision,
-                operation_reports: Vec::new(),
-                changed_parts: Vec::new(),
-                validation: pptx_compose_edit::reports::patch_validation_summary(&validation),
-            });
-        }
-        let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
-        validate_patch_operations(&package, &patch.operations, &media)?;
+        let original_package =
+            package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
+        validate_patch_operations(&original_package, &patch.operations, &media)?;
 
-        let mut package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
+        let mut package = original_package.clone();
         let mut executor = RealOperationExecutor {
             media_inputs: &media,
         };
@@ -252,8 +250,17 @@ impl PresentationDocument {
             options.dry_run,
             &mut executor,
         )?;
-        self.replace_entries_from_package(&package)?;
-        if !report.changed_parts.is_empty() {
+        let diff = semantic_diff_for_patch(
+            &original_package,
+            &package,
+            &self.entries,
+            &patch.operations,
+            &report,
+        )?;
+        if !options.dry_run {
+            self.replace_entries_from_package(&package)?;
+        }
+        if !options.dry_run && !report.changed_parts.is_empty() {
             let recorded_revision =
                 u32::try_from(self.revision.record_apply(true)).map_err(|source| {
                     Error::with_source(
@@ -269,7 +276,7 @@ impl PresentationDocument {
                 ));
             }
         }
-        Ok(report)
+        Ok(ApplyPatchOutput { report, diff })
     }
 
     pub fn write_path_with_options(
@@ -539,6 +546,83 @@ impl PresentationDocument {
         self.dirty_parts = package.dirty_parts().clone();
         Ok(())
     }
+}
+
+fn semantic_diff_for_patch(
+    before: &Package,
+    after: &Package,
+    source_entries: &[RawEntry],
+    operations: &[Operation],
+    report: &PatchReport,
+) -> Result<SemanticDiff> {
+    let before = package_with_serialized_control_parts(before, Some(source_entries))?;
+    let after = package_with_serialized_control_parts(after, Some(source_entries))?;
+    let changed_parts = report
+        .changed_parts
+        .iter()
+        .map(|part| changed_part(&before, &after, part))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(SemanticDiff {
+        schema: pptx_compose_edit::diffs::SEMANTIC_DIFF_SCHEMA.to_owned(),
+        version: pptx_compose_edit::diffs::SEMANTIC_DIFF_VERSION,
+        changes: semantic_changes(operations, report),
+        changed_parts,
+    })
+}
+
+fn changed_part(before: &Package, after: &Package, part: &str) -> Result<ChangedPart> {
+    let part_name = PartName::from_zip_entry(part)?;
+    let before_part = before.parts().get(&part_name);
+    let after_part = after.parts().get(&part_name);
+    let after_bytes = after_part.map(|part| part.bytes()).unwrap_or_default();
+    let change_kind = if before_part.is_none() {
+        PartChangeKind::AddedPart
+    } else {
+        change_kind_for_part(part)
+    };
+
+    Ok(ChangedPart {
+        part: part.to_owned(),
+        change_kind,
+        before_checksum: before_part
+            .map(|part| part_checksum(part.bytes()))
+            .unwrap_or_else(|| part_checksum(&[])),
+        after_checksum: part_checksum(after_bytes),
+    })
+}
+
+fn change_kind_for_part(part: &str) -> PartChangeKind {
+    if part == "[Content_Types].xml" {
+        PartChangeKind::ModifiedContentTypes
+    } else if part.ends_with(".rels") && part.contains("/_rels/") {
+        PartChangeKind::ModifiedRelationships
+    } else if part.ends_with(".xml") {
+        PartChangeKind::ModifiedXml
+    } else {
+        PartChangeKind::ModifiedBinary
+    }
+}
+
+fn semantic_changes(operations: &[Operation], report: &PatchReport) -> Vec<DiffChange> {
+    operations
+        .iter()
+        .filter_map(|operation| match operation {
+            Operation::ReplaceText(operation) => {
+                let operation_report = report
+                    .operation_reports
+                    .iter()
+                    .find(|report| report.operation_id == operation.operation_id)?;
+                Some(DiffChange::TextReplaced {
+                    operation_id: operation.operation_id.clone(),
+                    element_id: operation_report.target.element_id.clone(),
+                    before: serde_json::json!({ "text": operation.current_text_match }),
+                    after: serde_json::json!({ "text": operation.text }),
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn temp_sibling_path(output_path: &Path) -> PathBuf {

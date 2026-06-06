@@ -374,6 +374,58 @@ fn replace_text_apply_writes_only_dirtied_slide_part() {
 }
 
 #[test]
+fn replace_text_dry_run_reports_effects_without_mutating_document() {
+    let bytes = text_deck();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let patch = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(&bytes),
+        "base_revision": 1,
+        "client_request_id": "replace-text-dry-run",
+        "operations": [{
+            "operation_id": "replace-title",
+            "op": "replace_text",
+            "element_id": "slide-1:shape-3",
+            "match": "Original title",
+            "text": "Dry-run title"
+        }]
+    }))
+    .expect("patch parses");
+
+    let output = document
+        .apply_patch_with_diff(
+            patch,
+            MediaInputs::default(),
+            ApplyPatchOptions {
+                dry_run: true,
+                validate: true,
+            },
+        )
+        .expect("replace_text dry-run succeeds");
+
+    assert_eq!(
+        output.report.status,
+        pptx_compose::json::schemas::PatchStatus::DryRunSuccess
+    );
+    assert_eq!(output.report.changed_parts, vec!["ppt/slides/slide1.xml"]);
+    assert_eq!(output.report.operation_reports.len(), 1);
+    let operation = &output.report.operation_reports[0];
+    assert_eq!(
+        operation.status,
+        pptx_compose::json::schemas::OperationStatus::Validated
+    );
+    assert_eq!(operation.target.element_id, "slide-1:shape-3");
+    assert_eq!(operation.changed_parts, vec!["ppt/slides/slide1.xml"]);
+    assert_eq!(output.diff.changed_parts.len(), 1);
+    assert_eq!(output.diff.changed_parts[0].part, "ppt/slides/slide1.xml");
+    assert_eq!(output.diff.changes.len(), 1);
+
+    let written = document.write_vec().expect("document writes after dry-run");
+    assert_eq!(written, bytes, "dry-run must not mutate document bytes");
+}
+
+#[test]
 fn guarded_selector_replace_text_applies_and_rejects_stale_fingerprint() {
     let bytes = text_deck();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");

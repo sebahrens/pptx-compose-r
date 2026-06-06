@@ -4,7 +4,6 @@ use pptx_compose::{
     ApplyPatchOptions, OpenOptions, PresentationDocument, WriteMode, WriteOptions,
     core::error::{Error, ErrorCode, ErrorLocation},
     edit::{
-        diffs::{SEMANTIC_DIFF_SCHEMA, SEMANTIC_DIFF_VERSION, SemanticDiff},
         media_inputs::{MediaInputs, MediaManifest},
         patch::{Patch, parse_patch},
     },
@@ -39,8 +38,8 @@ pub(crate) fn apply(
     let mut document = PresentationDocument::open_path_with_options(&input, open_options)
         .map_err(CliError::from_error)?;
     if args.dry_run {
-        let report = document
-            .apply_patch_with_options(
+        let output = document
+            .apply_patch_with_diff(
                 patch,
                 media_inputs,
                 ApplyPatchOptions {
@@ -50,8 +49,8 @@ pub(crate) fn apply(
             )
             .map_err(apply_error)?;
         let sink = OutputSink::default();
-        sink.emit_patch_report(&report, args.report)?;
-        sink.emit_diff(&empty_diff(), args.diff)?;
+        sink.emit_patch_report(&output.report, args.report)?;
+        sink.emit_diff(&output.diff, args.diff)?;
         return Ok(());
     }
 
@@ -67,8 +66,8 @@ pub(crate) fn apply(
         .and_then(|output| permissions.authorize_write(output, PathIntent::OutputPptx))?;
     enforce_apply_write_guards(&input, &output, args.overwrite, args.in_place)?;
 
-    let apply_report = document
-        .apply_patch_with_options(
+    let apply_output = document
+        .apply_patch_with_diff(
             patch,
             media_inputs,
             ApplyPatchOptions {
@@ -81,7 +80,9 @@ pub(crate) fn apply(
     document
         .write_path_with_options(&output, write_options)
         .map_err(CliError::from_error)?;
-    OutputSink::default().emit_optional_patch_report(&apply_report, args.report)?;
+    let sink = OutputSink::default();
+    sink.emit_optional_patch_report(&apply_output.report, args.report)?;
+    sink.emit_diff(&apply_output.diff, args.diff)?;
 
     Ok(())
 }
@@ -163,15 +164,6 @@ fn reject_known_unsupported_operations(patch: &serde_json::Value) -> Result<(), 
     }
 
     Ok(())
-}
-
-fn empty_diff() -> SemanticDiff {
-    SemanticDiff {
-        schema: SEMANTIC_DIFF_SCHEMA.to_owned(),
-        version: SEMANTIC_DIFF_VERSION,
-        changes: Vec::new(),
-        changed_parts: Vec::new(),
-    }
 }
 
 pub(crate) fn write_options_from_args(args: &ApplyArgs) -> WriteOptions {
@@ -420,6 +412,8 @@ mod test_support {
         assert_eq!(report_json["version"], 1);
         assert_eq!(report_json["status"], "dry_run_success");
         assert_eq!(report_json["dry_run"], true);
+        assert_eq!(report_json["operation_reports"], serde_json::json!([]));
+        assert_eq!(report_json["changed_parts"], serde_json::json!([]));
 
         let diff_json: serde_json::Value =
             serde_json::from_slice(&fs::read(&diff).expect("diff reads")).expect("diff is JSON");
@@ -436,6 +430,7 @@ mod test_support {
         let patch = root.join("patch.json");
         let output = root.join("output.pptx");
         let report = root.join("report.json");
+        let diff = root.join("diff.json");
         fs::create_dir_all(&root).expect("test dir creates");
         let input_bytes = text_deck();
         fs::write(&input, &input_bytes).expect("input fixture writes");
@@ -443,6 +438,7 @@ mod test_support {
 
         let mut args = args(&input, &patch, &output, false, false);
         args.report = Some(report.clone());
+        args.diff = Some(diff.clone());
         apply(args, &permissions(&root), OpenOptions::default())
             .expect("replace_text apply succeeds");
 
@@ -464,6 +460,27 @@ mod test_support {
             report_json["changed_parts"],
             serde_json::json!(["ppt/slides/slide1.xml"])
         );
+        assert_eq!(
+            report_json["operation_reports"].as_array().map(Vec::len),
+            Some(1)
+        );
+
+        let diff_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&diff).expect("diff reads")).expect("diff is JSON");
+        assert_eq!(diff_json["schema"], "pptx-compose.semantic_diff.v1");
+        assert_eq!(
+            diff_json["changed_parts"][0]["part"],
+            serde_json::json!("ppt/slides/slide1.xml")
+        );
+        assert_eq!(
+            diff_json["changed_parts"][0]["change_kind"],
+            serde_json::json!("modified_xml")
+        );
+        assert_ne!(
+            diff_json["changed_parts"][0]["before_checksum"],
+            diff_json["changed_parts"][0]["after_checksum"]
+        );
+        assert_eq!(diff_json["changes"].as_array().map(Vec::len), Some(1));
 
         fs::remove_dir_all(root).expect("test dir removes");
     }
