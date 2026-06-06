@@ -3,7 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use pptx_compose::core::error::{Error, ErrorCode};
+use pptx_compose::core::error::ErrorCode;
 
 use crate::{CliError, cli::GlobalArgs};
 
@@ -233,7 +233,7 @@ fn reject_aliases(path: &Path) -> Result<(), CliError> {
 }
 
 fn path_error(code: ErrorCode, message: impl Into<String>) -> CliError {
-    CliError(Error::new(code, message))
+    CliError::new(code, message)
 }
 
 fn path_error_with_source(
@@ -241,7 +241,7 @@ fn path_error_with_source(
     message: impl Into<String>,
     source: impl std::error::Error + Send + Sync + 'static,
 ) -> CliError {
-    CliError(Error::with_source(code, message, source))
+    CliError::with_source(code, message, source)
 }
 
 #[cfg(test)]
