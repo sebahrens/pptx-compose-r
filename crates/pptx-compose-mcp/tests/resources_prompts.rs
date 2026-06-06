@@ -1,10 +1,21 @@
 use std::str::FromStr;
 
 use pptx_compose_mcp::{
+    PptxServer,
     prompts::PromptRegistry,
     resources::{ResourceRegistry, ResourceUri},
     sessions::SessionStore,
 };
+use rmcp::{ClientHandler, ServiceExt, model::ClientInfo};
+
+#[derive(Clone, Debug, Default)]
+struct TestClient;
+
+impl ClientHandler for TestClient {
+    fn get_info(&self) -> ClientInfo {
+        ClientInfo::default()
+    }
+}
 
 #[tokio::test]
 async fn resources_and_prompts_match_072_contract() {
@@ -87,4 +98,64 @@ async fn resources_and_prompts_match_072_contract() {
         malformed.expect_err("malformed URI rejected").code(),
         pptx_compose::core::error::ErrorCode::InvalidInput
     );
+}
+
+#[tokio::test]
+async fn mcp_client_can_enumerate_and_read_072_resources_and_prompts() {
+    let (server_transport, client_transport) = tokio::io::duplex(16 * 1024);
+    let server_handle = tokio::spawn(async move {
+        let service = PptxServer::default()
+            .serve(server_transport)
+            .await
+            .expect("server starts");
+        service.waiting().await.expect("server runs");
+    });
+    let client = TestClient
+        .serve(client_transport)
+        .await
+        .expect("client starts");
+
+    let resources = client.list_resources(None).await.expect("resources list");
+    let resource_uris = resources
+        .resources
+        .iter()
+        .map(|resource| resource.raw.uri.as_str())
+        .collect::<Vec<_>>();
+    for uri in [
+        "pptx://schemas/agent-view/v1",
+        "pptx://schemas/patch/v1",
+        "pptx://schemas/patch-report/v1",
+        "pptx://schemas/error/v1",
+    ] {
+        assert!(resource_uris.contains(&uri), "missing resource {uri}");
+        let content = client
+            .read_resource(rmcp::model::ReadResourceRequestParams::new(uri))
+            .await
+            .unwrap_or_else(|error| panic!("resource {uri} reads: {error}"));
+        assert_eq!(content.contents.len(), 1);
+    }
+
+    let prompts = client.list_prompts(None).await.expect("prompts list");
+    let prompt_names = prompts
+        .prompts
+        .iter()
+        .map(|prompt| prompt.name.as_str())
+        .collect::<Vec<_>>();
+    for name in [
+        "inspect_deck",
+        "edit_deck_safely",
+        "replace_text_across_deck",
+        "add_image_to_slide",
+        "explain_validation_errors",
+    ] {
+        assert!(prompt_names.contains(&name), "missing prompt {name}");
+        let prompt = client
+            .get_prompt(rmcp::model::GetPromptRequestParams::new(name))
+            .await
+            .unwrap_or_else(|error| panic!("prompt {name} reads: {error}"));
+        assert_eq!(prompt.messages.len(), 1);
+    }
+
+    drop(client);
+    server_handle.await.expect("server task joins");
 }

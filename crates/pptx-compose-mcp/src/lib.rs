@@ -1,11 +1,20 @@
 #![deny(warnings)]
 
 use rmcp::{
-    Json, ServerHandler, ServiceExt, handler::server::router::tool::ToolRouter, model::ServerInfo,
+    ErrorData, Json, ServerHandler, ServiceExt,
+    handler::server::router::tool::ToolRouter,
+    model::{
+        AnnotateAble, GetPromptRequestParams, GetPromptResult, ListPromptsResult,
+        ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams, Prompt,
+        PromptMessage, PromptMessageRole, RawResource, ReadResourceRequestParams,
+        ReadResourceResult, Resource, ResourceContents, ServerInfo,
+    },
+    service::{RequestContext, RoleServer},
     tool, tool_handler, tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::str::FromStr;
 
 pub mod outputs;
 pub mod permissions;
@@ -15,9 +24,12 @@ pub mod sessions;
 pub mod tools;
 
 use pptx_compose::{
+    core::error::Error as CoreError,
     edit::patch::Patch,
     json::agent_view::{FindTextResult, FindTextScope, views::FindTextRequest},
 };
+use prompts::PromptRegistry;
+use resources::{ResourceRegistry, ResourceUri};
 use sessions::SessionStore;
 
 const RAW_GET_PART_XML: &str = "pptx_get_part_xml";
@@ -34,6 +46,8 @@ pub struct PptxServer {
     sessions: SessionStore,
     config: ServerConfig,
     permission_policy: permissions::PermissionPolicy,
+    resource_registry: ResourceRegistry,
+    prompt_registry: PromptRegistry,
     tool_router: ToolRouter<Self>,
 }
 
@@ -87,6 +101,8 @@ impl PptxServer {
             sessions,
             config,
             permission_policy,
+            resource_registry: ResourceRegistry::new(),
+            prompt_registry: PromptRegistry::new(),
             tool_router,
         }
     }
@@ -105,6 +121,36 @@ impl PptxServer {
 
     pub fn permission_policy(&self) -> &permissions::PermissionPolicy {
         &self.permission_policy
+    }
+
+    pub fn resource_registry(&self) -> &ResourceRegistry {
+        &self.resource_registry
+    }
+
+    pub fn prompt_registry(&self) -> &PromptRegistry {
+        &self.prompt_registry
+    }
+}
+
+fn mcp_error(error: CoreError) -> ErrorData {
+    ErrorData::invalid_params(error.to_string(), None)
+}
+
+fn mcp_resource(descriptor: resources::ResourceDescriptor) -> Resource {
+    RawResource::new(descriptor.uri, descriptor.name)
+        .with_title(descriptor.title)
+        .with_description(descriptor.description)
+        .with_mime_type(descriptor.mime_type)
+        .no_annotation()
+}
+
+fn mcp_prompt(descriptor: prompts::PromptDescriptor) -> Prompt {
+    Prompt::new(descriptor.name, Some(descriptor.description), None).with_title(descriptor.title)
+}
+
+fn mcp_prompt_message(message: prompts::PromptMessage) -> PromptMessage {
+    match message.role {
+        prompts::PromptRole::User => PromptMessage::new_text(PromptMessageRole::User, message.text),
     }
 }
 
@@ -666,12 +712,88 @@ impl ServerHandler for PptxServer {
         ServerInfo::new(
             rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
+                .enable_resources()
+                .enable_prompts()
                 .build(),
         )
         .with_server_info(rmcp::model::Implementation::new(
             "pptx-compose-mcp",
             env!("CARGO_PKG_VERSION"),
         ))
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult::with_all_items(
+            self.resource_registry
+                .list_resources(None)
+                .into_iter()
+                .map(mcp_resource)
+                .collect(),
+        ))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        let uri = ResourceUri::from_str(&request.uri).map_err(mcp_error)?;
+        let content = self
+            .resource_registry
+            .read_resource(&uri, &self.sessions)
+            .await
+            .map_err(mcp_error)?;
+        let text = serde_json::to_string(&content.content).map_err(|source| {
+            ErrorData::internal_error(
+                format!("Could not serialize resource JSON: {source}."),
+                None,
+            )
+        })?;
+
+        Ok(ReadResourceResult::new(vec![
+            ResourceContents::text(text, content.uri).with_mime_type(content.mime_type),
+        ]))
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        Ok(ListPromptsResult::with_all_items(
+            self.prompt_registry
+                .list_prompts()
+                .into_iter()
+                .map(mcp_prompt)
+                .collect(),
+        ))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, ErrorData> {
+        let messages = self
+            .prompt_registry
+            .build_messages(&request.name)
+            .map_err(mcp_error)?
+            .into_iter()
+            .map(mcp_prompt_message)
+            .collect();
+        Ok(GetPromptResult::new(messages))
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        Ok(ListResourceTemplatesResult::with_all_items(Vec::new()))
     }
 }
 
