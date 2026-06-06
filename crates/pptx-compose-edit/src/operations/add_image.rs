@@ -133,7 +133,8 @@ impl AddImage {
             )
             .with_location(self.location(None))
         })?;
-        let media_part = next_media_part_name(package.parts(), extension);
+        let media_part = next_media_part_name(package.parts(), extension)
+            .map_err(|error| error.with_location(self.location(None)))?;
         package
             .insert_zip_entry(media_part.zip_entry_name(), media.bytes)
             .map_err(|error| error.with_location(self.location(None)))?;

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    error::{Error, Result},
+    error::{Error, ErrorCode, Result},
     opc::{
         package::Package,
         part::PartStore,
@@ -34,18 +34,17 @@ impl MediaPartNameAllocator {
         Self::default()
     }
 
-    #[must_use]
-    pub fn next_media_part_name(&mut self, parts: &PartStore, ext: &str) -> PartName {
+    pub fn next_media_part_name(&mut self, parts: &PartStore, ext: &str) -> Result<PartName> {
         let extension = ext.to_ascii_lowercase();
+        validate_media_extension(extension.as_str())?;
         let next = next_media_index(parts, self.allocated.iter(), extension.as_str()) + 1;
-        let part_name = media_part_name(next, extension.as_str());
+        let part_name = media_part_name(next, extension.as_str())?;
         self.allocated.insert(part_name.clone());
-        part_name
+        Ok(part_name)
     }
 }
 
-#[must_use]
-pub fn next_media_part_name(parts: &PartStore, ext: &str) -> PartName {
+pub fn next_media_part_name(parts: &PartStore, ext: &str) -> Result<PartName> {
     MediaPartNameAllocator::new().next_media_part_name(parts, ext)
 }
 
@@ -161,9 +160,29 @@ fn media_index(part_name: &PartName, ext: &str) -> Option<u32> {
     index.parse().ok()
 }
 
-fn media_part_name(index: u32, ext: &str) -> PartName {
-    PartName::from_zip_entry(format!("ppt/media/image{index}.{ext}").as_str())
-        .expect("deterministic media part names are valid OPC part names")
+fn validate_media_extension(ext: &str) -> Result<()> {
+    if !ext.is_empty()
+        && ext
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    {
+        return Ok(());
+    }
+
+    Err(Error::new(
+        ErrorCode::UnsupportedMediaType,
+        "Media file extension must contain only ASCII lowercase letters and digits.",
+    ))
+}
+
+fn media_part_name(index: u32, ext: &str) -> Result<PartName> {
+    PartName::from_zip_entry(format!("ppt/media/image{index}.{ext}").as_str()).map_err(|source| {
+        Error::with_source(
+            ErrorCode::UnsupportedMediaType,
+            format!("Could not allocate media part name for extension `{ext}`."),
+            source,
+        )
+    })
 }
 
 fn is_media_part(part_name: &PartName) -> bool {
@@ -184,22 +203,42 @@ fn names_deterministically_and_dedups() {
         .insert_zip_entry("ppt/media/image2.png", b"different image bytes".to_vec())
         .expect("valid fixture part");
 
-    let first = next_media_part_name(&parts, "PNG");
-    let second = next_media_part_name(&parts, "png");
+    let first = next_media_part_name(&parts, "PNG").expect("valid extension");
+    let second = next_media_part_name(&parts, "png").expect("valid extension");
     assert_eq!(first.as_str(), "/ppt/media/image3.png");
     assert_eq!(first, second);
 
     let mut allocator = MediaPartNameAllocator::new();
     assert_eq!(
-        allocator.next_media_part_name(&parts, "png").as_str(),
+        allocator
+            .next_media_part_name(&parts, "png")
+            .expect("valid extension")
+            .as_str(),
         "/ppt/media/image3.png"
     );
     assert_eq!(
-        allocator.next_media_part_name(&parts, "png").as_str(),
+        allocator
+            .next_media_part_name(&parts, "png")
+            .expect("valid extension")
+            .as_str(),
         "/ppt/media/image4.png"
     );
 
     assert_eq!(dedup_lookup(&parts, &digest, false), None);
     let deduped = dedup_lookup(&parts, &digest, true).expect("matching part found");
     assert_eq!(deduped.as_str(), "/ppt/media/image1.png");
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_invalid_media_extensions_without_panicking() {
+    let parts = PartStore::new();
+    let mut allocator = MediaPartNameAllocator::new();
+
+    for extension in ["", "pn/g", "png ", ".png", "j%70g"] {
+        let error = allocator
+            .next_media_part_name(&parts, extension)
+            .expect_err("invalid extension rejected");
+        assert_eq!(error.code(), ErrorCode::UnsupportedMediaType);
+    }
 }

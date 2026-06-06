@@ -144,7 +144,8 @@ impl ReplaceImage {
             )
             .with_location(self.location(Some(target), None))
         })?;
-        let new_media_part = next_media_part_name(package.parts(), extension);
+        let new_media_part = next_media_part_name(package.parts(), extension)
+            .map_err(|error| error.with_location(self.location(Some(target), None)))?;
         package
             .insert_zip_entry(new_media_part.zip_entry_name(), media.bytes)
             .map_err(|error| error.with_location(self.location(Some(target), None)))?;
