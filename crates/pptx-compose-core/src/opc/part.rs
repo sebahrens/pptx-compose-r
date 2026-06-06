@@ -93,6 +93,17 @@ impl PartStore {
         self.parts.get_mut(index)
     }
 
+    pub fn remove(&mut self, name: &PartName) -> Option<Part> {
+        let index = self.by_name.remove(name)?;
+        let removed = self.parts.remove(index);
+        for stored_index in self.by_name.values_mut() {
+            if *stored_index > index {
+                *stored_index -= 1;
+            }
+        }
+        Some(removed)
+    }
+
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &Part> {
         self.parts.iter()
     }

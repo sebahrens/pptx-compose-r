@@ -80,6 +80,16 @@ impl ContentTypes {
         self.overrides.insert(part_name, content_type.into());
     }
 
+    pub fn remove_default(&mut self, extension: &str) -> bool {
+        self.defaults
+            .remove(&extension.to_ascii_lowercase())
+            .is_some()
+    }
+
+    pub fn remove_override(&mut self, part_name: &PartName) -> bool {
+        self.overrides.remove(part_name).is_some()
+    }
+
     pub fn to_xml(&self) -> Result<Vec<u8>> {
         write_document(
             &XmlDocument {
@@ -333,4 +343,21 @@ fn serializes_deterministically() {
 
     let reparsed = ContentTypes::parse(&first).expect("serialized content types parse");
     assert_eq!(reparsed, content_types);
+}
+
+#[cfg(test)]
+#[test]
+fn removes_defaults_and_overrides() {
+    let mut content_types = ContentTypes::new();
+    let media = PartName::from_zip_entry("/ppt/media/image1.png").expect("valid media part");
+
+    content_types.insert_default("PNG", "image/png");
+    content_types.insert_override(media.clone(), "image/png");
+
+    assert!(content_types.remove_default("png"));
+    assert!(content_types.remove_override(&media));
+    assert!(!content_types.remove_default("png"));
+    assert!(!content_types.remove_override(&media));
+    assert_eq!(content_types.default_for_ext("png"), None);
+    assert_eq!(content_types.override_for(&media), None);
 }

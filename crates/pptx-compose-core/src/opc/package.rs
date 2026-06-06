@@ -134,6 +134,13 @@ impl Package {
         self.insert_part(part)
     }
 
+    pub fn remove_part(&mut self, part_name: &PartName) -> Option<Part> {
+        let removed = self.parts.remove(part_name)?;
+        self.original_parts.remove(part_name);
+        self.dirty_parts.remove(part_name);
+        Some(removed)
+    }
+
     pub fn push_relationship(&mut self, relationship: Relationship) {
         self.relationships.push(relationship);
     }

@@ -122,9 +122,10 @@ impl ReplaceImage {
             .with_location(self.location(Some(target), None))
         })?;
 
-        relationship_target_part(package, &target.part, &embed_rel_id).map_err(|error| {
-            error.with_location(self.location(Some(target), Some(embed_rel_id.clone())))
-        })?;
+        let old_media_part = relationship_target_part(package, &target.part, &embed_rel_id)
+            .map_err(|error| {
+                error.with_location(self.location(Some(target), Some(embed_rel_id.clone())))
+            })?;
 
         let extension = extension_for_content_type(&self.content_type).ok_or_else(|| {
             Error::new(
@@ -159,7 +160,12 @@ impl ReplaceImage {
         let rels_part = rels_part_name_for(&target.part)?;
         package.mark_dirty(rels_part.clone());
         package.mark_dirty(new_media_part.clone());
+        let cleanup_content_type_changed =
+            cleanup_unreferenced_media_part(package, &old_media_part);
         if content_type_changed {
+            package.mark_dirty(content_types_part()?);
+        }
+        if cleanup_content_type_changed {
             package.mark_dirty(content_types_part()?);
         }
 
@@ -167,7 +173,7 @@ impl ReplaceImage {
             rels_part.zip_entry_name().to_owned(),
             new_media_part.zip_entry_name().to_owned(),
         ];
-        if content_type_changed {
+        if content_type_changed || cleanup_content_type_changed {
             changed_parts.push("[Content_Types].xml".to_owned());
         }
 
@@ -443,6 +449,58 @@ fn remove_attribute(element: &mut XmlElement, local_name: &str) {
         .retain(|attribute| attribute.name.local_name != local_name);
 }
 
+fn cleanup_unreferenced_media_part(package: &mut Package, media_part: &PartName) -> bool {
+    if image_relationship_ref_count(package, media_part) != 0 {
+        return false;
+    }
+
+    if package.remove_part(media_part).is_none() {
+        return false;
+    }
+
+    let mut changed = package.content_types_mut().remove_override(media_part);
+    if let Some(extension) = part_extension(media_part)
+        && content_type_default_is_unused(package, extension)
+    {
+        changed |= package.content_types_mut().remove_default(extension);
+    }
+    changed
+}
+
+fn image_relationship_ref_count(package: &Package, media_part: &PartName) -> usize {
+    package
+        .relationships()
+        .iter()
+        .filter(|relationship| {
+            relationship.target_mode == TargetMode::Internal
+                && relationship.rel_type == IMAGE_REL_TYPE
+                && relationship
+                    .resolved_target
+                    .as_ref()
+                    .is_some_and(|target| target == media_part)
+        })
+        .count()
+}
+
+fn content_type_default_is_unused(package: &Package, extension: &str) -> bool {
+    package.parts().iter().all(|part| {
+        if part_extension(part.name()) != Some(extension) {
+            return true;
+        }
+        package.content_types().override_for(part.name()).is_some()
+    })
+}
+
+fn part_extension(part_name: &PartName) -> Option<&str> {
+    let file_name = part_name.as_str().rsplit('/').next()?;
+    let (_, extension) = file_name.rsplit_once('.')?;
+    if extension.is_empty() {
+        None
+    } else {
+        Some(extension)
+    }
+}
+
 fn extension_for_content_type(content_type: &str) -> Option<&'static str> {
     match content_type {
         "image/png" => Some("png"),
@@ -660,11 +718,69 @@ pub mod retargets_not_shared {
             package.content_types().resolve(&new_media),
             Some("image/png")
         );
+        assert!(package.parts().get(&part("ppt/media/image1.png")).is_none());
         assert!(
             package
                 .dirty_parts()
                 .contains(&content_types_part().expect("valid part"))
         );
+    }
+
+    #[test]
+    fn unshared_retarget_removes_old_media_part_and_stale_override() {
+        let slide = part("ppt/slides/slide1.xml");
+        let old_media = part("ppt/media/image1.png");
+        let mut package = Package::new();
+        package
+            .insert_zip_entry(slide.zip_entry_name(), slide_xml("rId5").into_bytes())
+            .expect("slide inserted");
+        package
+            .insert_zip_entry(
+                "ppt/slides/_rels/slide1.xml.rels",
+                rels_xml("../media/image1.png", "rId5").into_bytes(),
+            )
+            .expect("slide rels inserted");
+        package
+            .insert_zip_entry(old_media.zip_entry_name(), one_by_one_png())
+            .expect("old media inserted");
+        package
+            .content_types_mut()
+            .insert_override(old_media.clone(), "image/png");
+        package.push_relationship(Relationship::internal(
+            RelationshipSource::Part(slide.clone()),
+            "rId5",
+            IMAGE_REL_TYPE,
+            "../media/image1.png",
+        ));
+
+        let operation = ReplaceImage {
+            operation_id: "op-1".to_owned(),
+            element_id: "slide-1:pic-1".to_owned(),
+            media_ref: "replacement".to_owned(),
+            content_type: "image/jpeg".to_owned(),
+            allow_shared_mutation: false,
+        };
+        let effects = operation
+            .apply(&mut package, &target(&slide), &jpeg_media_inputs())
+            .expect("image replacement retargets");
+
+        let new_media = part("ppt/media/image1.jpg");
+        assert_eq!(
+            effects.changed_parts,
+            vec![
+                "ppt/slides/_rels/slide1.xml.rels",
+                "ppt/media/image1.jpg",
+                "[Content_Types].xml"
+            ]
+        );
+        assert!(package.parts().get(&old_media).is_none());
+        assert_eq!(package.content_types().override_for(&old_media), None);
+        assert_eq!(package.content_types().default_for_ext("png"), None);
+        assert_eq!(
+            package.content_types().resolve(&new_media),
+            Some("image/jpeg")
+        );
+        assert_eq!(relationship_target(&package, &slide, "rId5"), new_media);
     }
 
     fn relationship_target(package: &Package, source: &PartName, rel_id: &str) -> PartName {
@@ -708,6 +824,20 @@ pub mod retargets_not_shared {
         MediaInputs::new(bindings)
     }
 
+    fn jpeg_media_inputs() -> MediaInputs {
+        let mut bindings = HashMap::new();
+        bindings.insert(
+            "replacement".to_owned(),
+            MediaBinding {
+                content_type: "image/jpeg".to_owned(),
+                declared_sha256: None,
+                declared_byte_length: None,
+                source: MediaSource::Bytes(jpeg_bytes()),
+            },
+        );
+        MediaInputs::new(bindings)
+    }
+
     fn part(name: &str) -> PartName {
         PartName::from_zip_entry(name).expect("valid part name")
     }
@@ -744,5 +874,9 @@ pub mod retargets_not_shared {
             b'D', b'R', 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00,
             0x00, 0x72, 0xb6, 0x0d, 0x24,
         ]
+    }
+
+    fn jpeg_bytes() -> Vec<u8> {
+        vec![0xff, 0xd8, 0xff, 0xe0, b'J', b'F', b'I', b'F', 0x00]
     }
 }
