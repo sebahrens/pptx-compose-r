@@ -3,13 +3,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::binary_encoding::{InlineBinaryPolicy, inline_payload};
+use crate::schemas::ValidationReport;
 
 pub mod pagination;
 pub mod views;
 
 use pagination::ViewMeta;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentView {
     pub schema: String,
@@ -22,6 +23,12 @@ pub struct AgentView {
     pub capabilities: Capabilities,
     pub presentation: PresentationView,
     pub slides: Vec<SlideView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<ImageView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation: Option<ValidationReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -476,6 +483,9 @@ pub mod binary {
                     image: Some(reference_image()),
                 }],
             }],
+            warnings: Vec::new(),
+            media: Vec::new(),
+            validation: None,
         };
 
         let json = serde_json::to_value(view).expect("agent view serializes");

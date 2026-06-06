@@ -7,7 +7,11 @@ use pptx_compose_edit::{
     },
 };
 use pptx_compose_json::{
-    agent_view::{AgentView, Capabilities, PresentationView, pagination::ViewMeta},
+    agent_view::{
+        AgentView, Capabilities, PresentationView,
+        pagination::ViewMeta,
+        views::{ViewMode, ViewRequest, build_view, package_from_pptx_bytes},
+    },
     schema_versions::{
         AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION, ERROR_SCHEMA, ERROR_VERSION, PATCH_REPORT_SCHEMA,
         PATCH_REPORT_VERSION, RESULT_SCHEMA, RESULT_VERSION, VALIDATION_REPORT_SCHEMA,
@@ -74,6 +78,76 @@ fn emitted_schema_rejects_out_of_schema_instance() {
     assert_schema_rejects(result_json_schema().expect("result schema emits"), instance);
 }
 
+#[test]
+fn all_agent_view_modes_validate_against_published_schema() {
+    let pkg = package_from_pptx_bytes(include_bytes!("../../../fixtures/minimal.pptx"))
+        .expect("fixture package parses");
+    let schema = agent_view_json_schema().expect("agent view schema emits");
+    let slide_detail = build_view(
+        &pkg,
+        ViewRequest {
+            mode: ViewMode::SlideDetail,
+            slide_id: Some("slide-1".to_owned()),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        },
+    )
+    .expect("slide_detail builds");
+    let element_id = slide_detail["slides"][0]["elements"][0]["id"]
+        .as_str()
+        .expect("fixture exposes an element")
+        .to_owned();
+
+    for request in [
+        ViewRequest {
+            mode: ViewMode::DeckSummary,
+            slide_id: None,
+            element_id: None,
+            cursor: None,
+            limit: None,
+        },
+        ViewRequest {
+            mode: ViewMode::SlidePage,
+            slide_id: None,
+            element_id: None,
+            cursor: None,
+            limit: None,
+        },
+        ViewRequest {
+            mode: ViewMode::SlideDetail,
+            slide_id: Some("slide-1".to_owned()),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        },
+        ViewRequest {
+            mode: ViewMode::ElementDetail,
+            slide_id: None,
+            element_id: Some(element_id),
+            cursor: None,
+            limit: None,
+        },
+        ViewRequest {
+            mode: ViewMode::MediaMetadata,
+            slide_id: None,
+            element_id: None,
+            cursor: None,
+            limit: None,
+        },
+        ViewRequest {
+            mode: ViewMode::ValidationReport,
+            slide_id: None,
+            element_id: None,
+            cursor: None,
+            limit: None,
+        },
+    ] {
+        let value = build_view(&pkg, request).expect("view mode builds");
+        assert_schema_accepts(schema.clone(), value);
+    }
+}
+
 fn assert_schema_accepts(schema: Value, instance: Value) {
     let validator = jsonschema::validator_for(&schema).expect("schema compiles");
     assert!(
@@ -116,6 +190,9 @@ fn agent_view() -> AgentView {
             slide_count: 0,
         },
         slides: Vec::new(),
+        warnings: Vec::new(),
+        media: Vec::new(),
+        validation: None,
     }
 }
 

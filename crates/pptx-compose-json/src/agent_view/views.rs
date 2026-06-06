@@ -34,7 +34,7 @@ use pptx_compose_core::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::{
     AgentView, Bounds, Capabilities, Editable, EditableSupport, ElementKind, ElementSelector,
@@ -46,7 +46,8 @@ use super::{
 use crate::{
     schema_versions::{AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION},
     schemas::{
-        FindingCategory, FindingCode, FindingView, JsonError, Severity, Summary, ValidationStatus,
+        FindingCategory, FindingCode, FindingView, JsonError, Severity, Summary, ValidationReport,
+        ValidationStatus,
     },
 };
 
@@ -116,12 +117,13 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
     };
 
     match req.mode {
-        ViewMode::DeckSummary => {
-            let view = context.agent_view(view_meta(mode, limit), 0, Vec::new(), scope_value(&req));
-            let mut value = to_value(view)?;
-            value["warnings"] = json!([]);
-            Ok(value)
-        }
+        ViewMode::DeckSummary => Ok(to_value(context.agent_view(
+            view_meta(mode, limit),
+            0,
+            Vec::new(),
+            scope_value(&req),
+            ViewPayload::default(),
+        ))?),
         ViewMode::SlidePage => {
             let (page, meta, omitted_count) =
                 paginate(&context.slides, limit, req.cursor.as_deref(), scope)?;
@@ -134,6 +136,7 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
                 omitted_count,
                 slides,
                 scope_value(&req),
+                ViewPayload::default(),
             ))?)
         }
         ViewMode::SlideDetail => {
@@ -158,6 +161,7 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
                 omitted_count,
                 vec![detail],
                 scope_value(&req),
+                ViewPayload::default(),
             ))?)
         }
         ViewMode::ElementDetail => {
@@ -192,15 +196,22 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
                 0,
                 vec![detail],
                 scope_value(&req),
+                ViewPayload::default(),
             ))?)
         }
         ViewMode::MediaMetadata => {
             let (page, meta, omitted_count) =
                 paginate(&context.media, limit, req.cursor.as_deref(), scope)?;
-            let mut value =
-                to_value(context.agent_view(meta, omitted_count, Vec::new(), scope_value(&req)))?;
-            value["media"] = Value::Array(page.into_iter().cloned().collect());
-            Ok(value)
+            Ok(to_value(context.agent_view(
+                meta,
+                omitted_count,
+                Vec::new(),
+                scope_value(&req),
+                ViewPayload {
+                    media: page.into_iter().cloned().collect(),
+                    ..ViewPayload::default()
+                },
+            ))?)
         }
         ViewMode::ValidationReport => {
             let (page, meta, omitted_count) = paginate(
@@ -211,10 +222,16 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
             )?;
             let mut validation = context.validation.clone();
             validation.findings = page.into_iter().cloned().collect();
-            let mut value =
-                to_value(context.agent_view(meta, omitted_count, Vec::new(), scope_value(&req)))?;
-            value["validation"] = to_value(validation)?;
-            Ok(value)
+            Ok(to_value(context.agent_view(
+                meta,
+                omitted_count,
+                Vec::new(),
+                scope_value(&req),
+                ViewPayload {
+                    validation: Some(validation),
+                    ..ViewPayload::default()
+                },
+            ))?)
         }
     }
 }
@@ -283,8 +300,8 @@ struct ViewContext {
     slide_count: u32,
     capabilities: Capabilities,
     slides: Vec<SlideProjection>,
-    media: Vec<Value>,
-    validation: ValidationProjection,
+    media: Vec<ImageView>,
+    validation: ValidationReport,
 }
 
 #[derive(Clone)]
@@ -293,11 +310,11 @@ struct SlideProjection {
     detail: SlideView,
 }
 
-#[derive(Clone, Serialize)]
-struct ValidationProjection {
-    status: ValidationStatus,
-    summary: Summary,
-    findings: Vec<FindingView>,
+#[derive(Default)]
+struct ViewPayload {
+    warnings: Vec<String>,
+    media: Vec<ImageView>,
+    validation: Option<ValidationReport>,
 }
 
 impl ViewContext {
@@ -305,11 +322,11 @@ impl ViewContext {
         let document_id = package_document_id(pkg.package())?;
         let revision = u32::try_from(revision::on_open().value())
             .map_err(|err| JsonError::Projection(err.to_string()))?;
-        let mut media = BTreeMap::<String, Value>::new();
+        let mut media = BTreeMap::<String, ImageView>::new();
         let slides = project_slides(pkg, &mut media)?;
-        let validation = project_validation(pkg.package());
         let slide_count = u32::try_from(pkg.slides().len())
             .map_err(|err| JsonError::Projection(err.to_string()))?;
+        let validation = project_validation(pkg.package(), &document_id, revision);
 
         Ok(Self {
             document_id,
@@ -333,6 +350,7 @@ impl ViewContext {
         omitted_count: u32,
         slides: Vec<SlideView>,
         scope: Cpj,
+        payload: ViewPayload,
     ) -> AgentView {
         AgentView {
             schema: AGENT_VIEW_SCHEMA.to_owned(),
@@ -348,6 +366,9 @@ impl ViewContext {
                 slide_count: self.slide_count,
             },
             slides,
+            warnings: payload.warnings,
+            media: payload.media,
+            validation: payload.validation,
         }
     }
 }
@@ -433,7 +454,7 @@ fn substring_by_char_span(text: &str, span: TextSpan) -> String {
 
 fn project_slides(
     pkg: &PptxPackage,
-    media: &mut BTreeMap<String, Value>,
+    media: &mut BTreeMap<String, ImageView>,
 ) -> Result<Vec<SlideProjection>, JsonError> {
     let mut slides = Vec::new();
     for slide in pkg.slides() {
@@ -503,7 +524,7 @@ fn collect_elements(
     slide_rels: &RelationshipSet,
     package: &Package,
     output: &mut Vec<ElementView>,
-    media: &mut BTreeMap<String, Value>,
+    media: &mut BTreeMap<String, ImageView>,
 ) -> Result<(), JsonError> {
     collect_elements_at(
         parent,
@@ -528,7 +549,7 @@ fn collect_elements_at(
     path_prefix: &[u32],
     group_path: &[u32],
     output: &mut Vec<ElementView>,
-    media: &mut BTreeMap<String, Value>,
+    media: &mut BTreeMap<String, ImageView>,
 ) -> Result<(), JsonError> {
     for (zero_based_index, child) in parent
         .children
@@ -583,7 +604,7 @@ fn project_element(
     core_kind: CoreElementKind,
     slide_rels: &RelationshipSet,
     package: &Package,
-    media: &mut BTreeMap<String, Value>,
+    media: &mut BTreeMap<String, ImageView>,
 ) -> Result<ElementView, JsonError> {
     let shape = read_shape(element, path.clone());
     let text = first_descendant(element, "txBody").map(project_text);
@@ -609,7 +630,7 @@ fn project_element(
                 };
                 media
                     .entry(image.media_part.clone())
-                    .or_insert_with(|| serde_json::to_value(&image).expect("ImageView serializes"));
+                    .or_insert_with(|| image.clone());
                 Some(image)
             }
             Ok(_) | Err(_) => None,
@@ -686,9 +707,13 @@ fn project_text(tx_body: &XmlElement) -> TextView {
     }
 }
 
-fn project_validation(package: &Package) -> ValidationProjection {
+fn project_validation(package: &Package, document_id: &str, revision: u32) -> ValidationReport {
     let outcome = validate_package(package, ValidationMode::NoEdit);
-    ValidationProjection {
+    ValidationReport {
+        schema: crate::schema_versions::VALIDATION_REPORT_SCHEMA.to_owned(),
+        version: crate::schema_versions::VALIDATION_REPORT_VERSION,
+        document_id: document_id.to_owned(),
+        revision,
         status: match outcome.status {
             pptx_compose_core::validation::ValidationStatus::Valid => ValidationStatus::Valid,
             pptx_compose_core::validation::ValidationStatus::Invalid => ValidationStatus::Invalid,
