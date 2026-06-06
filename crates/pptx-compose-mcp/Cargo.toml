@@ -6,7 +6,12 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[bin]]
+name = "pptx-compose-mcp"
+path = "src/main.rs"
+
 [dependencies]
+clap.workspace = true
 pptx-compose = { path = "../pptx-compose" }
 rmcp = { workspace = true, features = ["schemars", "transport-io"] }
 schemars.workspace = true

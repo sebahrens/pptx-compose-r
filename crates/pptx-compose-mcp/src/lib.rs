@@ -464,9 +464,11 @@ impl ServerHandler for PptxServer {
 }
 
 pub async fn run() -> Result<(), rmcp::service::ServerInitializeError> {
-    let service = PptxServer::default()
-        .serve(rmcp::transport::io::stdio())
-        .await?;
+    run_server(PptxServer::default()).await
+}
+
+pub async fn run_server(server: PptxServer) -> Result<(), rmcp::service::ServerInitializeError> {
+    let service = server.serve(rmcp::transport::io::stdio()).await?;
     service
         .waiting()
         .await

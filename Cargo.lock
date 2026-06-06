@@ -596,6 +596,7 @@ dependencies = [
 name = "pptx-compose-mcp"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "pptx-compose",
  "rmcp",
  "schemars",
