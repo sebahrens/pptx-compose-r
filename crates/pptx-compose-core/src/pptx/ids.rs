@@ -38,9 +38,24 @@ pub fn index_sp_tree(sp_tree: &XmlElement) -> Vec<(SpTreePath, ElementKind)> {
 }
 
 #[must_use]
+pub fn slide_agent_id(presentation_order_index: usize) -> String {
+    format!("slide-{}", presentation_order_index + 1)
+}
+
+#[must_use]
 pub fn agent_element_id(slide_id: &str, kind: ElementKind, path: &SpTreePath) -> String {
     let key = dotted_path(&path.sp_tree_path);
     format!("{}:{}-{}", slide_id, kind.agent_prefix(), key)
+}
+
+#[must_use]
+pub fn paragraph_agent_id(element_id: &str, p_index: usize) -> String {
+    format!("{element_id}:p{p_index}")
+}
+
+#[must_use]
+pub fn run_agent_id(paragraph_id: &str, r_index: usize) -> String {
+    format!("{paragraph_id}:r{r_index}")
 }
 
 fn walk_children(
@@ -154,4 +169,31 @@ fn sp_tree_indexing() {
         agent_element_id("slide-1", nested_picture.1, &nested_picture.0),
         "slide-1:pic-3.1"
     );
+}
+
+#[cfg(test)]
+#[test]
+fn agent_id_derivation() {
+    let slide_id = slide_agent_id(1);
+    assert_eq!(slide_id, "slide-2");
+
+    let element_path = SpTreePath {
+        sp_tree_path: vec![4],
+        group_path: Vec::new(),
+    };
+    let element_id = agent_element_id(&slide_id, ElementKind::Shape, &element_path);
+    assert_eq!(element_id, "slide-2:shape-4");
+
+    let paragraph_id = paragraph_agent_id(&element_id, 0);
+    assert_eq!(paragraph_id, "slide-2:shape-4:p0");
+
+    let child_names = ["r", "br", "r"];
+    let second_run_index = child_names
+        .iter()
+        .filter(|name| **name == "r")
+        .enumerate()
+        .find_map(|(run_index, name)| (*name == "r" && run_index == 1).then_some(run_index))
+        .expect("fixture contains second run");
+    let run_id = run_agent_id(&paragraph_id, second_run_index);
+    assert_eq!(run_id, "slide-2:shape-4:p0:r1");
 }
