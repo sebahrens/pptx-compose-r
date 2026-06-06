@@ -23,6 +23,50 @@ bd close <id>         # Complete work
 bd dolt push          # Push beads data to remote
 ```
 
+## Using the pptx-compose binaries
+
+The Rust agent-facing binaries are `pptx-compose` for CLI workflows and
+`pptx-compose-mcp` for the MCP server. The normative contracts are
+[`specs/071-cli-agent-contract.md`](specs/071-cli-agent-contract.md) and
+[`specs/072-mcp-server-contract.md`](specs/072-mcp-server-contract.md); check
+those specs before inventing command shapes or MCP tool behavior.
+
+For CLI edits, use the bounded V1 agent flow:
+
+```bash
+pptx-compose --version
+pptx-compose inspect INPUT.pptx --format agent-json --output deck.view.json --report inspect.report.json --json-errors
+pptx-compose apply INPUT.pptx PATCH.json --dry-run --media-manifest media.json --report dry-run.report.json --diff diff.json --json-errors
+pptx-compose apply INPUT.pptx PATCH.json --media-manifest media.json --output OUTPUT.pptx --report apply.report.json --json-errors
+pptx-compose validate OUTPUT.pptx --report validation.json --json-errors
+```
+
+`inspect`, `validate`, and `apply --dry-run` are read-only. `apply --output`
+is the CLI export/write step; it must validate edited output before the final
+write by default and must not overwrite existing files unless `--overwrite` is
+explicit. Agents performing V1 edits must use `inspect`/`apply`, not the legacy
+`to-json`, `to-pptx`, or `convert` compatibility commands.
+
+CLI discipline: primary machine JSON goes to stdout or the explicit output path;
+human progress and logs go to stderr; commands must not mix prose into JSON
+streams. Use `--json-errors` for automation: failed commands then emit exactly
+one JSON error envelope to stderr. Exit codes are coarse buckets, so branch on
+the stable `error.code` field from the JSON envelope, not on the exit code alone.
+
+Launch the MCP server over stdio with:
+
+```bash
+pptx-compose-mcp --workspace DIR --temp-dir DIR
+```
+
+The MCP flow is `pptx_open` -> scoped inspection tools such as
+`pptx_get_document_summary`, `pptx_list_slides`, and `pptx_get_slide` ->
+`pptx_validate_patch` -> `pptx_apply_patch` -> `pptx_export` -> `pptx_close`.
+Mutating MCP tools require `session_id` plus `expected_revision` or a patch
+`base_revision`; stale revisions return the `stale_patch` error code. Stage
+media through `pptx_import_media` handles, and keep raw XML tools disabled unless
+explicitly debugging unsupported content.
+
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
