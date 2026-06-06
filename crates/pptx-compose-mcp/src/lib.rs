@@ -189,6 +189,7 @@ pub struct OpenInput {
 #[serde(deny_unknown_fields)]
 pub struct ImportMediaInput {
     pub session_id: String,
+    pub expected_revision: u64,
     pub media_path: Option<String>,
     pub inline: Option<InlineMediaInput>,
     pub content_type: String,
@@ -237,7 +238,7 @@ pub struct ExportInput {
     pub session_id: String,
     #[serde(default)]
     pub client_request_id: Option<String>,
-    pub expected_revision: Option<u64>,
+    pub expected_revision: u64,
     pub output_path: Option<String>,
     #[serde(default)]
     pub inline: bool,
@@ -671,7 +672,12 @@ impl PptxServer {
                     .map_err(|error| outputs::map_error(error.into_core_error()))?;
                 let handle = self
                     .sessions
-                    .import_media_path(&input.session_id, media_path, &input.content_type)
+                    .import_media_path(
+                        &input.session_id,
+                        input.expected_revision,
+                        media_path,
+                        &input.content_type,
+                    )
                     .map_err(outputs::map_error)?;
                 Ok(Json(outputs::ImportMediaOutput::imported(handle)))
             }
@@ -679,7 +685,12 @@ impl PptxServer {
                 let bytes = decode_inline_media(&inline).map_err(outputs::map_error)?;
                 let handle = self
                     .sessions
-                    .import_media_bytes(&input.session_id, bytes, &input.content_type)
+                    .import_media_bytes(
+                        &input.session_id,
+                        input.expected_revision,
+                        bytes,
+                        &input.content_type,
+                    )
                     .map_err(outputs::map_error)?;
                 Ok(Json(outputs::ImportMediaOutput::imported(handle)))
             }
@@ -1046,6 +1057,7 @@ mod tests {
             .pptx_import_media(rmcp::handler::server::wrapper::Parameters(
                 ImportMediaInput {
                     session_id: opened.session_id.clone(),
+                    expected_revision: opened.revision,
                     media_path: None,
                     inline: Some(InlineMediaInput {
                         encoding: "base64".to_owned(),
@@ -1072,6 +1084,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn import_media_rejects_stale_revision() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+        server
+            .sessions()
+            .record_apply(&opened.session_id, opened.revision, false, true)
+            .expect("test revision increments");
+
+        let result = server
+            .pptx_import_media(rmcp::handler::server::wrapper::Parameters(
+                ImportMediaInput {
+                    session_id: opened.session_id.clone(),
+                    expected_revision: opened.revision,
+                    media_path: None,
+                    inline: Some(InlineMediaInput {
+                        encoding: "base64".to_owned(),
+                        data: ONE_BY_ONE_PNG_BASE64.to_owned(),
+                    }),
+                    content_type: "image/png".to_owned(),
+                },
+            ))
+            .await;
+
+        let Err(error) = result else {
+            panic!("stale import_media revision is rejected");
+        };
+        let envelope = error
+            .structured_content
+            .expect("stale import_media error has structured content");
+
+        assert_eq!(error.is_error, Some(true));
+        assert_eq!(envelope["error"]["code"], ErrorCode::StalePatch.as_str());
+        assert_eq!(envelope["error"]["location"]["current_revision"], 2);
+        assert!(
+            server
+                .sessions()
+                .get(&opened.session_id)
+                .expect("session remains open")
+                .media
+                .is_empty(),
+            "stale import does not stage media"
+        );
+    }
+
+    #[tokio::test]
     async fn import_media_rejects_inline_content_type_mismatch() {
         let server = PptxServer::default();
         let opened = open_fixture_session(&server);
@@ -1080,6 +1137,7 @@ mod tests {
             .pptx_import_media(rmcp::handler::server::wrapper::Parameters(
                 ImportMediaInput {
                     session_id: opened.session_id,
+                    expected_revision: opened.revision,
                     media_path: None,
                     inline: Some(InlineMediaInput {
                         encoding: "base64".to_owned(),
@@ -1102,6 +1160,38 @@ mod tests {
             envelope["error"]["code"],
             ErrorCode::UnsupportedMediaType.as_str()
         );
+    }
+
+    #[tokio::test]
+    async fn export_rejects_stale_revision() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+        server
+            .sessions()
+            .record_apply(&opened.session_id, opened.revision, false, true)
+            .expect("test revision increments");
+
+        let result = server
+            .pptx_export(rmcp::handler::server::wrapper::Parameters(ExportInput {
+                session_id: opened.session_id,
+                client_request_id: None,
+                expected_revision: opened.revision,
+                output_path: None,
+                inline: true,
+                overwrite: false,
+            }))
+            .await;
+
+        let Err(error) = result else {
+            panic!("stale export revision is rejected");
+        };
+        let envelope = error
+            .structured_content
+            .expect("stale export error has structured content");
+
+        assert_eq!(error.is_error, Some(true));
+        assert_eq!(envelope["error"]["code"], ErrorCode::StalePatch.as_str());
+        assert_eq!(envelope["error"]["location"]["current_revision"], 2);
     }
 
     #[test]
@@ -1142,9 +1232,14 @@ mod tests {
             &["cursor", "limit"],
         );
         assert_tool_schema_fields(
+            "pptx_import_media",
+            &["session_id", "expected_revision", "content_type"],
+            &["media_path", "inline"],
+        );
+        assert_tool_schema_fields(
             "pptx_export",
-            &["session_id"],
-            &["expected_revision", "output_path", "overwrite"],
+            &["session_id", "expected_revision"],
+            &["output_path", "overwrite"],
         );
     }
 

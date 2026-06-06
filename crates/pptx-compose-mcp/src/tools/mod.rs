@@ -225,7 +225,7 @@ async fn tools_read_apply_and_export_mutated_deck() {
             crate::ExportInput {
                 session_id: opened.session_id,
                 client_request_id: Some("tool-export-request".to_owned()),
-                expected_revision: Some(2),
+                expected_revision: 2,
                 output_path: None,
                 inline: true,
                 overwrite: false,
@@ -270,7 +270,7 @@ async fn export_requires_explicit_inline_opt_in_without_path() {
             crate::ExportInput {
                 session_id: opened.session_id,
                 client_request_id: None,
-                expected_revision: Some(opened.revision),
+                expected_revision: opened.revision,
                 output_path: None,
                 inline: false,
                 overwrite: false,
@@ -306,7 +306,7 @@ async fn inline_export_enforces_configured_byte_limit() {
             crate::ExportInput {
                 session_id: opened.session_id,
                 client_request_id: None,
-                expected_revision: Some(opened.revision),
+                expected_revision: opened.revision,
                 output_path: None,
                 inline: true,
                 overwrite: false,

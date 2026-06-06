@@ -345,6 +345,7 @@ async fn mcp_client_can_drive_protocol_tools_and_structured_errors() {
         "pptx_import_media",
         json!({
             "session_id": session_id,
+            "expected_revision": revision,
             "media_path": null,
             "inline": {
                 "encoding": "base64",

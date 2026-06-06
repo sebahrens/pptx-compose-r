@@ -269,6 +269,7 @@ impl SessionStore {
     pub fn import_media_path(
         &self,
         session_id: &str,
+        expected_revision: u64,
         media_path: impl AsRef<Path>,
         content_type: &str,
     ) -> Result<MediaHandle> {
@@ -280,12 +281,13 @@ impl SessionStore {
                 source,
             )
         })?;
-        self.import_media_bytes(session_id, bytes, content_type)
+        self.import_media_bytes(session_id, expected_revision, bytes, content_type)
     }
 
     pub fn import_media_bytes(
         &self,
         session_id: &str,
+        expected_revision: u64,
         bytes: Vec<u8>,
         content_type: &str,
     ) -> Result<MediaHandle> {
@@ -295,6 +297,13 @@ impl SessionStore {
         let session = sessions
             .get_mut(session_id)
             .ok_or_else(|| missing_session(session_id))?;
+        if session.revision != expected_revision {
+            return Err(stale_revision_error(
+                session_id,
+                session.revision,
+                expected_revision,
+            ));
+        }
         let next_mem = session.mem_bytes.checked_add(byte_length).ok_or_else(|| {
             Error::resource_limit_exceeded("Session memory accounting overflowed.")
         })?;
@@ -433,25 +442,33 @@ impl SessionStore {
         Ok(session.changed_parts)
     }
 
-    pub fn export_bytes(
-        &self,
-        session_id: &str,
-        expected_revision: Option<u64>,
-    ) -> Result<Vec<u8>> {
+    pub fn export_bytes(&self, session_id: &str, expected_revision: u64) -> Result<Vec<u8>> {
         let session = self.get(session_id)?;
-        check_optional_revision(session_id, session.revision, expected_revision)?;
+        if session.revision != expected_revision {
+            return Err(stale_revision_error(
+                session_id,
+                session.revision,
+                expected_revision,
+            ));
+        }
         session.package.write_vec()
     }
 
     pub fn export_path(
         &self,
         session_id: &str,
-        expected_revision: Option<u64>,
+        expected_revision: u64,
         path: impl AsRef<Path>,
         overwrite: bool,
     ) -> Result<u64> {
         let session = self.get(session_id)?;
-        check_optional_revision(session_id, session.revision, expected_revision)?;
+        if session.revision != expected_revision {
+            return Err(stale_revision_error(
+                session_id,
+                session.revision,
+                expected_revision,
+            ));
+        }
         session.package.write_path_with_options(
             path,
             WriteOptions {
@@ -578,23 +595,6 @@ fn stale_document_error(session_id: &str, current_revision: u64) -> Error {
         current_revision: Some(current_revision),
         ..ErrorLocation::default()
     })
-}
-
-fn check_optional_revision(
-    session_id: &str,
-    current_revision: u64,
-    expected_revision: Option<u64>,
-) -> Result<()> {
-    if let Some(expected_revision) = expected_revision
-        && current_revision != expected_revision
-    {
-        return Err(stale_revision_error(
-            session_id,
-            current_revision,
-            expected_revision,
-        ));
-    }
-    Ok(())
 }
 
 fn unique_prefixed_id(prefix: &str) -> String {
@@ -838,7 +838,12 @@ fn imported_media_resolves_from_session_media_inputs() {
     let bytes = one_by_one_png_bytes();
 
     let handle = store
-        .import_media_bytes(&opened.session_id, bytes.clone(), "image/png")
+        .import_media_bytes(
+            &opened.session_id,
+            opened.revision,
+            bytes.clone(),
+            "image/png",
+        )
         .expect("media imports");
     let inputs = store
         .media_inputs(&opened.session_id)
