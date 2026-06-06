@@ -1,7 +1,7 @@
 use crate::{
     error::{Error, Result},
     opc::{
-        package::Package,
+        package::{Package, SlideIdEntry},
         part_name::PartName,
         relationships::{Relationship, RelationshipSource, TargetMode, resolve_internal_target},
     },
@@ -127,6 +127,49 @@ impl Presentation {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PresentationMetadata {}
 
+pub fn hydrate_package_slide_ids(package: &mut Package) {
+    let slide_ids = read_package_slide_ids(package).unwrap_or_default();
+    package.replace_slide_ids(slide_ids);
+}
+
+fn read_package_slide_ids(package: &Package) -> Result<Vec<SlideIdEntry>> {
+    let part_name = locate_presentation_part(package)?;
+    let Some(part) = package.parts().get(&part_name) else {
+        return Ok(Vec::new());
+    };
+    let document = parse_document(part.bytes())?;
+    let Some(root) = document.root_element() else {
+        return Ok(Vec::new());
+    };
+    let Some(slide_id_list) = child_element(root, "sldIdLst") else {
+        return Ok(Vec::new());
+    };
+
+    let mut slide_ids = Vec::new();
+    for child in slide_id_list
+        .children
+        .iter()
+        .filter_map(|node| node.as_element())
+    {
+        if child.name.local_name != "sldId" {
+            continue;
+        }
+        let Some(slide_id) = optional_attr(child, "id") else {
+            continue;
+        };
+        let relationship_id = optional_prefixed_attr(child, Some("r"), "id").map(str::to_owned);
+        let part = relationship_id.as_deref().and_then(|relationship_id| {
+            resolve_slide_part(package, &part_name, relationship_id).ok()
+        });
+        slide_ids.push(SlideIdEntry {
+            slide_id: slide_id.to_owned(),
+            relationship_id,
+            part,
+        });
+    }
+    Ok(slide_ids)
+}
+
 fn locate_presentation_part(package: &Package) -> Result<PartName> {
     let relationship = package
         .relationships()
@@ -207,17 +250,20 @@ fn parse_slide_id(value: &str) -> Result<SlideId> {
 }
 
 fn required_attr<'a>(element: &'a XmlElement, local_name: &str) -> Result<&'a str> {
+    optional_attr(element, local_name).ok_or_else(|| {
+        Error::unsupported_package(format!(
+            "Element {} is missing required attribute {local_name}.",
+            element.name.raw
+        ))
+    })
+}
+
+fn optional_attr<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a str> {
     element
         .attributes
         .iter()
         .find(|attribute| attribute.name.local_name == local_name)
         .map(|attribute| attribute.value.as_str())
-        .ok_or_else(|| {
-            Error::unsupported_package(format!(
-                "Element {} is missing required attribute {local_name}.",
-                element.name.raw
-            ))
-        })
 }
 
 fn required_prefixed_attr<'a>(
@@ -225,6 +271,23 @@ fn required_prefixed_attr<'a>(
     prefix: Option<&str>,
     local_name: &str,
 ) -> Result<&'a str> {
+    optional_prefixed_attr(element, prefix, local_name).ok_or_else(|| {
+        let qualified_name = prefix.map_or_else(
+            || local_name.to_owned(),
+            |prefix| format!("{prefix}:{local_name}"),
+        );
+        Error::unsupported_package(format!(
+            "Element {} is missing required attribute {qualified_name}.",
+            element.name.raw
+        ))
+    })
+}
+
+fn optional_prefixed_attr<'a>(
+    element: &'a XmlElement,
+    prefix: Option<&str>,
+    local_name: &str,
+) -> Option<&'a str> {
     element
         .attributes
         .iter()
@@ -232,16 +295,6 @@ fn required_prefixed_attr<'a>(
             attribute.name.prefix.as_deref() == prefix && attribute.name.local_name == local_name
         })
         .map(|attribute| attribute.value.as_str())
-        .ok_or_else(|| {
-            let qualified_name = prefix.map_or_else(
-                || local_name.to_owned(),
-                |prefix| format!("{prefix}:{local_name}"),
-            );
-            Error::unsupported_package(format!(
-                "Element {} is missing required attribute {qualified_name}.",
-                element.name.raw
-            ))
-        })
 }
 
 #[cfg(test)]
@@ -296,6 +349,51 @@ fn slide_order_from_sldidlst() {
     assert_eq!(slides[2].agent_id(), "slide-3");
     assert_eq!(slides[2].id.value(), 200);
     assert_eq!(slides[2].part_name.as_str(), "/custom/slides/slide2.xml");
+}
+
+#[cfg(test)]
+#[test]
+fn hydrates_package_slide_ids_from_sldidlst() {
+    let mut package = Package::new();
+    insert(&mut package, "custom/slides/slide3.xml", b"<p:sld/>");
+    insert(&mut package, "custom/slides/slide1.xml", b"<p:sld/>");
+    insert(&mut package, "custom/presentation.xml", presentation_xml());
+
+    let presentation_part = part("custom/presentation.xml");
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        OFFICE_DOCUMENT_REL_TYPE,
+        "custom/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part.clone()),
+        "rSlideA",
+        SLIDE_REL_TYPE,
+        "slides/slide3.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlideB",
+        SLIDE_REL_TYPE,
+        "slides/slide1.xml",
+    ));
+
+    hydrate_package_slide_ids(&mut package);
+
+    assert_eq!(package.slide_ids().len(), 3);
+    assert_eq!(package.slide_ids()[0].slide_id, "300");
+    assert_eq!(
+        package.slide_ids()[0].part.as_ref().map(PartName::as_str),
+        Some("/custom/slides/slide3.xml")
+    );
+    assert_eq!(package.slide_ids()[1].slide_id, "100");
+    assert_eq!(
+        package.slide_ids()[1].relationship_id.as_deref(),
+        Some("rSlideB")
+    );
+    assert_eq!(package.slide_ids()[2].slide_id, "200");
+    assert_eq!(package.slide_ids()[2].part, None);
 }
 
 #[cfg(test)]

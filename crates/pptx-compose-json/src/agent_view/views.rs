@@ -7,6 +7,7 @@ use pptx_compose_core::{
         part_name::PartName,
         relationships::{RelationshipSet, RelationshipSource},
     },
+    pptx::presentation as core_presentation,
     pptx::{
         ids::{ElementKind as CoreElementKind, SpTreePath, agent_element_id},
         picture::read_picture,
@@ -966,6 +967,7 @@ fn package_from_entries(entries: &[RawEntry]) -> Result<Package, JsonError> {
     }
     hydrate_content_types(&mut package)?;
     hydrate_relationships(&mut package)?;
+    core_presentation::hydrate_package_slide_ids(&mut package);
     Ok(package)
 }
 

@@ -169,6 +169,27 @@ fn no_edit_rezip_preserves_canonical_document_id() {
 }
 
 #[test]
+fn validation_reports_duplicate_slide_ids_from_real_package() {
+    let bytes = duplicate_slide_id_deck();
+    let document = PresentationDocument::from_bytes(&bytes).expect("duplicate-id deck opens");
+
+    let validation = document.validate().expect("validation report builds");
+
+    assert_eq!(
+        validation.status,
+        pptx_compose::json::schemas::ValidationStatus::Invalid
+    );
+    let finding = validation
+        .findings
+        .iter()
+        .find(|finding| finding.code == pptx_compose::json::schemas::FindingCode::DuplicateSlideId)
+        .expect("duplicate slide id finding is present");
+    assert_eq!(finding.location["slide_id"], "256");
+    assert_eq!(finding.location["relationship_id"], "rId1");
+    assert_eq!(finding.location["part"], "ppt/slides/slide1.xml");
+}
+
+#[test]
 fn zip_directory_entries_do_not_affect_identity_or_validation_and_are_preserved() {
     let without_dirs = text_deck();
     let with_dirs = text_deck_with_directories();
@@ -698,6 +719,25 @@ fn text_deck() -> Vec<u8> {
     )
 }
 
+fn duplicate_slide_id_deck() -> Vec<u8> {
+    zip_entries(
+        [
+            ("[Content_Types].xml", content_types().as_bytes()),
+            ("_rels/.rels", root_rels().as_bytes()),
+            (
+                "ppt/presentation.xml",
+                presentation_with_duplicate_slide_ids().as_bytes(),
+            ),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", text_slide().as_bytes()),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
 fn text_deck_with_directories() -> Vec<u8> {
     let mut bytes = Vec::new();
     {
@@ -762,6 +802,14 @@ fn presentation() -> String {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>"#
+        .to_owned()
+}
+
+fn presentation_with_duplicate_slide_ids() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
 </p:presentation>"#
         .to_owned()
 }

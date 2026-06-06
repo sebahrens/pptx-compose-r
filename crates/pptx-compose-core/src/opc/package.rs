@@ -149,6 +149,10 @@ impl Package {
         self.slide_ids.push(slide_id);
     }
 
+    pub fn replace_slide_ids(&mut self, slide_ids: Vec<SlideIdEntry>) {
+        self.slide_ids = slide_ids;
+    }
+
     pub fn mark_dirty(&mut self, part_name: PartName) {
         self.dirty_parts.insert(part_name);
     }

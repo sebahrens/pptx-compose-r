@@ -611,6 +611,7 @@ fn package_from_entries_with_limits(
 
     hydrate_content_types(&mut package, resource_limits)?;
     hydrate_relationships(&mut package, resource_limits)?;
+    core_presentation::hydrate_package_slide_ids(&mut package);
     Ok(package)
 }
 
