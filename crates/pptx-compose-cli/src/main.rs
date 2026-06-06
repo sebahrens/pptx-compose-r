@@ -2,13 +2,15 @@
 
 mod cli;
 mod exit;
+mod output;
 mod permissions;
 
 use clap::Parser;
 use cli::{Cli, Commands, MediaCmd};
 use exit::exit_code_for;
+use output::OutputSink;
 use permissions::{PathIntent, PermissionContext};
-use pptx_compose::core::error::{Error, ErrorCode};
+use pptx_compose::core::error::{Error, ErrorCode, ErrorDetails};
 
 fn main() {
     let cli = match Cli::try_parse() {
@@ -19,8 +21,12 @@ fn main() {
         }
     };
 
+    let sink = OutputSink::from_global_args(&cli.global);
     if let Err(error) = run(cli) {
-        eprintln!("{error}");
+        if let Err(emit_error) = sink.emit_error(&error) {
+            eprintln!("{emit_error}");
+            std::process::exit(exit::WRITE_FAILURE);
+        }
         std::process::exit(exit_code_for(&error));
     }
     std::process::exit(exit::SUCCESS);
@@ -161,8 +167,19 @@ impl CliError {
         Self::new(ErrorCode::UnsupportedEdit, message)
     }
 
+    fn write_with_source(
+        message: impl Into<String>,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::with_source(ErrorCode::WriteFailed, message, source)
+    }
+
     const fn code(&self) -> ErrorCode {
         self.error.code()
+    }
+
+    fn details(&self) -> &ErrorDetails {
+        self.error.details()
     }
 
     const fn invalid_input_cause(&self) -> Option<InvalidInputCause> {
