@@ -1,9 +1,11 @@
 #![deny(warnings)]
 
 use rmcp::{
-    ServerHandler, ServiceExt, handler::server::router::tool::ToolRouter, model::ServerInfo, tool,
-    tool_handler, tool_router,
+    Json, ServerHandler, ServiceExt, handler::server::router::tool::ToolRouter, model::ServerInfo,
+    tool, tool_handler, tool_router,
 };
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 pub mod outputs;
 pub mod permissions;
@@ -26,6 +28,7 @@ pub struct ServerConfig {
 pub struct PptxServer {
     sessions: SessionStore,
     config: ServerConfig,
+    permission_policy: permissions::PermissionPolicy,
     tool_router: ToolRouter<Self>,
 }
 
@@ -41,10 +44,34 @@ impl PptxServer {
     }
 
     pub fn with_config(config: ServerConfig) -> Self {
-        Self::with_session_store(SessionStore, config)
+        Self::with_session_store_and_permissions(
+            SessionStore,
+            config,
+            permissions::PermissionPolicy::default(),
+        )
     }
 
     pub fn with_session_store(sessions: SessionStore, config: ServerConfig) -> Self {
+        Self::with_session_store_and_permissions(
+            sessions,
+            config,
+            permissions::PermissionPolicy::default(),
+        )
+    }
+
+    pub fn with_permissions(permission_policy: permissions::PermissionPolicy) -> Self {
+        Self::with_session_store_and_permissions(
+            SessionStore,
+            ServerConfig::default(),
+            permission_policy,
+        )
+    }
+
+    pub fn with_session_store_and_permissions(
+        sessions: SessionStore,
+        config: ServerConfig,
+        permission_policy: permissions::PermissionPolicy,
+    ) -> Self {
         let mut tool_router = Self::build_tool_router();
         if !config.enable_raw_xml_tools {
             tool_router.disable_route(RAW_GET_PART_XML);
@@ -54,6 +81,7 @@ impl PptxServer {
         Self {
             sessions,
             config,
+            permission_policy,
             tool_router,
         }
     }
@@ -69,6 +97,30 @@ impl PptxServer {
     pub fn tool_routes(&self) -> &ToolRouter<Self> {
         &self.tool_router
     }
+
+    pub fn permission_policy(&self) -> &permissions::PermissionPolicy {
+        &self.permission_policy
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenInput {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportMediaInput {
+    pub media_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExportInput {
+    pub output_path: Option<String>,
+    #[serde(default)]
+    pub overwrite: bool,
 }
 
 #[tool_router(router = build_tool_router)]
@@ -84,8 +136,15 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_open(&self) -> rmcp::Json<outputs::OpenOutput> {
-        rmcp::Json(outputs::OpenOutput::stub("pptx_open"))
+    pub async fn pptx_open(
+        &self,
+        input: rmcp::handler::server::wrapper::Parameters<OpenInput>,
+    ) -> Result<Json<outputs::OpenOutput>, rmcp::model::CallToolResult> {
+        self.permission_policy
+            .check_read(&input.0.path)
+            .map_err(|error| outputs::map_error(error.into_core_error()))?;
+
+        Ok(Json(outputs::OpenOutput::stub("pptx_open")))
     }
 
     /// Return deck summary and capabilities.
@@ -191,8 +250,17 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_import_media(&self) -> rmcp::Json<outputs::ImportMediaOutput> {
-        rmcp::Json(outputs::ImportMediaOutput::stub("pptx_import_media"))
+    pub async fn pptx_import_media(
+        &self,
+        input: rmcp::handler::server::wrapper::Parameters<ImportMediaInput>,
+    ) -> Result<Json<outputs::ImportMediaOutput>, rmcp::model::CallToolResult> {
+        if let Some(media_path) = input.0.media_path {
+            self.permission_policy
+                .check_read(media_path)
+                .map_err(|error| outputs::map_error(error.into_core_error()))?;
+        }
+
+        Ok(Json(outputs::ImportMediaOutput::stub("pptx_import_media")))
     }
 
     /// Dry-run patch validation.
@@ -251,8 +319,17 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_export(&self) -> rmcp::Json<outputs::ExportOutput> {
-        rmcp::Json(outputs::ExportOutput::stub("pptx_export"))
+    pub async fn pptx_export(
+        &self,
+        input: rmcp::handler::server::wrapper::Parameters<ExportInput>,
+    ) -> Result<Json<outputs::ExportOutput>, rmcp::model::CallToolResult> {
+        if let Some(output_path) = input.0.output_path {
+            self.permission_policy
+                .check_write_with_overwrite(output_path, input.0.overwrite)
+                .map_err(|error| outputs::map_error(error.into_core_error()))?;
+        }
+
+        Ok(Json(outputs::ExportOutput::stub("pptx_export")))
     }
 
     /// Release session resources.
