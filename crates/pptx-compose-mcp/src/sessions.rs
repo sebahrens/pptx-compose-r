@@ -10,15 +10,13 @@ use pptx_compose::{
     ApplyPatchOptions, PresentationDocument, WriteOptions,
     core::{
         error::{Error, ErrorCode, ErrorLocation, Result},
-        opc::part_name::PartName,
         provenance::revision,
-        zip::reader::from_bytes,
     },
     edit::{
         media_inputs::{MediaBinding, MediaInputs, MediaLimits, MediaSource},
         patch::Patch,
     },
-    json::schemas::PatchReport,
+    json::schemas::{PatchReport, ValidationReport},
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -44,6 +42,7 @@ pub struct Session {
     pub package: PresentationDocument,
     pub media: HashMap<String, MediaHandle>,
     pub changed_parts: Vec<String>,
+    pub last_validation: Option<LatestValidation>,
     pub expires_at: SystemTime,
     pub mem_bytes: u64,
     apply_lock: Arc<Mutex<()>>,
@@ -82,6 +81,22 @@ pub struct OpenSession {
     pub revision: u64,
     pub slide_count: u32,
     pub expires_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LatestValidation {
+    pub session_id: String,
+    pub revision: u64,
+    pub validated_at: String,
+    pub source: ValidationSource,
+    pub report: ValidationReport,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationSource {
+    Tool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -131,6 +146,12 @@ impl SessionStore {
 
     fn open_loaded_package(&self, package: PresentationDocument) -> Result<OpenSession> {
         let mem_bytes = package.compressed_package_bytes();
+        if mem_bytes > self.max_session_mem_bytes {
+            return Err(Error::resource_limit_exceeded(format!(
+                "Opened PPTX is {mem_bytes} bytes, exceeding max_session_mem_bytes {}.",
+                self.max_session_mem_bytes
+            )));
+        }
         let metadata = package_metadata(&package)?;
         self.insert_session(package, mem_bytes, metadata)
     }
@@ -164,6 +185,7 @@ impl SessionStore {
             package,
             media: HashMap::new(),
             changed_parts: Vec::new(),
+            last_validation: None,
             expires_at,
             mem_bytes,
             apply_lock: Arc::new(Mutex::new(())),
@@ -376,6 +398,31 @@ impl SessionStore {
         )
     }
 
+    pub fn validate_session(&self, session_id: &str) -> Result<LatestValidation> {
+        let session = self.get(session_id)?;
+        let report = session.package.validate()?;
+        let latest = LatestValidation {
+            session_id: session_id.to_owned(),
+            revision: session.revision,
+            validated_at: system_time_json(SystemTime::now()),
+            source: ValidationSource::Tool,
+            report,
+        };
+
+        let mut sessions = self.lock_sessions()?;
+        remove_expired(&mut sessions, SystemTime::now());
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| missing_session(session_id))?;
+        session.last_validation = Some(latest.clone());
+        Ok(latest)
+    }
+
+    pub fn latest_validation(&self, session_id: &str) -> Result<Option<LatestValidation>> {
+        let session = self.get(session_id)?;
+        Ok(session.last_validation)
+    }
+
     pub fn apply_patch(
         &self,
         session_id: &str,
@@ -542,47 +589,26 @@ fn package_metadata(package: &PresentationDocument) -> Result<PackageMetadata> {
 
     Ok(PackageMetadata {
         document_id: validation.document_id,
-        slide_count: package.slide_count(),
+        slide_count: metadata_slide_count(package),
     })
 }
 
 fn package_metadata_from_bytes(
     package: &PresentationDocument,
-    bytes: &[u8],
+    _bytes: &[u8],
 ) -> Result<PackageMetadata> {
-    let entries = from_bytes(bytes)?;
-    let mut content_types = None;
-    let mut slide_count = 0_u32;
-    for entry in entries {
-        if entry.meta.is_dir {
-            continue;
-        }
-        let part_name = PartName::from_zip_entry(entry.meta.original_name.as_str())?;
-        if part_name.as_str() == "/[Content_Types].xml" {
-            content_types = Some(entry.bytes.clone());
-        }
-        if is_slide_part(part_name.as_str()) {
-            slide_count = slide_count.saturating_add(1);
-        }
-    }
-    let _content_types = content_types
-        .ok_or_else(|| Error::unsupported_package("Package is missing [Content_Types].xml."))?;
     let validation = package.validate()?;
 
     Ok(PackageMetadata {
         document_id: validation.document_id,
-        slide_count,
+        slide_count: metadata_slide_count(package),
     })
 }
 
-fn is_slide_part(part_name: &str) -> bool {
-    let Some(file_name) = part_name.strip_prefix("/ppt/slides/slide") else {
-        return false;
-    };
-    let Some(index) = file_name.strip_suffix(".xml") else {
-        return false;
-    };
-    !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit())
+fn metadata_slide_count(package: &PresentationDocument) -> u32 {
+    package
+        .presentation_slide_count()
+        .unwrap_or_else(|_| package.slide_count())
 }
 
 fn remove_expired(sessions: &mut HashMap<String, Session>, now: SystemTime) {

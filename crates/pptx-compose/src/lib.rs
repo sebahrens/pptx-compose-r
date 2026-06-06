@@ -201,6 +201,18 @@ impl PresentationDocument {
             .unwrap_or(u32::MAX)
     }
 
+    pub fn presentation_slide_count(&self) -> Result<u32> {
+        let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
+        let model = core_presentation::PresentationDocument::open(package)?;
+        u32::try_from(model.slides().len()).map_err(|source| {
+            Error::with_source(
+                ErrorCode::ResourceLimitExceeded,
+                "Presentation slide count exceeds the reportable range.",
+                source,
+            )
+        })
+    }
+
     pub fn to_agent_json(&self) -> Result<serde_json::Value> {
         self.to_agent_json_with_options(AgentViewOptions::default())
     }

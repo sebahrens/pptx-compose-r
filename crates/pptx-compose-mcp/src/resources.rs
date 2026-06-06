@@ -184,15 +184,9 @@ impl ResourceRegistry {
                 })?;
                 json!(handle)
             }
-            ResourceUri::SessionLatestValidation { session_id } => session_view(
-                sessions,
-                session_id,
-                ViewMode::ValidationReport,
-                None,
-                None,
-                None,
-                None,
-            )?,
+            ResourceUri::SessionLatestValidation { session_id } => {
+                session_latest_validation(sessions, session_id)?
+            }
             ResourceUri::Schema { name, version } => schema_resource(name, version)?,
         };
 
@@ -356,6 +350,27 @@ impl Query {
         }
         Ok(output)
     }
+}
+
+fn session_latest_validation(sessions: &SessionStore, session_id: &str) -> Result<Value, Error> {
+    let session = sessions.get(session_id)?;
+    if let Some(latest) = sessions.latest_validation(session_id)? {
+        return Ok(json!({
+            "status": "validated",
+            "session_id": session_id,
+            "revision": latest.revision,
+            "validated_at": latest.validated_at,
+            "source": latest.source,
+            "report": latest.report
+        }));
+    }
+
+    Ok(json!({
+        "status": "not_yet_validated",
+        "session_id": session_id,
+        "revision": session.revision,
+        "message": "Run pptx_validate for this session before reading validation/latest."
+    }))
 }
 
 fn session_view(

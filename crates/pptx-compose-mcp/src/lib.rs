@@ -182,116 +182,298 @@ fn mcp_prompt_message(message: prompts::PromptMessage) -> PromptMessage {
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenInput {
+    #[schemars(
+        description = "Readable filesystem path to a .pptx OPC package inside the configured workspace.",
+        length(min = 1, max = 4096),
+        extend("examples" = ["deck.pptx", "/workspace/input.pptx"])
+    )]
     pub path: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImportMediaInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
+    #[schemars(description = "Current session revision. Stale values return stale_patch.")]
     pub expected_revision: u64,
+    #[schemars(
+        description = "Readable media file path. Mutually exclusive with inline.",
+        length(min = 1, max = 4096),
+        extend("examples" = ["assets/logo.png", "/workspace/media/photo.jpg"])
+    )]
     pub media_path: Option<String>,
+    #[schemars(
+        description = "Inline size-limited media bytes. Mutually exclusive with media_path."
+    )]
     pub inline: Option<InlineMediaInput>,
+    #[schemars(
+        description = "Declared image MIME type. V1 accepts image/png, image/jpeg, and image/gif.",
+        regex(pattern = "^image/(png|jpeg|gif)$"),
+        extend("examples" = ["image/png"])
+    )]
     pub content_type: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InlineMediaInput {
+    #[schemars(
+        description = "Inline media encoding.",
+        regex(pattern = "^base64$"),
+        extend("default" = "base64", "examples" = ["base64"])
+    )]
     pub encoding: String,
+    #[schemars(
+        description = "Base64-encoded media bytes. Decoded bytes are capped by the server media limit.",
+        length(min = 1, max = 22369624)
+    )]
     pub data: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApplyPatchInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
     #[serde(default)]
+    #[schemars(
+        description = "Optional caller-supplied id echoed in the result envelope.",
+        length(min = 1, max = 256)
+    )]
     pub client_request_id: Option<String>,
+    #[schemars(
+        description = "Bounded V1 patch whose document_id and base_revision must match the session."
+    )]
     pub patch: Patch,
     #[serde(default)]
+    #[schemars(description = "When true, validate without mutating the session.", extend("default" = false))]
     pub dry_run: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ValidatePatchInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
+    #[schemars(description = "Bounded V1 patch to dry-run against the current session.")]
     pub patch: Patch,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ValidateInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloseInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExportInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
     #[serde(default)]
+    #[schemars(
+        description = "Optional caller-supplied id echoed in the result envelope.",
+        length(min = 1, max = 256)
+    )]
     pub client_request_id: Option<String>,
+    #[schemars(description = "Current session revision. Stale values return stale_patch.")]
     pub expected_revision: u64,
+    #[schemars(
+        description = "Writable output .pptx path. Required unless inline is true.",
+        length(min = 1, max = 4096),
+        extend("examples" = ["out/edited.pptx", "/workspace/output.pptx"])
+    )]
     pub output_path: Option<String>,
     #[serde(default)]
+    #[schemars(description = "Return base64 PPTX bytes in JSON instead of writing a file.", extend("default" = false))]
     pub inline: bool,
     #[serde(default)]
+    #[schemars(description = "Permit replacing an existing output_path.", extend("default" = false))]
     pub overwrite: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SummaryInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListSlidesInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
+    #[schemars(
+        description = "Opaque pagination cursor returned by a previous response.",
+        length(min = 1, max = 256)
+    )]
     pub cursor: Option<String>,
+    #[schemars(
+        description = "Maximum number of slide summaries to return.",
+        range(min = 1, max = 100)
+    )]
     pub limit: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetSlideInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
+    #[schemars(
+        description = "Agent slide id such as slide-1.",
+        regex(pattern = "^slide-[1-9][0-9]*$")
+    )]
     pub slide_id: String,
+    #[schemars(description = "Optional revision guard for read-after-write consistency.")]
     pub expected_revision: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListElementsInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
+    #[schemars(
+        description = "Optional agent slide id such as slide-1.",
+        regex(pattern = "^slide-[1-9][0-9]*$")
+    )]
     pub slide_id: Option<String>,
+    #[schemars(
+        description = "Opaque pagination cursor returned by a previous response.",
+        length(min = 1, max = 256)
+    )]
     pub cursor: Option<String>,
+    #[schemars(
+        description = "Maximum number of elements to return.",
+        range(min = 1, max = 500)
+    )]
     pub limit: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GetElementInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
+    #[schemars(
+        description = "Agent element id such as slide-1:shape-3.",
+        length(min = 1, max = 256)
+    )]
     pub element_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FindTextInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
     pub session_id: String,
+    #[schemars(description = "Text query to search for.", length(min = 1, max = 2048))]
     pub query: String,
+    #[schemars(description = "Deck, slide, or element search scope.")]
     pub scope: FindTextScope,
+    #[schemars(
+        description = "Opaque pagination cursor returned by a previous response.",
+        length(min = 1, max = 256)
+    )]
     pub cursor: Option<String>,
+    #[schemars(
+        description = "Maximum number of matches to return.",
+        range(min = 1, max = 500)
+    )]
     pub limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RawGetPartXmlInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
+    pub session_id: String,
+    #[schemars(description = "Current session revision. Stale values return stale_patch.")]
+    pub expected_revision: u64,
+    #[schemars(
+        description = "Canonical OPC XML part name to inspect, for example /ppt/slides/slide1.xml.",
+        regex(pattern = "^/[^\\0]*\\.xml$"),
+        length(min = 2, max = 1024)
+    )]
+    pub part_name: String,
+    #[schemars(
+        description = "Maximum XML text bytes to return.",
+        range(min = 1, max = 1048576)
+    )]
+    pub max_bytes: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RawReplacePartXmlInput {
+    #[schemars(
+        description = "Session id returned by pptx_open.",
+        length(min = 1, max = 160)
+    )]
+    pub session_id: String,
+    #[schemars(description = "Current session revision. Stale values return stale_patch.")]
+    pub expected_revision: u64,
+    #[schemars(
+        description = "Canonical OPC XML part name to replace, for example /ppt/slides/slide1.xml.",
+        regex(pattern = "^/[^\\0]*\\.xml$"),
+        length(min = 2, max = 1024)
+    )]
+    pub part_name: String,
+    #[schemars(
+        description = "Replacement XML bytes as UTF-8 text.",
+        length(min = 1, max = 1048576)
+    )]
+    pub xml: String,
 }
 
 fn decode_inline_media(inline: &InlineMediaInput) -> pptx_compose::core::error::Result<Vec<u8>> {
@@ -650,7 +832,7 @@ impl PptxServer {
         annotations(
             title = "Import Media",
             read_only_hint = false,
-            destructive_hint = false,
+            destructive_hint = true,
             idempotent_hint = false,
             open_world_hint = false
         )
@@ -776,13 +958,12 @@ impl PptxServer {
         &self,
         input: rmcp::handler::server::wrapper::Parameters<ValidateInput>,
     ) -> Result<Json<outputs::ValidateOutput>, rmcp::model::CallToolResult> {
-        let session = self
+        let latest = self
             .sessions
-            .get(&input.0.session_id)
+            .validate_session(&input.0.session_id)
             .map_err(outputs::map_error)?;
-        let report = session.package.validate().map_err(outputs::map_error)?;
         Ok(Json(outputs::ValidateOutput::success(serde_json::json!(
-            report
+            latest.report
         ))))
     }
 
@@ -903,6 +1084,7 @@ impl PptxServer {
     /// Return raw XML for an OPC part.
     #[tool(
         name = "pptx_get_part_xml",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<outputs::RawPartXmlOutput>(),
         annotations(
             title = "Get Raw Part XML",
             read_only_hint = true,
@@ -911,13 +1093,20 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_get_part_xml(&self) -> rmcp::Json<outputs::RawPartXmlOutput> {
-        rmcp::Json(outputs::RawPartXmlOutput::stub("pptx_get_part_xml"))
+    pub async fn pptx_get_part_xml(
+        &self,
+        input: rmcp::handler::server::wrapper::Parameters<RawGetPartXmlInput>,
+    ) -> Result<Json<outputs::RawPartXmlOutput>, rmcp::model::CallToolResult> {
+        self.sessions
+            .check_revision(&input.0.session_id, input.0.expected_revision)
+            .map_err(outputs::map_error)?;
+        Err(raw_xml_unsupported())
     }
 
     /// Replace raw XML for an OPC part.
     #[tool(
         name = "pptx_replace_part_xml",
+        output_schema = rmcp::handler::server::tool::schema_for_type::<outputs::ReplacePartXmlOutput>(),
         annotations(
             title = "Replace Raw Part XML",
             read_only_hint = false,
@@ -926,9 +1115,25 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_replace_part_xml(&self) -> rmcp::Json<outputs::ReplacePartXmlOutput> {
-        rmcp::Json(outputs::ReplacePartXmlOutput::stub("pptx_replace_part_xml"))
+    pub async fn pptx_replace_part_xml(
+        &self,
+        input: rmcp::handler::server::wrapper::Parameters<RawReplacePartXmlInput>,
+    ) -> Result<Json<outputs::ReplacePartXmlOutput>, rmcp::model::CallToolResult> {
+        self.sessions
+            .check_revision(&input.0.session_id, input.0.expected_revision)
+            .map_err(outputs::map_error)?;
+        Err(raw_xml_unsupported())
     }
+}
+
+fn raw_xml_unsupported() -> rmcp::model::CallToolResult {
+    outputs::map_error(
+        pptx_compose::core::error::Error::new(
+            pptx_compose::core::error::ErrorCode::UnsupportedEdit,
+            "Raw XML MCP tools are schema-exposed only for advanced clients and are not implemented in V1.",
+        )
+        .with_suggestion("Use supported V1 patch operations instead of raw XML mutation."),
+    )
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -1244,6 +1449,124 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tools_expose_output_schemas_and_contract_annotations() {
+        let tools = crate::tools::exposed_tools(&PptxServer::default());
+        for tool_name in crate::tools::DEFAULT_TOOL_NAMES {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == *tool_name)
+                .unwrap_or_else(|| panic!("tool {tool_name} is exposed"));
+            let schema = tool
+                .output_schema
+                .as_ref()
+                .unwrap_or_else(|| panic!("tool {tool_name} exposes output schema"));
+            assert_eq!(
+                schema.get("type"),
+                Some(&serde_json::Value::String("object".to_owned())),
+                "tool {tool_name} output schema is object-rooted"
+            );
+        }
+
+        let import_media = tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == "pptx_import_media")
+            .expect("import media tool is exposed");
+        let annotations = import_media
+            .annotations
+            .as_ref()
+            .expect("import media annotations are exposed");
+        assert_eq!(annotations.read_only_hint, Some(false));
+        assert_eq!(annotations.destructive_hint, Some(true));
+        assert_eq!(annotations.idempotent_hint, Some(false));
+    }
+
+    #[test]
+    fn tool_input_schemas_describe_limits_and_encodings() {
+        let tools = crate::tools::exposed_tools(&PptxServer::default());
+        let import_media = tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == "pptx_import_media")
+            .expect("import media tool is exposed");
+        let schema = import_media.schema_as_json_value();
+        let properties = schema["properties"].as_object().expect("properties");
+
+        assert_eq!(
+            properties["content_type"]["pattern"],
+            "^image/(png|jpeg|gif)$"
+        );
+        assert!(
+            properties["media_path"]["description"]
+                .as_str()
+                .is_some_and(|value| value.contains("Readable media file path"))
+        );
+        assert_eq!(
+            properties["inline"]["anyOf"][0]["$ref"],
+            "#/$defs/InlineMediaInput"
+        );
+        assert!(
+            schema["$defs"]["InlineMediaInput"]["properties"]["data"]["maxLength"]
+                .as_u64()
+                .is_some_and(|value| value > 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_records_latest_validation_resource() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+        let before = server
+            .resource_registry()
+            .read_resource(
+                &ResourceUri::SessionLatestValidation {
+                    session_id: opened.session_id.clone(),
+                },
+                server.sessions(),
+            )
+            .await
+            .expect("latest validation resource reads before validation");
+        assert_eq!(before.content["status"], "not_yet_validated");
+        assert_eq!(before.content["revision"], opened.revision);
+
+        server
+            .pptx_validate(rmcp::handler::server::wrapper::Parameters(ValidateInput {
+                session_id: opened.session_id.clone(),
+            }))
+            .await
+            .expect("validation succeeds");
+
+        let after = server
+            .resource_registry()
+            .read_resource(
+                &ResourceUri::SessionLatestValidation {
+                    session_id: opened.session_id.clone(),
+                },
+                server.sessions(),
+            )
+            .await
+            .expect("latest validation resource reads after validation");
+        assert_eq!(after.content["status"], "validated");
+        assert_eq!(after.content["revision"], opened.revision);
+        assert_eq!(after.content["source"], "tool");
+        assert_eq!(after.content["report"]["revision"], opened.revision);
+    }
+
+    #[test]
+    fn open_metadata_counts_slides_from_relationship_graph() {
+        let server = PptxServer::default();
+        let deck = custom_slide_path_deck();
+        let opened = server
+            .sessions()
+            .open_package(
+                pptx_compose::PresentationDocument::from_bytes(deck.clone())
+                    .expect("custom-path fixture opens"),
+                &deck,
+            )
+            .expect("session opens");
+
+        assert_eq!(opened.slide_count, 1);
+    }
+
     fn assert_tool_schema_fields(tool_name: &str, required: &[&str], optional: &[&str]) {
         let tools = crate::tools::exposed_tools(&PptxServer::default());
         let tool = tools
@@ -1288,5 +1611,81 @@ mod tests {
                 &fixture,
             )
             .expect("session opens")
+    }
+
+    fn custom_slide_path_deck() -> Vec<u8> {
+        use std::io::{Cursor, Write};
+        use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+
+        let content_types = custom_content_types();
+        let root_rels = custom_root_rels();
+        let presentation = custom_presentation();
+        let presentation_rels = custom_presentation_rels();
+        let slide = custom_slide();
+        let entries = [
+            ("[Content_Types].xml", content_types.as_bytes()),
+            ("_rels/.rels", root_rels.as_bytes()),
+            ("custom/presentation.xml", presentation.as_bytes()),
+            (
+                "custom/_rels/presentation.xml.rels",
+                presentation_rels.as_bytes(),
+            ),
+            ("custom/slides/title.xml", slide.as_bytes()),
+        ];
+        let mut bytes = Vec::new();
+        {
+            let mut writer = ZipWriter::new(Cursor::new(&mut bytes));
+            let options =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            for (name, data) in entries {
+                writer.start_file(name, options).expect("start ZIP entry");
+                writer.write_all(data).expect("write ZIP entry");
+            }
+            writer.finish().expect("finish ZIP");
+        }
+        bytes
+    }
+
+    fn custom_content_types() -> String {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/custom/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/custom/slides/title.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>"#
+            .to_owned()
+    }
+
+    fn custom_root_rels() -> String {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="custom/presentation.xml"/>
+</Relationships>"#
+            .to_owned()
+    }
+
+    fn custom_presentation() -> String {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst><p:sldId id="256" r:id="rCustomSlide"/></p:sldIdLst>
+</p:presentation>"#
+            .to_owned()
+    }
+
+    fn custom_presentation_rels() -> String {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rCustomSlide" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/title.xml"/>
+</Relationships>"#
+            .to_owned()
+    }
+
+    fn custom_slide() -> String {
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/></p:spTree></p:cSld>
+</p:sld>"#
+            .to_owned()
     }
 }
