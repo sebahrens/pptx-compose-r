@@ -1,22 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::{
-    opc::{
-        package::Package,
-        part_name::PartName,
-        relationships::{TargetMode, resolve_internal_target},
-    },
+    opc::{package::Package, part_name::PartName},
     validation::{Finding, FindingCode, location},
 };
 
 pub(crate) const PRODUCER_CHECK_DUPLICATE_SLIDE_ID: &str =
     "validation::invariants::check_duplicate_slide_id";
-pub(crate) const PRODUCER_CHECK_DANGLING_INTERNAL_RELATIONSHIP: &str =
-    "validation::invariants::check_dangling_internal_relationship";
-pub(crate) const PRODUCER_CHECK_DUPLICATE_RELATIONSHIP_ID: &str =
-    "validation::invariants::check_duplicate_relationship_id";
-pub(crate) const PRODUCER_CHECK_MISSING_CONTENT_TYPE: &str =
-    "validation::invariants::check_missing_content_type";
 pub(crate) const PRODUCER_CHECK_PART_DROPPED: &str = "validation::invariants::check_part_dropped";
 pub(crate) const PRODUCER_CHECK_EXTERNAL_RELATIONSHIP_NOT_CHECKED: &str =
     "validation::invariants::check_external_relationship_not_checked";
@@ -32,10 +22,7 @@ const DIGITAL_SIGNATURE_XML_CONTENT_TYPE: &str =
 
 pub fn check_invariants(pkg: &Package, findings: &mut Vec<Finding>) {
     check_duplicate_slide_id(pkg, findings);
-    check_dangling_internal_relationship(pkg, findings);
-    check_duplicate_relationship_id(pkg, findings);
     check_external_relationship_not_checked(pkg, findings);
-    check_missing_content_type(pkg, findings);
     check_part_dropped(pkg, findings);
     check_signature_invalidated_by_edit(pkg, findings);
 }
@@ -65,70 +52,6 @@ fn check_duplicate_slide_id(pkg: &Package, findings: &mut Vec<Finding>) {
     }
 }
 
-fn check_dangling_internal_relationship(pkg: &Package, findings: &mut Vec<Finding>) {
-    for relationship in pkg.relationships().iter() {
-        if relationship.target_mode != TargetMode::Internal {
-            continue;
-        }
-
-        let resolved = resolve_internal_target(&relationship.source, &relationship.target);
-        let missing = resolved
-            .as_ref()
-            .map_or(true, |part_name| pkg.parts().get(part_name).is_none());
-
-        if missing {
-            let mut entries = vec![("relationship_id", relationship.id.clone())];
-            if let Some(part) = relationship.source.location_part() {
-                entries.push(("part", part.zip_entry_name().to_owned()));
-            }
-            if let Ok(part_name) = resolved {
-                entries.push(("target_part", part_name.zip_entry_name().to_owned()));
-            } else {
-                entries.push(("target", relationship.target.clone()));
-            }
-
-            findings.push(Finding::new(
-                "",
-                FindingCode::DanglingInternalRelationship,
-                format!(
-                    "Internal relationship {} points at a missing package part.",
-                    relationship.id
-                ),
-                false,
-                location(&entries),
-                None,
-            ));
-        }
-    }
-}
-
-fn check_duplicate_relationship_id(pkg: &Package, findings: &mut Vec<Finding>) {
-    let mut ids_by_source: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-
-    for relationship in pkg.relationships().iter() {
-        let source = source_key(relationship.source.location_part());
-        let ids = ids_by_source.entry(source).or_default();
-        if !ids.insert(relationship.id.clone()) {
-            let mut entries = vec![("relationship_id", relationship.id.clone())];
-            if let Some(part) = relationship.source.location_part() {
-                entries.push(("part", part.zip_entry_name().to_owned()));
-            }
-
-            findings.push(Finding::new(
-                "",
-                FindingCode::DuplicateRelationshipId,
-                format!(
-                    "Relationship id {} appears more than once in one relationship part.",
-                    relationship.id
-                ),
-                false,
-                location(&entries),
-                None,
-            ));
-        }
-    }
-}
-
 fn check_external_relationship_not_checked(pkg: &Package, findings: &mut Vec<Finding>) {
     for relationship in pkg.relationships().external_relationships() {
         let mut entries = vec![
@@ -150,25 +73,6 @@ fn check_external_relationship_not_checked(pkg: &Package, findings: &mut Vec<Fin
             location(&entries),
             None,
         ));
-    }
-}
-
-fn check_missing_content_type(pkg: &Package, findings: &mut Vec<Finding>) {
-    for part in pkg.parts().iter() {
-        if is_opc_control_part(part.name()) {
-            continue;
-        }
-
-        if pkg.content_types().resolve(part.name()).is_none() {
-            findings.push(Finding::new(
-                "",
-                FindingCode::MissingContentType,
-                format!("Part {} has no resolved content type.", part.name()),
-                false,
-                location(&[("part", part.name().zip_entry_name().to_owned())]),
-                None,
-            ));
-        }
     }
 }
 
@@ -224,15 +128,6 @@ fn check_part_dropped(pkg: &Package, findings: &mut Vec<Finding>) {
     }
 }
 
-fn source_key(part_name: Option<&PartName>) -> String {
-    part_name.map_or_else(|| "/_rels/.rels".to_owned(), ToString::to_string)
-}
-
-fn is_opc_control_part(part_name: &PartName) -> bool {
-    let path = part_name.as_str();
-    path == "/[Content_Types].xml" || (path.contains("/_rels/") && path.ends_with(".rels"))
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -268,17 +163,22 @@ mod tests {
 
         assert_eq!(outcome.status, ValidationStatus::Invalid);
         assert_eq!(outcome.findings.len(), 2);
-        assert_eq!(outcome.findings[0].code, FindingCode::DuplicateSlideId);
+        let duplicate_slide = outcome
+            .findings
+            .iter()
+            .find(|finding| finding.code == FindingCode::DuplicateSlideId)
+            .expect("duplicate slide finding");
         assert_eq!(
-            outcome.findings[0].location,
+            duplicate_slide.location,
             serde_json::json!({"slide_id": "256"})
         );
+        let dangling_relationship = outcome
+            .findings
+            .iter()
+            .find(|finding| finding.code == FindingCode::DanglingInternalRelationship)
+            .expect("dangling relationship finding");
         assert_eq!(
-            outcome.findings[1].code,
-            FindingCode::DanglingInternalRelationship
-        );
-        assert_eq!(
-            outcome.findings[1].location,
+            dangling_relationship.location,
             serde_json::json!({
                 "relationship_id": "rId1",
                 "part": "ppt/presentation.xml",
@@ -286,51 +186,5 @@ mod tests {
             })
         );
         assert_eq!(outcome.summary.errors, 2);
-    }
-
-    #[test]
-    fn detects_duplicate_relationship_id() {
-        let mut package = Package::new();
-        let source = RelationshipSource::Part(
-            PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid part name"),
-        );
-        package.push_relationship(Relationship::internal(
-            source.clone(),
-            "rId2",
-            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
-            "../media/image1.png",
-        ));
-        package.push_relationship(Relationship::internal(
-            source,
-            "rId2",
-            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
-            "../media/image2.png",
-        ));
-
-        let outcome = validate_package(&package, ValidationMode::Edited);
-
-        assert!(
-            outcome
-                .findings
-                .iter()
-                .any(|finding| finding.code == FindingCode::DuplicateRelationshipId)
-        );
-    }
-
-    #[test]
-    fn detects_missing_content_type() {
-        let mut package = Package::new();
-        package
-            .insert_zip_entry("ppt/slides/slide1.xml", Vec::new())
-            .expect("slide part inserted");
-
-        let outcome = validate_package(&package, ValidationMode::Edited);
-
-        assert_eq!(outcome.findings.len(), 1);
-        assert_eq!(outcome.findings[0].code, FindingCode::MissingContentType);
-        assert_eq!(
-            outcome.findings[0].location,
-            serde_json::json!({"part": "ppt/slides/slide1.xml"})
-        );
     }
 }

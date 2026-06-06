@@ -1,11 +1,13 @@
 pub mod code;
 pub mod invariants;
+pub mod package_graph;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub use code::{FINDING_REGISTRY, FindingCategory, FindingCode, Severity};
 use invariants::check_invariants;
+use package_graph::check_package_graph;
 
 use crate::opc::package::Package;
 
@@ -78,6 +80,7 @@ impl Finding {
 #[must_use]
 pub fn validate_package(pkg: &Package, mode: ValidationMode) -> ValidationOutcome {
     let mut findings = Vec::new();
+    findings.extend(check_package_graph(pkg));
     check_invariants(pkg, &mut findings);
 
     for (index, finding) in findings.iter_mut().enumerate() {
@@ -147,8 +150,8 @@ pub struct Deferral {
 pub const FINDING_COVERAGE: &[FindingCoverage] = &[
     FindingCoverage {
         code: FindingCode::MissingContentType,
-        producer: Some(invariants::PRODUCER_CHECK_MISSING_CONTENT_TYPE),
-        producer_test: Some("validation::invariants::tests::detects_missing_content_type"),
+        producer: Some(package_graph::PRODUCER_CHECK_MISSING_CONTENT_TYPE),
+        producer_test: Some("validation::package_graph::detects_violations"),
         deferral: None,
     },
     FindingCoverage {
@@ -163,8 +166,8 @@ pub const FINDING_COVERAGE: &[FindingCoverage] = &[
     },
     FindingCoverage {
         code: FindingCode::DanglingInternalRelationship,
-        producer: Some(invariants::PRODUCER_CHECK_DANGLING_INTERNAL_RELATIONSHIP),
-        producer_test: Some("validation::invariants::tests::detects_seeded_violations"),
+        producer: Some(package_graph::PRODUCER_CHECK_DANGLING_INTERNAL_RELATIONSHIP),
+        producer_test: Some("validation::package_graph::detects_violations"),
         deferral: None,
     },
     FindingCoverage {
@@ -179,8 +182,8 @@ pub const FINDING_COVERAGE: &[FindingCoverage] = &[
     },
     FindingCoverage {
         code: FindingCode::DuplicateRelationshipId,
-        producer: Some(invariants::PRODUCER_CHECK_DUPLICATE_RELATIONSHIP_ID),
-        producer_test: Some("validation::invariants::tests::detects_duplicate_relationship_id"),
+        producer: Some(package_graph::PRODUCER_CHECK_DUPLICATE_RELATIONSHIP_ID),
+        producer_test: Some("validation::package_graph::detects_violations"),
         deferral: None,
     },
     FindingCoverage {
