@@ -32,7 +32,8 @@ pub fn inline_payload(
     }
 }
 
-fn encode_base64(bytes: &[u8]) -> String {
+#[must_use]
+pub fn encode_base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
 
@@ -60,9 +61,75 @@ fn encode_base64(bytes: &[u8]) -> String {
     output
 }
 
+pub fn decode_base64(encoded: &str) -> Result<Vec<u8>, crate::schemas::JsonError> {
+    let bytes = encoded.as_bytes();
+    if !bytes.len().is_multiple_of(4) {
+        return Err(crate::schemas::JsonError::MalformedLegacyEnvelope(
+            "Base64 data length must be a multiple of four.".to_owned(),
+        ));
+    }
+
+    let mut output = Vec::with_capacity((bytes.len() / 4) * 3);
+    for (chunk_index, chunk) in bytes.chunks(4).enumerate() {
+        let pad = chunk.iter().rev().take_while(|byte| **byte == b'=').count();
+        if pad > 2 {
+            return Err(crate::schemas::JsonError::MalformedLegacyEnvelope(
+                "Base64 data contains too much padding.".to_owned(),
+            ));
+        }
+        if pad > 0 && chunk_index != (bytes.len() / 4) - 1 {
+            return Err(crate::schemas::JsonError::MalformedLegacyEnvelope(
+                "Base64 padding is only valid in the final quartet.".to_owned(),
+            ));
+        }
+
+        let b0 = decode_base64_byte(chunk[0])?;
+        let b1 = decode_base64_byte(chunk[1])?;
+        let b2 = if chunk[2] == b'=' {
+            0
+        } else {
+            decode_base64_byte(chunk[2])?
+        };
+        let b3 = if chunk[3] == b'=' {
+            0
+        } else {
+            decode_base64_byte(chunk[3])?
+        };
+
+        if chunk[2] == b'=' && chunk[3] != b'=' {
+            return Err(crate::schemas::JsonError::MalformedLegacyEnvelope(
+                "Base64 padding must be contiguous.".to_owned(),
+            ));
+        }
+
+        output.push((b0 << 2) | (b1 >> 4));
+        if chunk[2] != b'=' {
+            output.push(((b1 & 0b0000_1111) << 4) | (b2 >> 2));
+        }
+        if chunk[3] != b'=' {
+            output.push(((b2 & 0b0000_0011) << 6) | b3);
+        }
+    }
+
+    Ok(output)
+}
+
+fn decode_base64_byte(byte: u8) -> Result<u8, crate::schemas::JsonError> {
+    match byte {
+        b'A'..=b'Z' => Ok(byte - b'A'),
+        b'a'..=b'z' => Ok(byte - b'a' + 26),
+        b'0'..=b'9' => Ok(byte - b'0' + 52),
+        b'+' => Ok(62),
+        b'/' => Ok(63),
+        _ => Err(crate::schemas::JsonError::MalformedLegacyEnvelope(
+            "Base64 data contains a non-base64 character.".to_owned(),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{InlineBinaryPolicy, inline_payload};
+    use super::{InlineBinaryPolicy, decode_base64, inline_payload};
 
     #[test]
     fn by_reference_is_default() {
@@ -84,5 +151,13 @@ mod tests {
         assert_eq!(payload.encoding, "base64");
         assert_eq!(payload.content_type, "image/png");
         assert_eq!(payload.data, "YWJjMTIz");
+    }
+
+    #[test]
+    fn base64_decode_rejects_malformed_input() {
+        assert_eq!(decode_base64("YWJjMTIz").expect("valid base64"), b"abc123");
+        assert!(decode_base64("abc").is_err());
+        assert!(decode_base64("ab=c").is_err());
+        assert!(decode_base64("!!!!").is_err());
     }
 }

@@ -232,6 +232,7 @@ pub enum ErrorCode {
 pub enum JsonError {
     SerializeSchema(String),
     InvalidCursor(String),
+    MalformedLegacyEnvelope(String),
     NotFound { kind: &'static str, id: String },
     Projection(String),
 }
