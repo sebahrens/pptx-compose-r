@@ -152,9 +152,59 @@ pub struct CloseInput {
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExportInput {
+    pub session_id: String,
+    pub expected_revision: Option<u64>,
     pub output_path: Option<String>,
     #[serde(default)]
     pub overwrite: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SummaryInput {
+    pub session_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListSlidesInput {
+    pub session_id: String,
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetSlideInput {
+    pub session_id: String,
+    pub slide_id: String,
+    pub expected_revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListElementsInput {
+    pub session_id: String,
+    pub slide_id: Option<String>,
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetElementInput {
+    pub session_id: String,
+    pub element_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FindTextInput {
+    pub session_id: String,
+    pub query: String,
+    pub scope: String,
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
 }
 
 fn decode_inline_media(inline: &InlineMediaInput) -> pptx_compose::core::error::Result<Vec<u8>> {
@@ -297,7 +347,10 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_get_document_summary(&self) -> rmcp::Json<outputs::DocumentSummaryOutput> {
+    pub async fn pptx_get_document_summary(
+        &self,
+        _input: rmcp::handler::server::wrapper::Parameters<SummaryInput>,
+    ) -> rmcp::Json<outputs::DocumentSummaryOutput> {
         rmcp::Json(outputs::DocumentSummaryOutput::stub(
             "pptx_get_document_summary",
         ))
@@ -314,7 +367,10 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_list_slides(&self) -> rmcp::Json<outputs::ListSlidesOutput> {
+    pub async fn pptx_list_slides(
+        &self,
+        _input: rmcp::handler::server::wrapper::Parameters<ListSlidesInput>,
+    ) -> rmcp::Json<outputs::ListSlidesOutput> {
         rmcp::Json(outputs::ListSlidesOutput::stub("pptx_list_slides"))
     }
 
@@ -329,7 +385,10 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_get_slide(&self) -> rmcp::Json<outputs::SlideOutput> {
+    pub async fn pptx_get_slide(
+        &self,
+        _input: rmcp::handler::server::wrapper::Parameters<GetSlideInput>,
+    ) -> rmcp::Json<outputs::SlideOutput> {
         rmcp::Json(outputs::SlideOutput::stub("pptx_get_slide"))
     }
 
@@ -344,7 +403,10 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_list_elements(&self) -> rmcp::Json<outputs::ListElementsOutput> {
+    pub async fn pptx_list_elements(
+        &self,
+        _input: rmcp::handler::server::wrapper::Parameters<ListElementsInput>,
+    ) -> rmcp::Json<outputs::ListElementsOutput> {
         rmcp::Json(outputs::ListElementsOutput::stub("pptx_list_elements"))
     }
 
@@ -359,7 +421,10 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_get_element(&self) -> rmcp::Json<outputs::ElementOutput> {
+    pub async fn pptx_get_element(
+        &self,
+        _input: rmcp::handler::server::wrapper::Parameters<GetElementInput>,
+    ) -> rmcp::Json<outputs::ElementOutput> {
         rmcp::Json(outputs::ElementOutput::stub("pptx_get_element"))
     }
 
@@ -374,7 +439,10 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_find_text(&self) -> rmcp::Json<outputs::FindTextOutput> {
+    pub async fn pptx_find_text(
+        &self,
+        _input: rmcp::handler::server::wrapper::Parameters<FindTextInput>,
+    ) -> rmcp::Json<outputs::FindTextOutput> {
         rmcp::Json(outputs::FindTextOutput::stub("pptx_find_text"))
     }
 
@@ -694,6 +762,67 @@ mod tests {
         })
         .expect_err("malformed base64 fails");
         assert_eq!(bad_data.code(), ErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn read_and_export_tools_expose_input_schemas() {
+        assert_tool_schema_fields("pptx_get_document_summary", &["session_id"], &[]);
+        assert_tool_schema_fields("pptx_list_slides", &["session_id"], &["cursor", "limit"]);
+        assert_tool_schema_fields(
+            "pptx_get_slide",
+            &["session_id", "slide_id"],
+            &["expected_revision"],
+        );
+        assert_tool_schema_fields(
+            "pptx_list_elements",
+            &["session_id"],
+            &["slide_id", "cursor", "limit"],
+        );
+        assert_tool_schema_fields("pptx_get_element", &["session_id", "element_id"], &[]);
+        assert_tool_schema_fields(
+            "pptx_find_text",
+            &["session_id", "query", "scope"],
+            &["cursor", "limit"],
+        );
+        assert_tool_schema_fields(
+            "pptx_export",
+            &["session_id"],
+            &["expected_revision", "output_path", "overwrite"],
+        );
+    }
+
+    fn assert_tool_schema_fields(tool_name: &str, required: &[&str], optional: &[&str]) {
+        let tools = crate::tools::exposed_tools(&PptxServer::default());
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == tool_name)
+            .unwrap_or_else(|| panic!("tool {tool_name} is exposed"));
+        let schema = tool.schema_as_json_value();
+        let properties = schema["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("tool {tool_name} has object properties"));
+        let required_fields = schema["required"]
+            .as_array()
+            .unwrap_or_else(|| panic!("tool {tool_name} has required fields"));
+
+        for field in required.iter().chain(optional.iter()) {
+            assert!(
+                properties.contains_key(*field),
+                "tool {tool_name} schema omits property {field}"
+            );
+        }
+        for field in required {
+            assert!(
+                required_fields.iter().any(|value| value == *field),
+                "tool {tool_name} schema does not require {field}"
+            );
+        }
+        for field in optional {
+            assert!(
+                required_fields.iter().all(|value| value != *field),
+                "tool {tool_name} schema unexpectedly requires {field}"
+            );
+        }
     }
 
     fn open_fixture_session(server: &PptxServer) -> sessions::OpenSession {
