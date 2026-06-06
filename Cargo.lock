@@ -583,6 +583,7 @@ dependencies = [
 name = "pptx-compose-json"
 version = "0.1.0"
 dependencies = [
+ "pptx-compose-core",
  "schemars",
  "serde",
  "serde_json",

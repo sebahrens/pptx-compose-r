@@ -5,6 +5,7 @@ use serde_json::Value;
 use crate::binary_encoding::{InlineBinaryPolicy, inline_payload};
 
 pub mod pagination;
+pub mod views;
 
 use pagination::ViewMeta;
 
