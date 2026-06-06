@@ -28,5 +28,82 @@ jobs:
       - name: Test workspace
         run: cargo test --workspace
 
+      # Local equivalents for the readiness gates below are the exact commands
+      # echoed by each step. Missing optional suites are skipped until their
+      # files exist; once a suite lands, its targeted cargo command gates CI.
+      - name: Test schema conformance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmd='cargo test -p pptx-compose-cli --test read_surface schema_prints_published_schema -- --exact'
+          echo "$cmd"
+          if [[ -f crates/pptx-compose-cli/tests/read_surface.rs ]]; then
+            $cmd
+          else
+            echo "Skipping schema conformance gate; crates/pptx-compose-cli/tests/read_surface.rs is not present."
+          fi
+
+      - name: Test fixture corpus and round-trips
+        shell: bash
+        run: |
+          set -euo pipefail
+          commands=(
+            'cargo test -p pptx-compose-core --test fixture_manifest'
+            'cargo test -p pptx-compose-core --test roundtrip'
+            'cargo test -p pptx-compose --test roundtrip_golden'
+            'cargo test -p pptx-compose-edit --test construction_golden'
+          )
+          paths=(
+            'crates/pptx-compose-core/tests/fixture_manifest.rs'
+            'crates/pptx-compose-core/tests/roundtrip.rs'
+            'crates/pptx-compose/tests/roundtrip_golden.rs'
+            'crates/pptx-compose-edit/tests/construction_golden.rs'
+          )
+          for index in "${!commands[@]}"; do
+            cmd="${commands[$index]}"
+            path="${paths[$index]}"
+            echo "$cmd"
+            if [[ -f "$path" ]]; then
+              $cmd
+            else
+              echo "Skipping fixture/round-trip gate; $path is not present."
+            fi
+          done
+
+      - name: Test CLI eval transcripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmd='cargo test -p pptx-compose-cli --test eval_transcripts'
+          echo "$cmd"
+          if [[ -f crates/pptx-compose-cli/tests/eval_transcripts.rs && -d evals/cli ]]; then
+            $cmd
+          else
+            echo "Skipping CLI eval gate; crates/pptx-compose-cli/tests/eval_transcripts.rs or evals/cli is not present."
+          fi
+
+      - name: Test MCP protocol and eval gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          commands=(
+            'cargo test -p pptx-compose-mcp --test resources_prompts'
+            'cargo test -p pptx-compose-mcp --test stdio_binary'
+          )
+          paths=(
+            'crates/pptx-compose-mcp/tests/resources_prompts.rs'
+            'crates/pptx-compose-mcp/tests/stdio_binary.rs'
+          )
+          for index in "${!commands[@]}"; do
+            cmd="${commands[$index]}"
+            path="${paths[$index]}"
+            echo "$cmd"
+            if [[ -f "$path" ]]; then
+              $cmd
+            else
+              echo "Skipping MCP gate; $path is not present."
+            fi
+          done
+
       - name: Lint workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
