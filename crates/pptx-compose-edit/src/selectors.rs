@@ -161,10 +161,10 @@ fn resolve_element(
             &target.slide_id,
             Some(&target.element_id),
         )?;
-        guard_eq(
+        guard_kind(
             "kind",
             guards.kind.as_deref(),
-            kind_name(target.kind),
+            target.kind,
             Some(&target.element_id),
         )?;
         guard_eq(
@@ -401,15 +401,54 @@ fn selector_ambiguous(message: String, element_id: Option<&str>, candidates: Vec
     })
 }
 
-const fn kind_name(kind: ElementKind) -> &'static str {
+fn guard_kind(
+    guard_name: &str,
+    expected: Option<&str>,
+    kind: ElementKind,
+    element_id: Option<&str>,
+) -> Result<()> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    if kind_guard_matches(expected, kind) {
+        return Ok(());
+    }
+    let actual = agent_view_kind_name(kind);
+    Err(selector_guard_failed(
+        format!(
+            "Selector guard {guard_name} did not match the current target: expected {expected}, actual {actual}."
+        ),
+        element_id,
+        Some(expected),
+        Some(actual),
+    ))
+}
+
+fn kind_guard_matches(expected: &str, kind: ElementKind) -> bool {
+    expected == agent_view_kind_name(kind)
+        || legacy_kind_name(kind).is_some_and(|legacy| expected == legacy)
+}
+
+const fn agent_view_kind_name(kind: ElementKind) -> &'static str {
     match kind {
         ElementKind::TextBox => "text_box",
         ElementKind::Shape => "shape",
         ElementKind::Picture => "image",
         ElementKind::Group => "group",
-        ElementKind::GraphicFrame => "graphic_frame",
-        ElementKind::Connector => "connector",
-        ElementKind::Other => "other",
+        ElementKind::GraphicFrame => "chart",
+        ElementKind::Connector | ElementKind::Other => "shape",
+    }
+}
+
+const fn legacy_kind_name(kind: ElementKind) -> Option<&'static str> {
+    match kind {
+        ElementKind::TextBox => None,
+        ElementKind::Shape => None,
+        ElementKind::Picture => None,
+        ElementKind::Group => None,
+        ElementKind::GraphicFrame => Some("graphic_frame"),
+        ElementKind::Connector => Some("connector"),
+        ElementKind::Other => Some("other"),
     }
 }
 
@@ -499,6 +538,58 @@ fn resolve_and_guard() {
 }
 
 #[cfg(test)]
+#[test]
+fn element_view_kind_guards_resolve_for_each_emitted_kind() {
+    let document = fixture_document();
+    for (id, guard_kind) in [
+        ("slide-1:shape-4", "text_box"),
+        ("slide-1:pic-5", "image"),
+        ("slide-1:group-6", "group"),
+        ("slide-1:graphic-7", "chart"),
+        ("slide-1:shape-8", "shape"),
+        ("slide-1:cxn-9", "shape"),
+        ("slide-1:oth-10", "shape"),
+    ] {
+        resolve(
+            &document,
+            &Selector::ElementId {
+                id: id.to_owned(),
+                guards: Some(Guards {
+                    kind: Some(guard_kind.to_owned()),
+                    ..Guards::default()
+                }),
+            },
+        )
+        .unwrap_or_else(|error| panic!("{id} should resolve with kind {guard_kind}: {error:?}"));
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn legacy_kind_guard_aliases_still_resolve() {
+    let document = fixture_document();
+    for (id, guard_kind) in [
+        ("slide-1:graphic-7", "graphic_frame"),
+        ("slide-1:cxn-9", "connector"),
+        ("slide-1:oth-10", "other"),
+    ] {
+        resolve(
+            &document,
+            &Selector::ElementId {
+                id: id.to_owned(),
+                guards: Some(Guards {
+                    kind: Some(guard_kind.to_owned()),
+                    ..Guards::default()
+                }),
+            },
+        )
+        .unwrap_or_else(|error| {
+            panic!("{id} should resolve with legacy kind {guard_kind}: {error:?}")
+        });
+    }
+}
+
+#[cfg(test)]
 fn fixture_document() -> TestPresentationDocument {
     let mut package = Package::new();
     insert(&mut package, "ppt/presentation.xml", presentation_xml());
@@ -542,5 +633,5 @@ fn presentation_xml() -> &'static [u8] {
 
 #[cfg(test)]
 fn slide_xml() -> &'static [u8] {
-    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="4" name="Title 1"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:p><a:r><a:t>Quarterly Results</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="4" name="Title 1"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:p><a:r><a:t>Quarterly Results</a:t></a:r></a:p></p:txBody></p:sp><p:pic><p:nvPicPr><p:cNvPr id="5" name="Picture 1"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill/><p:spPr/></p:pic><p:grpSp><p:nvGrpSpPr><p:cNvPr id="6" name="Group 1"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:grpSp><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="Chart 1"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic/></p:graphicFrame><p:sp><p:nvSpPr><p:cNvPr id="8" name="Shape 1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/></p:sp><p:cxnSp><p:nvCxnSpPr><p:cNvPr id="9" name="Connector 1"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr/></p:cxnSp><p:contentPart><p:nvContentPartPr><p:cNvPr id="10" name="Unknown 1"/></p:nvContentPartPr></p:contentPart></p:spTree></p:cSld></p:sld>"#
 }

@@ -79,6 +79,13 @@ Element entries must include enough provenance for agents to target and recover 
 }
 ```
 
+The canonical element kind vocabulary is `text_box`, `image`, `shape`, `group`,
+`table`, and `chart`. Selector `guards.kind` uses this same vocabulary, so an
+agent can copy an `Element View.kind` value directly into a guarded element
+selector. OOXML graphic frames that are exposed as chart elements use `chart`,
+and connector or otherwise unsupported drawing elements exposed as generic
+shape elements use `shape`.
+
 ## Text Element View
 
 Flat `text` is convenient but insufficient for safe targeting. Text-capable elements should expose structured text:

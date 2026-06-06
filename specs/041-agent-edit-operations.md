@@ -64,6 +64,13 @@ Bare `slide_id` and `element_id` fields are allowed shorthand. Canonical patches
 
 Selectors must resolve to exactly one target unless the operation explicitly supports multiple targets. Fuzzy matching is forbidden by default. Guard failures return structured stale/guard error codes rather than applying best-effort edits.
 
+Element `guards.kind` uses the same snake_case vocabulary emitted by
+`Element View.kind` in the agent view schema: `text_box`, `image`, `shape`,
+`group`, `table`, and `chart`. Agents may copy an element view's `kind` value
+directly into selector guards. Implementations may accept legacy internal guard
+aliases for compatibility, but emitted views and canonical patches should use
+the agent-view vocabulary.
+
 ## V1 Operation Schemas
 
 ### `replace_text`
