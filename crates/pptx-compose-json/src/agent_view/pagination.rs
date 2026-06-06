@@ -44,6 +44,10 @@ pub const DEFAULT_LIMITS: &[DefaultLimit] = &[
         mode: "validation_report",
         limit: 50,
     },
+    DefaultLimit {
+        mode: "find_text",
+        limit: 50,
+    },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

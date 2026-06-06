@@ -39,9 +39,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    AgentView, Bounds, Capabilities, Editable, EditableSupport, ElementKind, ElementView,
-    ImageView, IntrinsicSizePx, Paragraph, PresentationView, Run, SlideView, StyleSummary,
-    TextView, XmlLocation,
+    AgentView, Bounds, Capabilities, Editable, EditableSupport, ElementKind, ElementSelector,
+    ElementView, FindTextResult, FindTextScope, ImageView, IntrinsicSizePx, Paragraph,
+    PresentationView, Run, SelectorGuards, SlideView, StyleSummary, TextMatch, TextSpan, TextView,
+    XmlLocation,
     pagination::{CursorScope, ViewMeta, default_limit, paginate},
 };
 use crate::{
@@ -86,6 +87,17 @@ pub struct ViewRequest {
     pub slide_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub element_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FindTextRequest {
+    pub query: String,
+    pub scope: FindTextScope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -199,6 +211,39 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
     }
 }
 
+pub fn find_text(pkg: &PptxPackage, req: FindTextRequest) -> Result<FindTextResult, JsonError> {
+    if req.query.is_empty() {
+        return Err(JsonError::Projection(
+            "find_text query must not be empty.".to_owned(),
+        ));
+    }
+
+    let context = ViewContext::new(pkg)?;
+    let mode = "find_text";
+    let limit = req
+        .limit
+        .unwrap_or_else(|| default_limit(mode).unwrap_or(50));
+    let scope = CursorScope {
+        document_id: &context.document_id,
+        revision: context.revision,
+        mode,
+    };
+    let matches = collect_text_matches(&context, &req.query, &req.scope)?;
+    let (page, meta, omitted_count) = paginate(&matches, limit, req.cursor.as_deref(), scope)?;
+
+    Ok(FindTextResult {
+        schema: "pptx-compose.find_text.v1".to_owned(),
+        version: 1,
+        document_id: context.document_id,
+        revision: context.revision,
+        query: req.query,
+        scope: req.scope,
+        view: meta,
+        omitted_count,
+        matches: page.into_iter().cloned().collect(),
+    })
+}
+
 #[derive(Clone)]
 struct ViewContext {
     document_id: String,
@@ -274,6 +319,107 @@ impl ViewContext {
             slides,
         }
     }
+}
+
+fn collect_text_matches(
+    context: &ViewContext,
+    query: &str,
+    scope: &FindTextScope,
+) -> Result<Vec<TextMatch>, JsonError> {
+    let mut matches = Vec::new();
+    for slide in &context.slides {
+        if let FindTextScope::Slide { slide_id } = scope
+            && slide.detail.id != *slide_id
+        {
+            continue;
+        }
+        for element in &slide.detail.elements {
+            let Some(text) = &element.text else {
+                continue;
+            };
+            for span in find_query_spans(&text.plain, query)? {
+                let (paragraph_id, run_id) = locate_text_ids(text, span.start, span.end);
+                matches.push(TextMatch {
+                    slide_id: slide.detail.id.clone(),
+                    slide_index: slide.detail.index,
+                    element_id: element.id.clone(),
+                    kind: element.kind,
+                    part: element.part.clone(),
+                    fingerprint: element.fingerprint.clone(),
+                    text_hash: text.text_hash.clone(),
+                    paragraph_id,
+                    run_id,
+                    span,
+                    matched_text: substring_by_char_span(&text.plain, span),
+                    selector: ElementSelector {
+                        selector_type: "element_id".to_owned(),
+                        id: element.id.clone(),
+                        guards: SelectorGuards {
+                            slide_id: slide.detail.id.clone(),
+                            kind: element.kind,
+                            part: element.part.clone(),
+                            text_hash: text.text_hash.clone(),
+                            fingerprint: element.fingerprint.clone(),
+                        },
+                    },
+                });
+            }
+        }
+    }
+
+    if let FindTextScope::Slide { slide_id } = scope
+        && context.slide(slide_id).is_none()
+    {
+        return Err(JsonError::NotFound {
+            kind: "slide",
+            id: slide_id.clone(),
+        });
+    }
+
+    Ok(matches)
+}
+
+fn find_query_spans(text: &str, query: &str) -> Result<Vec<TextSpan>, JsonError> {
+    let mut spans = Vec::new();
+    let mut search_start = 0;
+    while let Some(relative_start) = text[search_start..].find(query) {
+        let byte_start = search_start + relative_start;
+        let byte_end = byte_start + query.len();
+        spans.push(TextSpan {
+            start: u32::try_from(text[..byte_start].chars().count())
+                .map_err(|err| JsonError::Projection(err.to_string()))?,
+            end: u32::try_from(text[..byte_end].chars().count())
+                .map_err(|err| JsonError::Projection(err.to_string()))?,
+        });
+        search_start = byte_end;
+    }
+    Ok(spans)
+}
+
+fn locate_text_ids(text: &TextView, start: u32, end: u32) -> (Option<String>, Option<String>) {
+    let mut cursor = 0_u32;
+    for paragraph in &text.paragraphs {
+        let paragraph_start = cursor;
+        for run in &paragraph.runs {
+            let run_len = u32::try_from(run.text.chars().count()).unwrap_or(u32::MAX);
+            let run_end = cursor.saturating_add(run_len);
+            if start >= cursor && end <= run_end {
+                return (Some(paragraph.id.clone()), Some(run.id.clone()));
+            }
+            cursor = run_end;
+        }
+        if start >= paragraph_start && end <= cursor {
+            return (Some(paragraph.id.clone()), None);
+        }
+    }
+    (None, None)
+}
+
+fn substring_by_char_span(text: &str, span: TextSpan) -> String {
+    text.chars()
+        .skip(span.start as usize)
+        .take(span.end.saturating_sub(span.start) as usize)
+        .collect()
 }
 
 fn project_slides(

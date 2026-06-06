@@ -163,6 +163,70 @@ pub struct ImageView {
     pub shared_media_ref_count: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FindTextResult {
+    pub schema: String,
+    pub version: u32,
+    pub document_id: String,
+    pub revision: u32,
+    pub query: String,
+    pub scope: FindTextScope,
+    pub view: ViewMeta,
+    pub omitted_count: u32,
+    pub matches: Vec<TextMatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FindTextScope {
+    Deck,
+    Slide { slide_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextMatch {
+    pub slide_id: String,
+    pub slide_index: u32,
+    pub element_id: String,
+    pub kind: ElementKind,
+    pub part: String,
+    pub fingerprint: String,
+    pub text_hash: String,
+    pub paragraph_id: Option<String>,
+    pub run_id: Option<String>,
+    pub span: TextSpan,
+    pub matched_text: String,
+    pub selector: ElementSelector,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextSpan {
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ElementSelector {
+    #[serde(rename = "type")]
+    pub selector_type: String,
+    pub id: String,
+    pub guards: SelectorGuards,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SelectorGuards {
+    pub slide_id: String,
+    pub kind: ElementKind,
+    pub part: String,
+    pub text_hash: String,
+    pub fingerprint: String,
+}
+
 impl ImageView {
     pub fn to_json_with_binary_policy(
         &self,

@@ -13,7 +13,11 @@ use commands::legacy::{run_convert, run_to_json, run_to_pptx};
 use exit::exit_code_for;
 use output::OutputSink;
 use permissions::{PathIntent, PermissionContext};
-use pptx_compose::core::error::{Error, ErrorCode, ErrorDetails};
+use pptx_compose::{
+    PresentationDocument,
+    core::error::{Error, ErrorCode, ErrorDetails, ErrorLocation},
+    json::agent_view::{FindTextScope, views::FindTextRequest},
+};
 
 fn main() {
     let cli = match Cli::try_parse() {
@@ -43,8 +47,10 @@ fn main() {
 
 fn run(cli: Cli) -> Result<(), CliError> {
     let permissions = PermissionContext::from_global_args(&cli.global)?;
+    let sink = OutputSink::from_global_args(&cli.global);
     match cli.command {
         Commands::Inspect(args) => inspect(args, &permissions),
+        Commands::FindText(args) => find_text(args, &permissions, sink),
         Commands::Validate(args) => validate(args, &permissions),
         Commands::Apply(args) => apply(args, &permissions),
         Commands::ToJson(args) => run_to_json(args, &permissions),
@@ -54,6 +60,37 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Media(MediaCmd::Get(args)) => media_get(args, &permissions),
         Commands::Schema(args) => schema(args),
     }
+}
+
+fn find_text(
+    args: cli::FindTextArgs,
+    permissions: &PermissionContext,
+    sink: OutputSink,
+) -> Result<(), CliError> {
+    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
+    if let Some(output) = &args.output {
+        permissions.authorize_write(output, PathIntent::ReportOutput)?;
+    }
+
+    let document = PresentationDocument::open_path(&args.input).map_err(|error| {
+        CliError::from_error(error.with_location(ErrorLocation {
+            part: Some(args.input.display().to_string()),
+            ..ErrorLocation::default()
+        }))
+    })?;
+    let scope = match args.slide_id {
+        Some(slide_id) => FindTextScope::Slide { slide_id },
+        None => FindTextScope::Deck,
+    };
+    let result = document
+        .find_text(FindTextRequest {
+            query: args.query,
+            scope,
+            cursor: args.cursor,
+            limit: args.limit,
+        })
+        .map_err(CliError::from_error)?;
+    sink.emit_json(&result, output::OutputDest::from(args.output))
 }
 
 fn inspect(args: cli::InspectArgs, permissions: &PermissionContext) -> Result<(), CliError> {

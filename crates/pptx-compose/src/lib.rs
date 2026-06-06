@@ -44,7 +44,7 @@ use pptx_compose_edit::{
     selectors::{self, Selector},
 };
 use pptx_compose_json::{
-    agent_view::views::ViewRequest,
+    agent_view::views::{FindTextRequest, ViewRequest},
     schemas::{PatchReport, ValidationReport},
 };
 
@@ -126,6 +126,15 @@ impl PresentationDocument {
     pub fn to_legacy_json(&self) -> Result<serde_json::Value> {
         let package = package_from_entries(&self.entries)?;
         pptx_compose_json::legacy_path_map::to_legacy_map(&package).map_err(json_error)
+    }
+
+    pub fn find_text(
+        &self,
+        request: FindTextRequest,
+    ) -> Result<pptx_compose_json::agent_view::FindTextResult> {
+        let package = package_from_entries(&self.entries)?;
+        let model = core_presentation::PresentationDocument::open(package)?;
+        pptx_compose_json::agent_view::views::find_text(&model, request).map_err(json_error)
     }
 
     pub fn from_legacy_json(value: serde_json::Value) -> Result<Self> {

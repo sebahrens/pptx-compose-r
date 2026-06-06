@@ -83,6 +83,13 @@ impl ImportMediaOutput {
     }
 }
 
+impl FindTextOutput {
+    #[must_use]
+    pub fn found(result: pptx_compose::json::agent_view::FindTextResult) -> Self {
+        Self(success_envelope(json!(result)))
+    }
+}
+
 impl ApplyPatchOutput {
     #[must_use]
     pub fn applied(session_id: &str, revision: u64, dry_run: bool) -> Self {

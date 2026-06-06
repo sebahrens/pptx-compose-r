@@ -41,6 +41,7 @@ pub struct GlobalArgs {
 #[derive(Debug, Eq, PartialEq, Subcommand)]
 pub enum Commands {
     Inspect(InspectArgs),
+    FindText(FindTextArgs),
     Validate(ValidateArgs),
     Apply(ApplyArgs),
     ToJson(LegacyToJsonArgs),
@@ -75,6 +76,20 @@ pub enum InspectFormat {
 pub enum InspectDetail {
     Summary,
     Full,
+}
+
+#[derive(Args, Debug, Eq, PartialEq)]
+pub struct FindTextArgs {
+    pub input: PathBuf,
+    pub query: String,
+    #[arg(long)]
+    pub slide_id: Option<String>,
+    #[arg(long)]
+    pub cursor: Option<String>,
+    #[arg(long, value_name = "N")]
+    pub limit: Option<u32>,
+    #[arg(long)]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Args, Debug, Eq, PartialEq)]

@@ -14,7 +14,10 @@ pub mod resources;
 pub mod sessions;
 pub mod tools;
 
-use pptx_compose::edit::patch::Patch;
+use pptx_compose::{
+    edit::patch::Patch,
+    json::agent_view::{FindTextResult, FindTextScope, views::FindTextRequest},
+};
 use sessions::SessionStore;
 
 const RAW_GET_PART_XML: &str = "pptx_get_part_xml";
@@ -202,7 +205,7 @@ pub struct GetElementInput {
 pub struct FindTextInput {
     pub session_id: String,
     pub query: String,
-    pub scope: String,
+    pub scope: FindTextScope,
     pub cursor: Option<String>,
     pub limit: Option<u32>,
 }
@@ -441,9 +444,22 @@ impl PptxServer {
     )]
     pub async fn pptx_find_text(
         &self,
-        _input: rmcp::handler::server::wrapper::Parameters<FindTextInput>,
-    ) -> rmcp::Json<outputs::FindTextOutput> {
-        rmcp::Json(outputs::FindTextOutput::stub("pptx_find_text"))
+        input: rmcp::handler::server::wrapper::Parameters<FindTextInput>,
+    ) -> Result<Json<outputs::FindTextOutput>, rmcp::model::CallToolResult> {
+        let session = self
+            .sessions
+            .get(&input.0.session_id)
+            .map_err(outputs::map_error)?;
+        let result: FindTextResult = session
+            .package
+            .find_text(FindTextRequest {
+                query: input.0.query,
+                scope: input.0.scope,
+                cursor: input.0.cursor,
+                limit: input.0.limit,
+            })
+            .map_err(outputs::map_error)?;
+        Ok(rmcp::Json(outputs::FindTextOutput::found(result)))
     }
 
     /// Stage media bytes or a path as a media_ref.

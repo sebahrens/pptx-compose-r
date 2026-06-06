@@ -9,6 +9,7 @@ use pptx_compose::{
         zip::reader::{RawEntry, from_bytes},
     },
     edit::patch::parse_patch,
+    json::agent_view::{FindTextScope, views::FindTextRequest},
 };
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
@@ -105,6 +106,43 @@ fn no_edit_rezip_preserves_canonical_document_id() {
     let reopened = PresentationDocument::from_bytes(&written).expect("written deck reopens");
     let validation = reopened.validate().expect("validation report builds");
     assert_eq!(validation.document_id, original_id);
+}
+
+#[test]
+fn find_text_returns_selector_ready_hits() {
+    let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
+    let result = document
+        .find_text(FindTextRequest {
+            query: "Original".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds");
+
+    assert_eq!(result.schema, "pptx-compose.find_text.v1");
+    assert_eq!(result.matches.len(), 1);
+    let hit = &result.matches[0];
+    assert_eq!(hit.slide_id, "slide-1");
+    assert_eq!(hit.matched_text, "Original");
+    assert_eq!(hit.span.start, 0);
+    assert_eq!(hit.span.end, 8);
+    assert!(
+        hit.paragraph_id
+            .as_deref()
+            .is_some_and(|id| id.ends_with(":p0"))
+    );
+    assert!(
+        hit.run_id
+            .as_deref()
+            .is_some_and(|id| id.ends_with(":p0:r0"))
+    );
+    assert_eq!(hit.selector.selector_type, "element_id");
+    assert_eq!(hit.selector.id, hit.element_id);
+    assert_eq!(hit.selector.guards.slide_id, hit.slide_id);
+    assert_eq!(hit.selector.guards.part, hit.part);
+    assert_eq!(hit.selector.guards.text_hash, hit.text_hash);
+    assert_eq!(hit.selector.guards.fingerprint, hit.fingerprint);
 }
 
 #[test]
