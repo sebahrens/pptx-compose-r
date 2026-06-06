@@ -7,7 +7,7 @@ use pptx_compose_core::{
     },
     pptx::{
         ids::ElementKind,
-        media::{IMAGE_REL_TYPE, next_media_part_name, shared_media_ref_count},
+        media::{IMAGE_REL_TYPE, next_media_part_name},
     },
     xml::{
         document::{XmlAttribute, XmlDocument, XmlElement, XmlNode},
@@ -122,17 +122,9 @@ impl ReplaceImage {
             .with_location(self.location(Some(target), None))
         })?;
 
-        let old_media_part = relationship_target_part(package, &target.part, &embed_rel_id)
-            .map_err(|error| {
-                error.with_location(self.location(Some(target), Some(embed_rel_id.clone())))
-            })?;
-        if shared_media_ref_count(package, &old_media_part) > 1 && self.allow_shared_mutation {
-            return Err(Error::new(
-                ErrorCode::UnsupportedEdit,
-                "shared_media: in-place mutation of a shared media part is not implemented; use retarget_picture.",
-            )
-            .with_location(self.location(Some(target), Some(embed_rel_id))));
-        }
+        relationship_target_part(package, &target.part, &embed_rel_id).map_err(|error| {
+            error.with_location(self.location(Some(target), Some(embed_rel_id.clone())))
+        })?;
 
         let extension = extension_for_content_type(&self.content_type).ok_or_else(|| {
             Error::new(
@@ -573,7 +565,7 @@ pub mod retargets_not_shared {
             element_id: "slide-1:pic-1".to_owned(),
             media_ref: "replacement".to_owned(),
             content_type: "image/png".to_owned(),
-            allow_shared_mutation: false,
+            allow_shared_mutation: true,
         };
         let effects = operation
             .apply(&mut package, &target(&slide1), &media_inputs())
