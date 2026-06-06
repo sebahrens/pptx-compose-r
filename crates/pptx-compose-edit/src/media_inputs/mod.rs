@@ -1,3 +1,4 @@
+pub mod limits;
 pub mod manifest;
 pub mod sniff;
 
@@ -10,6 +11,7 @@ use std::{
 use pptx_compose_core::error::{Error, ErrorCode, Result};
 use pptx_compose_core::provenance::checksum::part_checksum;
 
+pub use limits::MediaLimits;
 pub use manifest::{InlineMedia, ManifestMediaBinding, MediaManifest, MediaManifestEntry};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,8 +35,17 @@ pub struct ResolvedMedia {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct MediaInputs(HashMap<String, MediaBinding>);
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaInputs {
+    bindings: HashMap<String, MediaBinding>,
+    limits: MediaLimits,
+}
+
+impl Default for MediaInputs {
+    fn default() -> Self {
+        Self::new(HashMap::new())
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExtraBindingPolicy {
@@ -56,10 +67,23 @@ pub struct MediaInputReport {
 impl MediaInputs {
     #[must_use]
     pub fn new(bindings: HashMap<String, MediaBinding>) -> Self {
-        Self(bindings)
+        Self::with_limits(bindings, MediaLimits::default())
+    }
+
+    #[must_use]
+    pub fn with_limits(bindings: HashMap<String, MediaBinding>, limits: MediaLimits) -> Self {
+        Self { bindings, limits }
     }
 
     pub fn from_manifest(manifest: &MediaManifest, media_root: &Path) -> Result<Self> {
+        Self::from_manifest_with_limits(manifest, media_root, MediaLimits::default())
+    }
+
+    pub fn from_manifest_with_limits(
+        manifest: &MediaManifest,
+        media_root: &Path,
+        limits: MediaLimits,
+    ) -> Result<Self> {
         let mut bindings = HashMap::with_capacity(manifest.media.len());
 
         for entry in &manifest.media {
@@ -77,11 +101,11 @@ impl MediaInputs {
             bindings.insert(entry.media_ref.clone(), binding);
         }
 
-        Ok(Self(bindings))
+        Ok(Self::with_limits(bindings, limits))
     }
 
     pub fn resolve(&self, media_ref: &str) -> Result<ResolvedMedia> {
-        let binding = self.0.get(media_ref).ok_or_else(|| {
+        let binding = self.bindings.get(media_ref).ok_or_else(|| {
             Error::new(
                 ErrorCode::MissingMediaRef,
                 format!("No media input is bound for media_ref `{media_ref}`."),
@@ -99,16 +123,17 @@ impl MediaInputs {
             MediaSource::Bytes(bytes) => bytes.clone(),
             MediaSource::InlineBase64(encoded) => decode_base64(encoded)?,
         };
-        if let Some(expected_len) = binding.declared_byte_length {
-            let actual_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-            if actual_len != expected_len {
-                return Err(Error::new(
-                    ErrorCode::InvalidInput,
-                    format!(
-                        "Media input `{media_ref}` byte_length declared {expected_len} but resolved {actual_len} bytes."
-                    ),
-                ));
-            }
+        let actual_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        limits::check_size(media_ref, actual_len, &self.limits)?;
+        if let Some(expected_len) = binding.declared_byte_length
+            && actual_len != expected_len
+        {
+            return Err(Error::new(
+                ErrorCode::InvalidInput,
+                format!(
+                    "Media input `{media_ref}` byte_length declared {expected_len} but resolved {actual_len} bytes."
+                ),
+            ));
         }
         if let Some(expected_sha256) = &binding.declared_sha256 {
             let actual_sha256 = part_checksum(&bytes);
@@ -136,7 +161,7 @@ impl MediaInputs {
     ) -> Result<MediaInputReport> {
         let mut referenced = HashSet::new();
         for media_ref in referenced_media {
-            if !self.0.contains_key(media_ref) {
+            if !self.bindings.contains_key(media_ref) {
                 return Err(Error::new(
                     ErrorCode::MissingMediaRef,
                     format!("No media input is bound for media_ref `{media_ref}`."),
@@ -146,7 +171,7 @@ impl MediaInputs {
         }
 
         let mut warnings = Vec::new();
-        for media_ref in self.0.keys() {
+        for media_ref in self.bindings.keys() {
             if referenced.contains(media_ref.as_str()) {
                 continue;
             }
