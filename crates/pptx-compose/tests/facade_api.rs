@@ -1,4 +1,10 @@
-use std::{collections::HashMap, fs, io::Cursor, io::Write, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    fs,
+    io::Cursor,
+    io::Write,
+    path::Path,
+};
 
 use pptx_compose::{
     AgentViewOptions, ApplyPatchOptions, MediaInputs, OpenOptions, Patch, PresentationDocument,
@@ -433,6 +439,137 @@ fn add_image_write_reopens_with_content_type_and_relationship() {
 }
 
 #[test]
+fn v1_edit_operations_round_trip_with_exact_dirty_parts() {
+    assert_successful_edit_round_trip(
+        "replace_text",
+        text_deck_with_clean_extras(),
+        serde_json::json!({
+            "operation_id": "replace-title",
+            "op": "replace_text",
+            "element_id": "slide-1:shape-3",
+            "text": "Round-tripped title"
+        }),
+        MediaInputs::default(),
+        &["ppt/slides/slide1.xml"],
+        &[],
+    );
+    assert_successful_edit_round_trip(
+        "add_text_box",
+        text_deck_with_clean_extras(),
+        serde_json::json!({
+            "operation_id": "add-caption",
+            "op": "add_text_box",
+            "slide_id": "slide-1",
+            "text": "New caption",
+            "bounds": { "x": 1828800, "y": 1828800, "cx": 1828800, "cy": 457200 },
+            "name": "Caption",
+            "alt_text": "Generated caption"
+        }),
+        MediaInputs::default(),
+        &["ppt/slides/slide1.xml"],
+        &[],
+    );
+    assert_successful_edit_round_trip(
+        "move_resize_element",
+        text_deck_with_clean_extras(),
+        serde_json::json!({
+            "operation_id": "move-title",
+            "op": "move_resize_element",
+            "element_id": "slide-1:shape-3",
+            "bounds": { "x": 457200, "y": 914400, "cx": 2743200, "cy": 685800 }
+        }),
+        MediaInputs::default(),
+        &["ppt/slides/slide1.xml"],
+        &[],
+    );
+    assert_successful_edit_round_trip(
+        "set_alt_text",
+        text_deck_with_clean_extras(),
+        serde_json::json!({
+            "operation_id": "alt-title",
+            "op": "set_alt_text",
+            "element_id": "slide-1:shape-3",
+            "title": "Accessible title",
+            "description": "Updated accessible description"
+        }),
+        MediaInputs::default(),
+        &["ppt/slides/slide1.xml"],
+        &[],
+    );
+    assert_successful_edit_round_trip(
+        "add_image",
+        text_deck_with_clean_extras(),
+        serde_json::json!({
+            "operation_id": "add-thumb",
+            "op": "add_image",
+            "slide_id": "slide-1",
+            "media_ref": "new-image",
+            "content_type": "image/png",
+            "bounds": { "x": 0, "y": 2743200, "cx": 914400, "cy": 914400 },
+            "name": "Thumbnail",
+            "alt_text": "Thumbnail image"
+        }),
+        media_inputs("new-image", "image/png", tiny_png()),
+        &[
+            "ppt/media/image2.png",
+            "ppt/slides/_rels/slide1.xml.rels",
+            "ppt/slides/slide1.xml",
+        ],
+        &["ppt/media/image2.png", "ppt/slides/_rels/slide1.xml.rels"],
+    );
+    assert_successful_edit_round_trip(
+        "replace_image",
+        image_deck_with_clean_extras(),
+        serde_json::json!({
+            "operation_id": "replace-hero",
+            "op": "replace_image",
+            "element_id": "slide-1:pic-4",
+            "media_ref": "replacement-image",
+            "content_type": "image/png"
+        }),
+        media_inputs("replacement-image", "image/png", tiny_png()),
+        &["ppt/media/image2.png", "ppt/slides/_rels/slide1.xml.rels"],
+        &["ppt/media/image2.png"],
+    );
+}
+
+#[test]
+fn failed_multi_operation_patch_leaves_package_byte_identical() {
+    let bytes = text_deck_with_clean_extras();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "failed-atomic-patch",
+        vec![
+            serde_json::json!({
+                "operation_id": "replace-before-failure",
+                "op": "replace_text",
+                "element_id": "slide-1:shape-3",
+                "text": "This must not persist"
+            }),
+            serde_json::json!({
+                "operation_id": "invalid-alt-text",
+                "op": "set_alt_text",
+                "element_id": "slide-1:shape-3"
+            }),
+        ],
+    );
+
+    let error = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect_err("multi-operation patch fails before mutating");
+    assert_eq!(error.code(), ErrorCode::InvalidInput);
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("unchanged deck writes");
+    assert_eq!(written, bytes);
+}
+
+#[test]
 fn add_image_dry_run_uses_edit_layer_validation() {
     let bytes = text_deck();
     assert_add_image_dry_run_failure(
@@ -584,6 +721,137 @@ fn merge_object(target: &mut serde_json::Value, patch: serde_json::Value) {
     }
 }
 
+fn assert_successful_edit_round_trip(
+    operation_name: &str,
+    bytes: Vec<u8>,
+    operation: serde_json::Value,
+    media: MediaInputs,
+    expected_changed_parts: &[&str],
+    expected_added_parts: &[&str],
+) {
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(&bytes, operation_name, vec![operation]);
+
+    let report = document
+        .apply_patch(patch, media)
+        .unwrap_or_else(|error| panic!("{operation_name} applies: {error}"));
+    assert_part_list_eq(
+        &report.changed_parts,
+        expected_changed_parts,
+        operation_name,
+        "report.changed_parts",
+    );
+    assert!(
+        !report.changed_parts.is_empty(),
+        "{operation_name}: changed_parts must be non-empty"
+    );
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .unwrap_or_else(|error| panic!("{operation_name} edited deck writes: {error}"));
+    let reopened = PresentationDocument::from_bytes(&written)
+        .unwrap_or_else(|error| panic!("{operation_name} written deck reopens: {error}"));
+    let validation = reopened
+        .validate()
+        .unwrap_or_else(|error| panic!("{operation_name} written deck validates: {error}"));
+    assert_eq!(
+        validation.status,
+        pptx_compose::json::schemas::ValidationStatus::Valid,
+        "{operation_name}: validation failed"
+    );
+
+    let original_entries = from_bytes(&bytes).expect("original entries read");
+    let written_entries = from_bytes(&written).expect("written entries read");
+    assert_exact_part_deltas(
+        operation_name,
+        &original_entries,
+        &written_entries,
+        expected_changed_parts,
+        expected_added_parts,
+    );
+}
+
+fn patch_with_operations(
+    bytes: &[u8],
+    client_request_id: &str,
+    operations: Vec<serde_json::Value>,
+) -> Patch {
+    parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(bytes),
+        "base_revision": 1,
+        "client_request_id": client_request_id,
+        "operations": operations
+    }))
+    .expect("patch parses")
+}
+
+fn assert_exact_part_deltas(
+    operation_name: &str,
+    original_entries: &[RawEntry],
+    written_entries: &[RawEntry],
+    expected_changed_parts: &[&str],
+    expected_added_parts: &[&str],
+) {
+    let expected_changed = part_set(expected_changed_parts);
+    let expected_added = part_set(expected_added_parts);
+    assert!(
+        expected_added.is_subset(&expected_changed),
+        "{operation_name}: added parts must also be reported as changed"
+    );
+
+    let original_by_name = entries_by_zip_name(original_entries);
+    let written_by_name = entries_by_zip_name(written_entries);
+    let original_names = original_by_name.keys().cloned().collect::<BTreeSet<_>>();
+    let written_names = written_by_name.keys().cloned().collect::<BTreeSet<_>>();
+    let added = written_names
+        .difference(&original_names)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(added, expected_added, "{operation_name}: added part set");
+
+    for name in original_names {
+        let original = original_by_name
+            .get(&name)
+            .expect("original entry is indexed");
+        let written = written_by_name
+            .get(&name)
+            .unwrap_or_else(|| panic!("{operation_name}: {name} was dropped"));
+        if expected_changed.contains(name.as_str()) {
+            assert_ne!(
+                written.bytes, original.bytes,
+                "{operation_name}: expected {name} to change"
+            );
+        } else {
+            assert_eq!(
+                written.bytes, original.bytes,
+                "{operation_name}: clean part {name} changed"
+            );
+        }
+    }
+}
+
+fn assert_part_list_eq(actual: &[String], expected: &[&str], operation_name: &str, label: &str) {
+    let actual = actual.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let expected = expected.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(actual, expected, "{operation_name}: {label}");
+}
+
+fn part_set(parts: &[&str]) -> BTreeSet<String> {
+    parts.iter().map(|part| (*part).to_owned()).collect()
+}
+
+fn entries_by_zip_name(entries: &[RawEntry]) -> BTreeMap<String, &RawEntry> {
+    entries
+        .iter()
+        .map(|entry| (entry.name.zip_entry_name().to_owned(), entry))
+        .collect()
+}
+
 fn noop_patch(bytes: &[u8]) -> Patch {
     serde_json::from_value(serde_json::json!({
         "schema": "pptx-compose.patch.v1",
@@ -719,6 +987,52 @@ fn text_deck() -> Vec<u8> {
     )
 }
 
+fn text_deck_with_clean_extras() -> Vec<u8> {
+    zip_entries(
+        [
+            (
+                "[Content_Types].xml",
+                content_types_with_png_and_unknown().as_bytes(),
+            ),
+            ("_rels/.rels", root_rels().as_bytes()),
+            ("ppt/presentation.xml", presentation().as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", text_slide().as_bytes()),
+            ("ppt/media/image1.png", &tiny_png()),
+            ("custom/unknown.bin", b"unknown payload"),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
+fn image_deck_with_clean_extras() -> Vec<u8> {
+    zip_entries(
+        [
+            (
+                "[Content_Types].xml",
+                content_types_with_png_and_unknown().as_bytes(),
+            ),
+            ("_rels/.rels", root_rels().as_bytes()),
+            ("ppt/presentation.xml", presentation().as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", image_slide().as_bytes()),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                image_slide_rels().as_bytes(),
+            ),
+            ("ppt/media/image1.png", &tiny_png()),
+            ("custom/unknown.bin", b"unknown payload"),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
 fn duplicate_slide_id_deck() -> Vec<u8> {
     zip_entries(
         [
@@ -790,6 +1104,19 @@ fn content_types() -> String {
         .to_owned()
 }
 
+fn content_types_with_png_and_unknown() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="png" ContentType="image/png"/>
+  <Default Extension="bin" ContentType="application/octet-stream"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>"#
+        .to_owned()
+}
+
 fn root_rels() -> String {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -822,9 +1149,18 @@ fn presentation_rels() -> String {
         .to_owned()
 }
 
+fn image_slide_rels() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>
+</Relationships>"#
+        .to_owned()
+}
+
 fn text_slide() -> String {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <p:cSld>
     <p:spTree>
       <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
@@ -834,6 +1170,34 @@ fn text_slide() -> String {
         <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
         <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Original title</a:t></a:r></a:p></p:txBody>
       </p:sp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+        .to_owned()
+}
+
+fn image_slide() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="3" name="Title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Original title</a:t></a:r></a:p></p:txBody>
+      </p:sp>
+      <p:pic>
+        <p:nvPicPr><p:cNvPr id="4" name="Hero"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>
+        <p:blipFill><a:blip r:embed="rId2"/></p:blipFill>
+        <p:spPr><a:xfrm><a:off x="0" y="1828800"/><a:ext cx="914400" cy="914400"/></a:xfrm></p:spPr>
+      </p:pic>
+      <p:pic>
+        <p:nvPicPr><p:cNvPr id="5" name="Shared Hero"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>
+        <p:blipFill><a:blip r:embed="rId3"/></p:blipFill>
+        <p:spPr><a:xfrm><a:off x="914400" y="1828800"/><a:ext cx="914400" cy="914400"/></a:xfrm></p:spPr>
+      </p:pic>
     </p:spTree>
   </p:cSld>
 </p:sld>"#
