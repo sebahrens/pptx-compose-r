@@ -1,4 +1,4 @@
-use std::{fs, io::Cursor, io::Write, path::Path};
+use std::{collections::HashMap, fs, io::Cursor, io::Write, path::Path};
 
 use pptx_compose::{
     AgentViewOptions, ApplyPatchOptions, MediaInputs, OpenOptions, Patch, PresentationDocument,
@@ -8,7 +8,10 @@ use pptx_compose::{
         provenance::document_id::document_id as provenance_document_id,
         zip::reader::{RawEntry, from_bytes},
     },
-    edit::patch::parse_patch,
+    edit::{
+        media_inputs::{MediaBinding, MediaSource},
+        patch::parse_patch,
+    },
     json::agent_view::{FindTextScope, views::FindTextRequest},
 };
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
@@ -201,6 +204,71 @@ fn replace_text_apply_writes_only_dirtied_slide_part() {
 }
 
 #[test]
+fn add_image_write_reopens_with_content_type_and_relationship() {
+    let bytes = text_deck();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let patch = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(&bytes),
+        "base_revision": 1,
+        "client_request_id": "add-image-facade",
+        "operations": [{
+            "operation_id": "add-hero",
+            "op": "add_image",
+            "slide_id": "slide-1",
+            "media_ref": "hero",
+            "content_type": "image/png",
+            "bounds": { "x": 0, "y": 0, "cx": 914400, "cy": 914400 }
+        }]
+    }))
+    .expect("patch parses");
+
+    let report = document
+        .apply_patch(patch, media_inputs("hero", "image/png", tiny_png()))
+        .expect("add_image applies");
+    let mut changed_parts = report.changed_parts.clone();
+    changed_parts.sort();
+    assert_eq!(
+        changed_parts,
+        vec![
+            "[Content_Types].xml",
+            "ppt/media/image1.png",
+            "ppt/slides/_rels/slide1.xml.rels",
+            "ppt/slides/slide1.xml",
+        ]
+    );
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("edited deck writes");
+    let reopened = PresentationDocument::from_bytes(&written).expect("written deck reopens");
+    let validation = reopened.validate().expect("written deck validates");
+    assert_eq!(
+        validation.status,
+        pptx_compose::json::schemas::ValidationStatus::Valid
+    );
+
+    let entries = from_bytes(&written).expect("written entries read");
+    let content_types = entry_text(&entries, "[Content_Types].xml");
+    assert!(content_types.contains(r#"Extension="png""#));
+    assert!(content_types.contains(r#"ContentType="image/png""#));
+    let slide_rels = entry_text(&entries, "ppt/slides/_rels/slide1.xml.rels");
+    assert!(slide_rels.contains(
+        r#"Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image""#
+    ));
+    assert!(slide_rels.contains(r#"Target="../media/image1.png""#));
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry.name.zip_entry_name() == "ppt/media/image1.png")
+    );
+}
+
+#[test]
 fn successful_real_applies_increment_session_revision_and_reject_stale_patch() {
     let bytes = text_deck();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
@@ -305,6 +373,40 @@ fn document_id_from_entries(entries: &[RawEntry]) -> String {
         .collect::<Vec<_>>();
 
     provenance_document_id(&ordinary_parts, content_types_bytes)
+}
+
+fn media_inputs(media_ref: &str, content_type: &str, bytes: Vec<u8>) -> MediaInputs {
+    let mut bindings = HashMap::new();
+    bindings.insert(
+        media_ref.to_owned(),
+        MediaBinding {
+            content_type: content_type.to_owned(),
+            declared_sha256: None,
+            declared_byte_length: None,
+            source: MediaSource::Bytes(bytes),
+        },
+    );
+    MediaInputs::new(bindings)
+}
+
+fn tiny_png() -> Vec<u8> {
+    vec![
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ]
+}
+
+fn entry_text(entries: &[RawEntry], zip_entry_name: &str) -> String {
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name.zip_entry_name() == zip_entry_name)
+        .unwrap_or_else(|| panic!("{zip_entry_name} entry exists"));
+    std::str::from_utf8(&entry.bytes)
+        .unwrap_or_else(|error| panic!("{zip_entry_name} is UTF-8: {error}"))
+        .to_owned()
 }
 
 fn unique_dir() -> std::path::PathBuf {

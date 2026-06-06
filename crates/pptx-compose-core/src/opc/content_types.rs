@@ -3,8 +3,15 @@ use std::collections::BTreeMap;
 use crate::{
     error::{Error, Result},
     opc::part_name::PartName,
-    xml::{document::XmlElement, parser::parse_document},
+    xml::{
+        document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
+        namespaces::{NamespaceBinding, NamespaceTable},
+        parser::parse_document,
+        writer::{WriteMode, WriteOptions, write_document},
+    },
 };
+
+const CONTENT_TYPES_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ContentTypes {
@@ -67,6 +74,18 @@ impl ContentTypes {
         self.overrides.insert(part_name, content_type.into());
     }
 
+    pub fn to_xml(&self) -> Result<Vec<u8>> {
+        write_document(
+            &XmlDocument {
+                declaration: Some(r#"version="1.0" encoding="UTF-8" standalone="yes""#.to_owned()),
+                nodes: vec![XmlNode::Element(types_element(self))],
+            },
+            &WriteOptions {
+                mode: WriteMode::Deterministic,
+            },
+        )
+    }
+
     #[must_use]
     pub fn default_for_ext(&self, extension: &str) -> Option<&str> {
         self.defaults
@@ -90,6 +109,87 @@ impl ContentTypes {
                     .map(String::as_str)
             })
     }
+
+    pub fn defaults(&self) -> impl ExactSizeIterator<Item = (&str, &str)> {
+        self.defaults
+            .iter()
+            .map(|(extension, content_type)| (extension.as_str(), content_type.as_str()))
+    }
+
+    pub fn overrides(&self) -> impl ExactSizeIterator<Item = (&PartName, &str)> {
+        self.overrides
+            .iter()
+            .map(|(part_name, content_type)| (part_name, content_type.as_str()))
+    }
+}
+
+fn types_element(content_types: &ContentTypes) -> XmlElement {
+    let mut namespaces = NamespaceTable::new();
+    namespaces.push(NamespaceBinding::default(CONTENT_TYPES_NS));
+
+    let mut children =
+        Vec::with_capacity(content_types.defaults.len() + content_types.overrides.len());
+    children.extend(
+        content_types
+            .defaults()
+            .map(|(extension, content_type)| default_element(extension, content_type)),
+    );
+    children.extend(
+        content_types
+            .overrides()
+            .map(|(part_name, content_type)| override_element(part_name, content_type)),
+    );
+
+    XmlElement {
+        name: QualifiedName::from_raw("Types"),
+        attributes: vec![XmlAttribute {
+            name: QualifiedName::from_raw("xmlns"),
+            value: CONTENT_TYPES_NS.to_owned(),
+            namespace_declaration: true,
+        }],
+        namespaces,
+        children,
+    }
+}
+
+fn default_element(extension: &str, content_type: &str) -> XmlNode {
+    XmlNode::Element(XmlElement {
+        name: QualifiedName::from_raw("Default"),
+        attributes: vec![
+            XmlAttribute {
+                name: QualifiedName::from_raw("Extension"),
+                value: extension.to_owned(),
+                namespace_declaration: false,
+            },
+            XmlAttribute {
+                name: QualifiedName::from_raw("ContentType"),
+                value: content_type.to_owned(),
+                namespace_declaration: false,
+            },
+        ],
+        namespaces: NamespaceTable::new(),
+        children: Vec::new(),
+    })
+}
+
+fn override_element(part_name: &PartName, content_type: &str) -> XmlNode {
+    XmlNode::Element(XmlElement {
+        name: QualifiedName::from_raw("Override"),
+        attributes: vec![
+            XmlAttribute {
+                name: QualifiedName::from_raw("PartName"),
+                value: part_name.as_str().to_owned(),
+                namespace_declaration: false,
+            },
+            XmlAttribute {
+                name: QualifiedName::from_raw("ContentType"),
+                value: content_type.to_owned(),
+                namespace_declaration: false,
+            },
+        ],
+        namespaces: NamespaceTable::new(),
+        children: Vec::new(),
+    })
 }
 
 fn parse_default(element: &XmlElement, content_types: &mut ContentTypes) -> Result<()> {
@@ -206,4 +306,25 @@ fn rejects_missing_or_non_types_root() {
 
     let wrong_root = ContentTypes::parse(br#"<NotTypes/>"#).expect_err("wrong root rejected");
     assert_eq!(wrong_root.code(), ErrorCode::UnsupportedPackage);
+}
+
+#[cfg(test)]
+#[test]
+fn serializes_deterministically() {
+    let mut content_types = ContentTypes::new();
+    content_types.insert_default("xml", "application/xml");
+    content_types.insert_default("png", "image/png");
+    content_types.insert_override(
+        PartName::from_zip_entry("/ppt/slides/slide1.xml").expect("valid part name"),
+        "application/vnd.openxmlformats-officedocument.presentationml.slide+xml",
+    );
+
+    let first = content_types.to_xml().expect("content types serialize");
+    let second = content_types
+        .to_xml()
+        .expect("content types serialize again");
+    assert_eq!(first, second);
+
+    let reparsed = ContentTypes::parse(&first).expect("serialized content types parse");
+    assert_eq!(reparsed, content_types);
 }

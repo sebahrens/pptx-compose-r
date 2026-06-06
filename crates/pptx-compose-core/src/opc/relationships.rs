@@ -3,8 +3,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     error::{Error, ErrorCode, Result},
     opc::part_name::PartName,
-    xml::{document::XmlElement, parser::parse_document},
+    xml::{
+        document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
+        namespaces::{NamespaceBinding, NamespaceTable},
+        parser::parse_document,
+        writer::{WriteMode, WriteOptions, write_document},
+    },
 };
+
+const RELATIONSHIPS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum RelationshipSource {
@@ -18,6 +25,15 @@ impl RelationshipSource {
         match self {
             Self::Package => None,
             Self::Part(part_name) => Some(part_name),
+        }
+    }
+
+    #[must_use]
+    pub fn relationship_part_name(&self) -> PartName {
+        match self {
+            Self::Package => PartName::from_zip_entry("/_rels/.rels")
+                .expect("package root relationships part name is valid"),
+            Self::Part(part_name) => relationship_part_for_source(part_name),
         }
     }
 }
@@ -161,6 +177,10 @@ impl RelationshipSet {
             candidate_suffix = increment_decimal(&candidate_suffix);
         }
     }
+
+    pub fn to_xml(&self) -> Result<Vec<u8>> {
+        relationships_to_xml(&self.rels)
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -260,6 +280,80 @@ impl RelationshipGraph {
                 target: relationship.target.as_str(),
             })
     }
+
+    #[must_use]
+    pub fn relationships_by_source(&self) -> BTreeMap<RelationshipSource, Vec<Relationship>> {
+        let mut by_source: BTreeMap<RelationshipSource, Vec<Relationship>> = BTreeMap::new();
+        for relationship in &self.relationships {
+            by_source
+                .entry(relationship.source.clone())
+                .or_default()
+                .push(relationship.clone());
+        }
+        by_source
+    }
+}
+
+pub fn relationships_to_xml(relationships: &[Relationship]) -> Result<Vec<u8>> {
+    let mut namespaces = NamespaceTable::new();
+    namespaces.push(NamespaceBinding::default(RELATIONSHIPS_NS));
+    let children = relationships
+        .iter()
+        .map(relationship_element)
+        .collect::<Vec<_>>();
+
+    write_document(
+        &XmlDocument {
+            declaration: Some(r#"version="1.0" encoding="UTF-8" standalone="yes""#.to_owned()),
+            nodes: vec![XmlNode::Element(XmlElement {
+                name: QualifiedName::from_raw("Relationships"),
+                attributes: vec![XmlAttribute {
+                    name: QualifiedName::from_raw("xmlns"),
+                    value: RELATIONSHIPS_NS.to_owned(),
+                    namespace_declaration: true,
+                }],
+                namespaces,
+                children,
+            })],
+        },
+        &WriteOptions {
+            mode: WriteMode::Deterministic,
+        },
+    )
+}
+
+fn relationship_element(relationship: &Relationship) -> XmlNode {
+    let mut attributes = vec![
+        XmlAttribute {
+            name: QualifiedName::from_raw("Id"),
+            value: relationship.id.clone(),
+            namespace_declaration: false,
+        },
+        XmlAttribute {
+            name: QualifiedName::from_raw("Type"),
+            value: relationship.rel_type.clone(),
+            namespace_declaration: false,
+        },
+        XmlAttribute {
+            name: QualifiedName::from_raw("Target"),
+            value: relationship.target.clone(),
+            namespace_declaration: false,
+        },
+    ];
+    if relationship.target_mode == TargetMode::External {
+        attributes.push(XmlAttribute {
+            name: QualifiedName::from_raw("TargetMode"),
+            value: "External".to_owned(),
+            namespace_declaration: false,
+        });
+    }
+
+    XmlNode::Element(XmlElement {
+        name: QualifiedName::from_raw("Relationship"),
+        attributes,
+        namespaces: NamespaceTable::new(),
+        children: Vec::new(),
+    })
 }
 
 pub fn resolve_internal_target(source: &RelationshipSource, target: &str) -> Result<PartName> {
@@ -348,6 +442,17 @@ fn split_part_segments(part_name: &PartName) -> Vec<String> {
         .collect()
 }
 
+fn relationship_part_for_source(source: &PartName) -> PartName {
+    let path = source.as_str().trim_start_matches('/');
+    let (directory, file_name) = path.rsplit_once('/').unwrap_or(("", path));
+    let rels_path = if directory.is_empty() {
+        format!("_rels/{file_name}.rels")
+    } else {
+        format!("{directory}/_rels/{file_name}.rels")
+    };
+    PartName::from_zip_entry(rels_path.as_str()).expect("relationship part name is valid")
+}
+
 fn relationship_id_suffix(id: &str) -> Option<&str> {
     let suffix = id.strip_prefix("rId")?;
     if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -424,6 +529,36 @@ fn parse_and_resolve() {
         "/ppt/slides/slide1.xml"
     );
     assert!(graph.resolve(&source, "rId2").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn serializes_relationships_deterministically() {
+    let source = PartName::from_zip_entry("/ppt/slides/slide1.xml").expect("valid source");
+    let relationships = vec![
+        Relationship::internal(
+            RelationshipSource::Part(source.clone()),
+            "rId1",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            "../media/image1.png",
+        ),
+        Relationship::external(
+            RelationshipSource::Part(source),
+            "rId2",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            "https://example.test/?a=1&b=2",
+        ),
+    ];
+
+    let first = relationships_to_xml(&relationships).expect("relationships serialize");
+    let second = relationships_to_xml(&relationships).expect("relationships serialize again");
+    assert_eq!(first, second);
+
+    let parsed_source = PartName::from_zip_entry("/ppt/slides/slide1.xml").expect("valid source");
+    let reparsed = RelationshipSet::parse(&parsed_source, &first).expect("relationships parse");
+    assert_eq!(reparsed.rels.len(), 2);
+    assert_eq!(reparsed.rels[1].target, "https://example.test/?a=1&amp;b=2");
+    assert_eq!(reparsed.rels[1].target_mode, TargetMode::External);
 }
 
 #[cfg(test)]

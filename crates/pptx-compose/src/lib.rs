@@ -1,7 +1,7 @@
 #![deny(warnings)]
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions as FsOpenOptions},
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -23,7 +23,9 @@ use core::{
         package::Package,
         part::Part,
         part_name::PartName,
-        relationships::{Relationship, RelationshipSet, RelationshipSource, TargetMode},
+        relationships::{
+            Relationship, RelationshipSet, RelationshipSource, TargetMode, relationships_to_xml,
+        },
     },
     pptx::presentation as core_presentation,
     provenance::{document_id::document_id as provenance_document_id, revision},
@@ -148,11 +150,13 @@ impl PresentationDocument {
         if options.validate {
             let _report = self.validate()?;
         }
-        let entries = self.write_entries();
+        let mut package = package_from_entries(&self.entries)?;
+        apply_dirty_parts(&mut package, &self.dirty_parts);
         let output = Cursor::new(Vec::new());
-        let output = zip_writer::write_writer_with_options(
+        let output = write_package_to_writer(
             &self.source_bytes,
-            entries.as_slice(),
+            &self.entries,
+            &package,
             output,
             &zip_writer::WriteOptions {
                 mode: options.mode,
@@ -353,10 +357,12 @@ impl PresentationDocument {
         if options.validate {
             let _report = self.validate()?;
         }
-        let entries = self.write_entries();
-        zip_writer::write_writer_with_options(
+        let mut package = package_from_entries(&self.entries)?;
+        apply_dirty_parts(&mut package, &self.dirty_parts);
+        write_package_to_writer(
             &self.source_bytes,
-            entries.as_slice(),
+            &self.entries,
+            &package,
             output,
             &zip_writer::WriteOptions {
                 mode: options.mode,
@@ -398,27 +404,17 @@ impl PresentationDocument {
         &self.source_bytes
     }
 
-    fn write_entries(&self) -> Vec<WriteEntry<'_>> {
-        self.entries
-            .iter()
-            .map(|entry| {
-                if self.dirty_parts.contains(&entry.name) {
-                    WriteEntry::Dirty(DirtyEntry {
-                        name: entry.meta.original_name.as_str(),
-                        bytes: entry.bytes.as_slice(),
-                        meta: &entry.meta,
-                    })
-                } else {
-                    WriteEntry::Clean(entry)
-                }
-            })
-            .collect()
-    }
-
     fn replace_entries_from_package(&mut self, package: &Package) -> Result<()> {
+        let package = package_with_serialized_control_parts(package, Some(&self.entries))?;
+        let parts_by_name = package
+            .parts()
+            .iter()
+            .map(|part| (part.name().clone(), part.bytes().to_vec()))
+            .collect::<BTreeMap<_, _>>();
+
         for entry in &mut self.entries {
-            if let Some(part) = package.parts().get(&entry.name) {
-                entry.bytes = part.bytes().to_vec();
+            if let Some(bytes) = parts_by_name.get(&entry.name) {
+                entry.bytes.clone_from(bytes);
             }
         }
 
@@ -496,6 +492,12 @@ fn package_from_entries(entries: &[RawEntry]) -> Result<Package> {
     Ok(package)
 }
 
+fn apply_dirty_parts(package: &mut Package, dirty_parts: &BTreeSet<PartName>) {
+    for part_name in dirty_parts {
+        package.mark_dirty(part_name.clone());
+    }
+}
+
 fn document_id_from_entries(entries: &[RawEntry]) -> Result<String> {
     let content_types_bytes = entries
         .iter()
@@ -530,16 +532,166 @@ fn next_revision_value(revision: revision::Revision) -> Result<u32> {
 
 fn package_to_zip_bytes(package: &Package) -> Result<Vec<u8>> {
     let mut output = Cursor::new(Vec::new());
-    {
-        let options = zip_writer::WriteOptions::default();
-        let mut writer = PackageZipWriter::new(&mut output, &options);
-        for (index, part) in package.parts().iter().enumerate() {
-            let meta = dirty_zip_metadata(index, part.original_zip_entry_name(), part.bytes());
-            writer.write_dirty(part.original_zip_entry_name(), part.bytes(), &meta)?;
-        }
-        writer.finish()?;
-    }
+    write_package_to_writer(
+        &[],
+        &[],
+        package,
+        &mut output,
+        &zip_writer::WriteOptions::default(),
+    )?;
     Ok(output.into_inner())
+}
+
+fn write_package_to_writer<W>(
+    source_bytes: &[u8],
+    source_entries: &[RawEntry],
+    package: &Package,
+    output: W,
+    options: &zip_writer::WriteOptions,
+) -> Result<W>
+where
+    W: Write + std::io::Seek,
+{
+    let package = package_with_serialized_control_parts(package, Some(source_entries))?;
+    let dirty_metas = dirty_metadata_for_package(&package, source_entries);
+    let entries = write_entries_for_package(&package, source_entries, &dirty_metas);
+    if source_entries.is_empty() {
+        let mut writer = PackageZipWriter::new(output, options);
+        for entry in entries {
+            let WriteEntry::Dirty(entry) = entry else {
+                continue;
+            };
+            writer.write_dirty(entry.name, entry.bytes, entry.meta)?;
+        }
+        return writer.finish();
+    }
+
+    zip_writer::write_writer_with_options(source_bytes, entries.as_slice(), output, options)
+}
+
+fn package_with_serialized_control_parts(
+    package: &Package,
+    source_entries: Option<&[RawEntry]>,
+) -> Result<Package> {
+    let mut package = package.clone();
+    let serialize_all = source_entries.is_none_or(<[RawEntry]>::is_empty);
+    serialize_content_types(&mut package, serialize_all)?;
+    serialize_relationships(&mut package, serialize_all)?;
+    Ok(package)
+}
+
+fn serialize_content_types(package: &mut Package, serialize_all: bool) -> Result<()> {
+    let part_name = content_types_part()?;
+    if !serialize_all && !package.dirty_parts().contains(&part_name) {
+        return Ok(());
+    }
+
+    let bytes = package.content_types().to_xml()?;
+    upsert_part_bytes(package, part_name, bytes)
+}
+
+fn serialize_relationships(package: &mut Package, serialize_all: bool) -> Result<()> {
+    for (source, relationships) in package.relationships().relationships_by_source() {
+        let part_name = source.relationship_part_name();
+        if !serialize_all && !package.dirty_parts().contains(&part_name) {
+            continue;
+        }
+        upsert_part_bytes(package, part_name, relationships_to_xml(&relationships)?)?;
+    }
+
+    Ok(())
+}
+
+fn upsert_part_bytes(package: &mut Package, part_name: PartName, bytes: Vec<u8>) -> Result<()> {
+    if let Some(part) = package.parts_mut().get_mut(&part_name) {
+        *part.bytes_mut() = bytes;
+    } else {
+        package.insert_zip_entry(part_name.zip_entry_name(), bytes)?;
+    }
+    Ok(())
+}
+
+fn dirty_metadata_for_package(
+    package: &Package,
+    source_entries: &[RawEntry],
+) -> BTreeMap<PartName, ZipEntryMetadata> {
+    let source_by_name = source_entries
+        .iter()
+        .map(|entry| (entry.name.clone(), entry))
+        .collect::<BTreeMap<_, _>>();
+
+    package
+        .parts()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, part)| {
+            let source = source_by_name.get(part.name());
+            if !source_entries.is_empty()
+                && source.is_some()
+                && !package.dirty_parts().contains(part.name())
+            {
+                return None;
+            }
+            let meta = source.map_or_else(
+                || dirty_zip_metadata(index, part.original_zip_entry_name(), part.bytes()),
+                |entry| {
+                    dirty_zip_metadata(
+                        entry.meta.entry_index,
+                        &entry.meta.original_name,
+                        part.bytes(),
+                    )
+                },
+            );
+            Some((part.name().clone(), meta))
+        })
+        .collect()
+}
+
+fn write_entries_for_package<'a>(
+    package: &'a Package,
+    source_entries: &'a [RawEntry],
+    dirty_metas: &'a BTreeMap<PartName, ZipEntryMetadata>,
+) -> Vec<WriteEntry<'a>> {
+    let parts_by_name = package
+        .parts()
+        .iter()
+        .map(|part| (part.name().clone(), part))
+        .collect::<BTreeMap<_, _>>();
+    let mut write_entries = source_entries
+        .iter()
+        .filter_map(|entry| {
+            let part = parts_by_name.get(&entry.name)?;
+            dirty_metas.get(part.name()).map_or_else(
+                || Some(WriteEntry::Clean(entry)),
+                |meta| {
+                    Some(WriteEntry::Dirty(DirtyEntry {
+                        name: entry.meta.original_name.as_str(),
+                        bytes: part.bytes(),
+                        meta,
+                    }))
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    for part in package.parts().iter() {
+        if source_entries
+            .iter()
+            .any(|entry| entry.name == *part.name())
+        {
+            continue;
+        }
+        let Some(meta) = dirty_metas.get(part.name()) else {
+            continue;
+        };
+        write_entries.push(WriteEntry::Dirty(DirtyEntry {
+            name: part.original_zip_entry_name(),
+            bytes: part.bytes(),
+            meta,
+        }));
+    }
+
+    write_entries
 }
 
 fn dirty_zip_metadata(index: usize, name: &str, bytes: &[u8]) -> ZipEntryMetadata {
@@ -636,6 +788,10 @@ fn parse_root_relationship(element: &XmlElement) -> Result<Relationship> {
             Relationship::external(RelationshipSource::Package, id, rel_type, target)
         }
     })
+}
+
+fn content_types_part() -> Result<PartName> {
+    PartName::from_zip_entry("[Content_Types].xml")
 }
 
 fn relationship_source_for(rels_part: &PartName) -> Result<PartName> {
