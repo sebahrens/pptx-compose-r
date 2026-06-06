@@ -199,7 +199,10 @@ fn json_errors_emits_single_envelope_to_stderr() {
     use pptx_compose::core::error::ErrorCode;
 
     let sink = OutputSink::new(true, false, true, true);
-    let err = CliError::unsupported("inspect command is not implemented yet");
+    let err = CliError::new(
+        ErrorCode::UnsupportedEdit,
+        "inspect command is not implemented yet",
+    );
     let stdout: Vec<u8> = Vec::new();
     let mut stderr = Vec::new();
 

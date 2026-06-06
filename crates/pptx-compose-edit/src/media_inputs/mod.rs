@@ -13,7 +13,10 @@ use pptx_compose_core::error::{Error, ErrorCode, Result};
 use pptx_compose_core::provenance::checksum::part_checksum;
 
 pub use limits::MediaLimits;
-pub use manifest::{InlineMedia, ManifestMediaBinding, MediaManifest, MediaManifestEntry};
+pub use manifest::{
+    InlineMedia, MEDIA_MANIFEST_SCHEMA, MEDIA_MANIFEST_VERSION, ManifestMediaBinding,
+    MediaManifest, MediaManifestEntry,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MediaSource {

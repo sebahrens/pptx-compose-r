@@ -1,24 +1,28 @@
 use std::{fmt, path::PathBuf};
 
+use schemars::JsonSchema;
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, MapAccess, Visitor},
 };
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub const MEDIA_MANIFEST_SCHEMA: &str = "pptx-compose.media_manifest.v1";
+pub const MEDIA_MANIFEST_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Eq, PartialEq, JsonSchema, Serialize)]
 pub struct MediaManifest {
     pub schema: String,
     pub version: u32,
     pub media: Vec<MediaManifestEntry>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, JsonSchema, Serialize)]
 pub struct MediaManifestEntry {
     pub media_ref: String,
     pub binding: ManifestMediaBinding,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManifestMediaBinding {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,7 +37,7 @@ pub struct ManifestMediaBinding {
     pub byte_length: Option<u64>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InlineMedia {
     pub encoding: String,

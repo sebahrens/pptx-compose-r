@@ -11,16 +11,33 @@ use cli::{Cli, Commands, MediaCmd};
 use commands::apply::apply;
 use commands::legacy::{run_convert, run_to_json, run_to_pptx};
 use exit::exit_code_for;
-use output::OutputSink;
+use output::{OutputDest, OutputSink};
 use permissions::{PathIntent, PermissionContext};
 use pptx_compose::{
-    OpenOptions, PresentationDocument,
+    AgentViewOptions, MediaPartInfo, OpenOptions, Patch, PresentationDocument,
     core::{
         error::{Error, ErrorCode, ErrorDetails, ErrorLocation},
         zip::limits::ResourceLimits,
     },
-    json::agent_view::{FindTextScope, views::FindTextRequest},
+    edit::{
+        media_inputs::{MEDIA_MANIFEST_SCHEMA, MediaManifest},
+        patch::PATCH_SCHEMA,
+    },
+    json::{
+        agent_view::{
+            AgentView, FindTextScope,
+            views::{FindTextRequest, ViewMode},
+        },
+        schema_versions::{
+            AGENT_VIEW_SCHEMA, ERROR_SCHEMA, PATCH_REPORT_SCHEMA, VALIDATION_REPORT_SCHEMA,
+        },
+        schemas::{ErrorEnvelope, PatchReport, ResultEnvelope, ResultStatus, ValidationReport},
+    },
 };
+use schemars::JsonSchema;
+use serde::Serialize;
+use serde_json::{Value, json};
+use std::{fs, path::PathBuf};
 
 fn main() {
     let cli = match Cli::try_parse() {
@@ -53,16 +70,16 @@ fn run(cli: Cli) -> Result<(), CliError> {
     let sink = OutputSink::from_global_args(&cli.global);
     let open_options = open_options_from_global_args(&cli.global)?;
     match cli.command {
-        Commands::Inspect(args) => inspect(args, &permissions),
+        Commands::Inspect(args) => inspect(args, &permissions, sink, open_options),
         Commands::FindText(args) => find_text(args, &permissions, sink, open_options),
-        Commands::Validate(args) => validate(args, &permissions),
+        Commands::Validate(args) => validate(args, &permissions, sink, open_options),
         Commands::Apply(args) => apply(args, &permissions, open_options),
         Commands::ToJson(args) => run_to_json(args, &permissions, open_options),
         Commands::ToPptx(args) => run_to_pptx(args, &permissions),
         Commands::Convert(args) => run_convert(args, &permissions, open_options),
-        Commands::Media(MediaCmd::List(args)) => media_list(args, &permissions),
-        Commands::Media(MediaCmd::Get(args)) => media_get(args, &permissions),
-        Commands::Schema(args) => schema(args),
+        Commands::Media(MediaCmd::List(args)) => media_list(args, &permissions, sink, open_options),
+        Commands::Media(MediaCmd::Get(args)) => media_get(args, &permissions, sink, open_options),
+        Commands::Schema(args) => schema(args, sink),
     }
 }
 
@@ -119,51 +136,217 @@ fn find_text(
     sink.emit_json(&result, output::OutputDest::from(args.output))
 }
 
-fn inspect(args: cli::InspectArgs, permissions: &PermissionContext) -> Result<(), CliError> {
-    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
+fn inspect(
+    args: cli::InspectArgs,
+    permissions: &PermissionContext,
+    sink: OutputSink,
+    open_options: OpenOptions,
+) -> Result<(), CliError> {
+    let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
     if let Some(output) = &args.output {
-        permissions.authorize_write(output, PathIntent::OutputPptx)?;
+        permissions.authorize_write(output, PathIntent::ReportOutput)?;
     }
     if let Some(report) = &args.report {
         permissions.authorize_write(report, PathIntent::ReportOutput)?;
     }
-    Err(CliError::unsupported(
-        "inspect command is not implemented yet",
-    ))
+
+    let document = PresentationDocument::open_path_with_options(&input, open_options)
+        .map_err(CliError::from_error)?;
+    let view = document
+        .to_agent_json_with_options(inspect_view_options(&args)?)
+        .map_err(CliError::from_error)?;
+    sink.emit_json(&view, OutputDest::from(args.output))?;
+    if args.report.is_some() {
+        let report = document.validate().map_err(CliError::from_error)?;
+        sink.emit_json(&report, OutputDest::from(args.report))?;
+    }
+    Ok(())
 }
 
-fn validate(args: cli::ValidateArgs, permissions: &PermissionContext) -> Result<(), CliError> {
-    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
+fn validate(
+    args: cli::ValidateArgs,
+    permissions: &PermissionContext,
+    sink: OutputSink,
+    open_options: OpenOptions,
+) -> Result<(), CliError> {
+    let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
     if let Some(report) = &args.report {
         permissions.authorize_write(report, PathIntent::ReportOutput)?;
     }
-    Err(CliError::unsupported(
-        "validate command is not implemented yet",
-    ))
+    let document = PresentationDocument::open_path_with_options(&input, open_options)
+        .map_err(CliError::from_error)?;
+    let report = document.validate().map_err(CliError::from_error)?;
+    sink.emit_json(&report, OutputDest::from(args.report))
 }
 
-fn media_list(args: cli::MediaListArgs, permissions: &PermissionContext) -> Result<(), CliError> {
-    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
-    Err(CliError::unsupported(
-        "media list command is not implemented yet",
-    ))
+fn media_list(
+    args: cli::MediaListArgs,
+    permissions: &PermissionContext,
+    sink: OutputSink,
+    open_options: OpenOptions,
+) -> Result<(), CliError> {
+    let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
+    let document = PresentationDocument::open_path_with_options(&input, open_options)
+        .map_err(CliError::from_error)?;
+    let result = MediaListResult {
+        media: document.media_parts().map_err(CliError::from_error)?,
+    };
+    let output = if args.json {
+        json!(result)
+    } else {
+        json!(result.media)
+    };
+    sink.emit_json(&success_envelope(output), OutputDest::Stdout)
 }
 
-fn media_get(args: cli::MediaGetArgs, permissions: &PermissionContext) -> Result<(), CliError> {
-    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
-    permissions.authorize_write(&args.output, PathIntent::OutputPptx)?;
+fn media_get(
+    args: cli::MediaGetArgs,
+    permissions: &PermissionContext,
+    sink: OutputSink,
+    open_options: OpenOptions,
+) -> Result<(), CliError> {
+    let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
+    let output = permissions.authorize_write(&args.output, PathIntent::OutputPptx)?;
     if let Some(report) = &args.report {
         permissions.authorize_write(report, PathIntent::ReportOutput)?;
     }
-    Err(CliError::unsupported(
-        "media get command is not implemented yet",
-    ))
+    let document = PresentationDocument::open_path_with_options(&input, open_options)
+        .map_err(CliError::from_error)?;
+    let bytes = document
+        .media_part_bytes(&args.package_path)
+        .map_err(CliError::from_error)?;
+    fs::write(&output, &bytes).map_err(|source| {
+        CliError::write_with_source("Could not write extracted media output.", source)
+    })?;
+
+    let info = document
+        .media_parts()
+        .map_err(CliError::from_error)?
+        .into_iter()
+        .find(|info| info.package_path == normalized_media_path(&args.package_path))
+        .unwrap_or_else(|| media_info_from_bytes(&args.package_path, &bytes));
+    let report = MediaGetReport {
+        package_path: info.package_path,
+        output,
+        content_type: info.content_type,
+        byte_length: info.byte_length,
+        checksum: info.checksum,
+    };
+    if args.report.is_some() {
+        sink.emit_json(
+            &success_envelope(json!(report)),
+            OutputDest::from(args.report),
+        )?;
+    }
+    Ok(())
 }
 
-fn schema(_args: cli::SchemaArgs) -> Result<(), CliError> {
-    Err(CliError::unsupported(
-        "schema command is not implemented yet",
-    ))
+fn schema(args: cli::SchemaArgs, sink: OutputSink) -> Result<(), CliError> {
+    let schema = match args.name.as_str() {
+        "agent-view-v1" => schema_value::<AgentView>(AGENT_VIEW_SCHEMA)?,
+        "patch-v1" => schema_value::<Patch>(PATCH_SCHEMA)?,
+        "media-manifest-v1" => schema_value::<MediaManifest>(MEDIA_MANIFEST_SCHEMA)?,
+        "patch-report-v1" => schema_value::<PatchReport>(PATCH_REPORT_SCHEMA)?,
+        "validation-report-v1" => schema_value::<ValidationReport>(VALIDATION_REPORT_SCHEMA)?,
+        "error-v1" => schema_value::<ErrorEnvelope>(ERROR_SCHEMA)?,
+        _ => {
+            return Err(CliError::invalid_input(
+                InvalidInputCause::CliArgument,
+                "Unknown schema name. Expected one of: agent-view-v1, patch-v1, media-manifest-v1, patch-report-v1, validation-report-v1, error-v1.",
+            ));
+        }
+    };
+    sink.emit_json(&schema, OutputDest::Stdout)
+}
+
+fn inspect_view_options(args: &cli::InspectArgs) -> Result<AgentViewOptions, CliError> {
+    if !matches!(args.format, None | Some(cli::InspectFormat::AgentJson)) {
+        return Err(CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            "inspect only supports --format agent-json.",
+        ));
+    }
+
+    let mut options = AgentViewOptions::default();
+    if matches!(args.detail, Some(cli::InspectDetail::Full)) {
+        options.mode = ViewMode::SlidePage;
+    }
+    if let Some(slides) = &args.slides {
+        if let Some(slide_id) = single_slide_id(slides) {
+            options.mode = ViewMode::SlideDetail;
+            options.slide_id = Some(slide_id);
+        } else {
+            options.mode = ViewMode::SlidePage;
+        }
+    }
+    Ok(options)
+}
+
+fn single_slide_id(slides: &str) -> Option<String> {
+    let trimmed = slides.trim();
+    if trimmed.is_empty() || trimmed.contains(',') || trimmed.contains('-') {
+        return None;
+    }
+    if trimmed.starts_with("slide-") {
+        Some(trimmed.to_owned())
+    } else {
+        Some(format!("slide-{trimmed}"))
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MediaListResult {
+    media: Vec<MediaPartInfo>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MediaGetReport {
+    package_path: String,
+    output: PathBuf,
+    content_type: Option<String>,
+    byte_length: u64,
+    checksum: String,
+}
+
+fn success_envelope(result: Value) -> ResultEnvelope {
+    ResultEnvelope {
+        schema: pptx_compose::json::schema_versions::RESULT_SCHEMA.to_owned(),
+        version: pptx_compose::json::schema_versions::RESULT_VERSION,
+        status: ResultStatus::Success,
+        result,
+        warnings: Vec::new(),
+        next_cursor: None,
+    }
+}
+
+fn normalized_media_path(package_path: &str) -> String {
+    package_path.trim_start_matches('/').to_owned()
+}
+
+fn media_info_from_bytes(package_path: &str, bytes: &[u8]) -> MediaPartInfo {
+    MediaPartInfo {
+        package_path: normalized_media_path(package_path),
+        content_type: None,
+        byte_length: u64::try_from(bytes.len()).map_or(u64::MAX, |len| len),
+        checksum: pptx_compose::core::provenance::checksum::part_checksum(bytes),
+    }
+}
+
+fn schema_value<T: JsonSchema>(id: &str) -> Result<Value, CliError> {
+    let schema = schemars::schema_for!(T);
+    let mut value = serde_json::to_value(schema).map_err(|source| {
+        CliError::with_source(
+            ErrorCode::InternalError,
+            "Could not serialize JSON schema.",
+            source,
+        )
+    })?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("$id".to_owned(), Value::String(id.to_owned()));
+    }
+    Ok(value)
 }
 
 #[derive(Debug)]
@@ -227,10 +410,6 @@ impl CliError {
             error,
             invalid_input_cause: None,
         }
-    }
-
-    fn unsupported(message: impl Into<String>) -> Self {
-        Self::new(ErrorCode::UnsupportedEdit, message)
     }
 
     fn write_with_source(

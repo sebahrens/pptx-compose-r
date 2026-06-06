@@ -61,6 +61,15 @@ pub struct PresentationDocument {
     revision: revision::Revision,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaPartInfo {
+    pub package_path: String,
+    pub content_type: Option<String>,
+    pub byte_length: u64,
+    pub checksum: String,
+}
+
 impl PresentationDocument {
     pub fn open_path(path: impl AsRef<Path>) -> Result<Self> {
         Self::open_path_with_options(path, OpenOptions::default())
@@ -393,6 +402,61 @@ impl PresentationDocument {
             document_id_from_entries(&self.entries)?,
             self.current_revision()?,
         )
+    }
+
+    pub fn media_parts(&self) -> Result<Vec<MediaPartInfo>> {
+        let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
+        let mut media = self
+            .entries
+            .iter()
+            .filter(|entry| !entry.meta.is_dir && entry.name.as_str().starts_with("/ppt/media/"))
+            .map(|entry| {
+                u64::try_from(entry.bytes.len()).map_or_else(
+                    |source| {
+                        Err(Error::with_source(
+                            ErrorCode::InternalError,
+                            "Media part length exceeds the report schema range.",
+                            source,
+                        ))
+                    },
+                    |byte_length| {
+                        Ok(MediaPartInfo {
+                            package_path: entry.name.zip_entry_name().to_owned(),
+                            content_type: package
+                                .content_types()
+                                .resolve(&entry.name)
+                                .map(str::to_owned),
+                            byte_length,
+                            checksum: core::provenance::checksum::part_checksum(&entry.bytes),
+                        })
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        media.sort_by(|left, right| left.package_path.cmp(&right.package_path));
+        Ok(media)
+    }
+
+    pub fn media_part_bytes(&self, package_path: &str) -> Result<Vec<u8>> {
+        let part_name = PartName::from_zip_entry(package_path)?;
+        if !part_name.as_str().starts_with("/ppt/media/") {
+            return Err(Error::unsafe_path(
+                "Media package path must be under ppt/media/.",
+            ));
+        }
+        self.entries
+            .iter()
+            .find(|entry| !entry.meta.is_dir && entry.name == part_name)
+            .map(|entry| entry.bytes.clone())
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorCode::InvalidInput,
+                    format!(
+                        "Media package path {} was not found.",
+                        part_name.zip_entry_name()
+                    ),
+                )
+            })
     }
 
     pub fn write_path(&self, path: impl AsRef<Path>) -> Result<()> {
