@@ -45,7 +45,7 @@ impl PptxServer {
 
     pub fn with_config(config: ServerConfig) -> Self {
         Self::with_session_store_and_permissions(
-            SessionStore,
+            SessionStore::default(),
             config,
             permissions::PermissionPolicy::default(),
         )
@@ -61,7 +61,7 @@ impl PptxServer {
 
     pub fn with_permissions(permission_policy: permissions::PermissionPolicy) -> Self {
         Self::with_session_store_and_permissions(
-            SessionStore,
+            SessionStore::default(),
             ServerConfig::default(),
             permission_policy,
         )
@@ -112,7 +112,24 @@ pub struct OpenInput {
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImportMediaInput {
+    pub session_id: String,
     pub media_path: Option<String>,
+    pub content_type: String,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyPatchInput {
+    pub session_id: String,
+    pub expected_revision: u64,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CloseInput {
+    pub session_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -144,7 +161,11 @@ impl PptxServer {
             .check_read(&input.0.path)
             .map_err(|error| outputs::map_error(error.into_core_error()))?;
 
-        Ok(Json(outputs::OpenOutput::stub("pptx_open")))
+        let opened = self
+            .sessions
+            .open_path(&input.0.path)
+            .map_err(outputs::map_error)?;
+        Ok(Json(outputs::OpenOutput::opened(opened)))
     }
 
     /// Return deck summary and capabilities.
@@ -256,11 +277,19 @@ impl PptxServer {
     ) -> Result<Json<outputs::ImportMediaOutput>, rmcp::model::CallToolResult> {
         if let Some(media_path) = input.0.media_path {
             self.permission_policy
-                .check_read(media_path)
+                .check_read(&media_path)
                 .map_err(|error| outputs::map_error(error.into_core_error()))?;
+            let handle = self
+                .sessions
+                .import_media_path(&input.0.session_id, media_path, &input.0.content_type)
+                .map_err(outputs::map_error)?;
+            return Ok(Json(outputs::ImportMediaOutput::imported(handle)));
         }
 
-        Ok(Json(outputs::ImportMediaOutput::stub("pptx_import_media")))
+        Err(outputs::map_error(pptx_compose::core::error::Error::new(
+            pptx_compose::core::error::ErrorCode::InvalidInput,
+            "pptx_import_media requires media_path.",
+        )))
     }
 
     /// Dry-run patch validation.
@@ -289,8 +318,24 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_apply_patch(&self) -> rmcp::Json<outputs::ApplyPatchOutput> {
-        rmcp::Json(outputs::ApplyPatchOutput::stub("pptx_apply_patch"))
+    pub async fn pptx_apply_patch(
+        &self,
+        input: rmcp::handler::server::wrapper::Parameters<ApplyPatchInput>,
+    ) -> Result<Json<outputs::ApplyPatchOutput>, rmcp::model::CallToolResult> {
+        let revision = self
+            .sessions
+            .record_apply(
+                &input.0.session_id,
+                input.0.expected_revision,
+                input.0.dry_run,
+                true,
+            )
+            .map_err(outputs::map_error)?;
+        Ok(Json(outputs::ApplyPatchOutput::applied(
+            &input.0.session_id,
+            revision,
+            input.0.dry_run,
+        )))
     }
 
     /// Validate the current session.
@@ -343,8 +388,18 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_close(&self) -> rmcp::Json<outputs::CloseOutput> {
-        rmcp::Json(outputs::CloseOutput::stub("pptx_close"))
+    pub async fn pptx_close(
+        &self,
+        input: rmcp::handler::server::wrapper::Parameters<CloseInput>,
+    ) -> Result<Json<outputs::CloseOutput>, rmcp::model::CallToolResult> {
+        let closed = self
+            .sessions
+            .close(&input.0.session_id)
+            .map_err(outputs::map_error)?;
+        Ok(Json(outputs::CloseOutput::closed(
+            &input.0.session_id,
+            closed,
+        )))
     }
 
     /// Return raw XML for an OPC part.

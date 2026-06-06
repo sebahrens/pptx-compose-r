@@ -12,4 +12,8 @@ rmcp = { workspace = true, features = ["schemars", "transport-io"] }
 schemars.workspace = true
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json.workspace = true
+sha2.workspace = true
 tokio = { version = "=1.52.3", features = ["io-std", "macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+zip.workspace = true

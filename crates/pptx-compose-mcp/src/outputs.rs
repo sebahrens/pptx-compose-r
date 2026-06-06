@@ -69,6 +69,41 @@ impl_stub!(
     ReplacePartXmlOutput,
 );
 
+impl OpenOutput {
+    #[must_use]
+    pub fn opened(session: crate::sessions::OpenSession) -> Self {
+        Self(success_envelope(json!(session)))
+    }
+}
+
+impl ImportMediaOutput {
+    #[must_use]
+    pub fn imported(handle: crate::sessions::MediaHandle) -> Self {
+        Self(success_envelope(json!(handle)))
+    }
+}
+
+impl ApplyPatchOutput {
+    #[must_use]
+    pub fn applied(session_id: &str, revision: u64, dry_run: bool) -> Self {
+        Self(success_envelope(json!({
+            "session_id": session_id,
+            "revision": revision,
+            "dry_run": dry_run
+        })))
+    }
+}
+
+impl CloseOutput {
+    #[must_use]
+    pub fn closed(session_id: &str, closed: bool) -> Self {
+        Self(success_envelope(json!({
+            "session_id": session_id,
+            "closed": closed
+        })))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ErrorEnvelope {
@@ -142,14 +177,18 @@ pub fn error_envelope(error: &CoreError) -> ErrorEnvelope {
 }
 
 fn stub_envelope(tool: &str) -> ResultEnvelope {
+    success_envelope(json!({
+        "status": "stub",
+        "tool": tool,
+    }))
+}
+
+fn success_envelope(result: Value) -> ResultEnvelope {
     ResultEnvelope {
         schema: RESULT_SCHEMA.to_owned(),
         version: RESULT_VERSION,
         status: ResultStatus::Success,
-        result: json!({
-            "status": "stub",
-            "tool": tool,
-        }),
+        result,
         warnings: Vec::new(),
         next_cursor: None,
     }
