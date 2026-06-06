@@ -6,7 +6,7 @@ mod exit;
 mod output;
 mod permissions;
 
-use clap::Parser;
+use clap::{Parser, error::ErrorKind};
 use cli::{Cli, Commands, MediaCmd};
 use commands::apply::apply;
 use commands::legacy::{run_convert, run_to_json, run_to_pptx};
@@ -19,8 +19,14 @@ fn main() {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => {
+            let exit_code = match error.kind() {
+                ErrorKind::DisplayHelp
+                | ErrorKind::DisplayVersion
+                | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => exit::SUCCESS,
+                _ => exit::USAGE,
+            };
             let _ = error.print();
-            std::process::exit(exit::USAGE);
+            std::process::exit(exit_code);
         }
     };
 
