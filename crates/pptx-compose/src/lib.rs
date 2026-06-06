@@ -110,10 +110,10 @@ impl PresentationDocument {
         let entries = from_bytes_with_options(
             &source_bytes,
             &CoreOpenOptions {
-                resource_limits: options.resource_limits.clone(),
+                resource_limits: options.resource_limits().clone(),
             },
         )?;
-        package_from_entries_with_limits(&entries, &options.resource_limits)?;
+        package_from_entries_with_limits(&entries, options.resource_limits())?;
         Ok(Self {
             source_path: None,
             source_bytes,

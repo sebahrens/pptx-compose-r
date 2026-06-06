@@ -12,6 +12,7 @@ use pptx_compose::{
     core::{
         error::ErrorCode,
         provenance::document_id::document_id as provenance_document_id,
+        zip::limits::ResourceLimits,
         zip::reader::{RawEntry, from_bytes},
     },
     edit::{
@@ -100,6 +101,25 @@ fn exposes_required_070_api_and_defaults() {
         .expect("default write path succeeds");
 
     fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
+fn open_options_apply_resource_limits_at_facade_boundary() {
+    let bytes = include_bytes!("../../../fixtures/minimal.pptx");
+    let options = OpenOptions::with_resource_limits(ResourceLimits {
+        max_compressed_package_bytes: u64::try_from(bytes.len() - 1)
+            .expect("fixture length fits u64"),
+        ..ResourceLimits::default()
+    });
+
+    let error = PresentationDocument::from_bytes_with_options(bytes, options)
+        .expect_err("compressed package size limit must reject oversized input");
+
+    assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
+    assert!(
+        error.message().contains("maximum compressed size"),
+        "{error}"
+    );
 }
 
 #[test]

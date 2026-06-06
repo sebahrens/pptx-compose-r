@@ -150,7 +150,7 @@ fn assert_no_forbidden_core_internal_imports(src_root: &Path) {
             .filter(|character| !character.is_whitespace())
             .collect::<String>();
 
-        for forbidden_module in ["opc", "xml", "zip"] {
+        for forbidden_module in ["opc", "xml", "zip", "validation"] {
             let forbidden_import = format!("pptx_compose_core::{forbidden_module}");
             assert!(
                 !compact_source.contains(&forbidden_import),

@@ -23,7 +23,7 @@ pub struct Picture {
     pub alt_text: Option<String>,
     pub bounds: Option<Bounds>,
     pub embed_rel_id: String,
-    pub media_part: PartName,
+    pub media_part: Option<PartName>,
     pub content_type: String,
     pub byte_length: u64,
     pub shared_media_ref_count: u32,
@@ -56,7 +56,7 @@ pub fn read_picture(
             alt_text: shape.alt_text,
             bounds: shape.bounds,
             embed_rel_id: embed_rel_id.to_owned(),
-            media_part: media.part_name,
+            media_part: Some(media.part_name),
             content_type: media.content_type,
             byte_length: media.byte_length,
             shared_media_ref_count: media.shared_ref_count,
@@ -73,7 +73,7 @@ pub fn read_picture(
             alt_text: shape.alt_text,
             bounds: shape.bounds,
             embed_rel_id: link_rel_id.to_owned(),
-            media_part: external_media_placeholder()?,
+            media_part: None,
             content_type: String::new(),
             byte_length: 0,
             shared_media_ref_count: 0,
@@ -195,10 +195,6 @@ fn attr<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a str> {
         .map(|attribute| attribute.value.as_str())
 }
 
-fn external_media_placeholder() -> Result<PartName> {
-    PartName::from_zip_entry("/ppt/media/external.bin")
-}
-
 #[cfg(test)]
 #[test]
 fn reads_embedded_image() {
@@ -256,7 +252,7 @@ fn reads_embedded_image() {
         })
     );
     assert_eq!(picture.embed_rel_id, "rId2");
-    assert_eq!(picture.media_part, media_part);
+    assert_eq!(picture.media_part, Some(media_part));
     assert_eq!(picture.content_type, "image/png");
     assert_eq!(picture.byte_length, one_by_one_png().len() as u64);
     assert_eq!(picture.shared_media_ref_count, 1);
@@ -268,6 +264,40 @@ fn reads_embedded_image() {
         })
     );
     assert!(!picture.external);
+}
+
+#[cfg(test)]
+#[test]
+fn reads_external_image_without_synthetic_media_part() {
+    use crate::{
+        opc::{package::Package, relationships::RelationshipSet},
+        pptx::ids::SpTreePath,
+        xml::parser::parse_document,
+    };
+
+    let package = Package::new();
+    let slide_part = test_part("ppt/slides/slide1.xml");
+    let slide_rels = RelationshipSet {
+        source: slide_part,
+        rels: Vec::new(),
+    };
+    let document = parse_document(external_picture_xml()).expect("picture fixture parses");
+    let element = document.root_element().expect("picture fixture has root");
+    let path = SpTreePath {
+        sp_tree_path: vec![2],
+        group_path: Vec::new(),
+    };
+
+    let picture =
+        read_picture(element, path, &slide_rels, &package).expect("external picture reads");
+
+    assert!(picture.external);
+    assert_eq!(picture.embed_rel_id, "rIdExternal");
+    assert_eq!(picture.media_part, None);
+    assert_eq!(picture.content_type, "");
+    assert_eq!(picture.byte_length, 0);
+    assert_eq!(picture.shared_media_ref_count, 0);
+    assert_eq!(picture.intrinsic_size_px, None);
 }
 
 #[cfg(test)]
@@ -296,6 +326,26 @@ fn picture_xml() -> &'static [u8] {
       <a:ext cx="30" cy="40"/>
     </a:xfrm>
   </p:spPr>
+</p:pic>
+"#
+}
+
+#[cfg(test)]
+fn external_picture_xml() -> &'static [u8] {
+    br#"
+<p:pic xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+       xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+       xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:nvPicPr>
+    <p:cNvPr id="7" name="Picture 1" descr="linked image"/>
+    <p:cNvPicPr/>
+    <p:nvPr/>
+  </p:nvPicPr>
+  <p:blipFill>
+    <a:blip r:link="rIdExternal"/>
+    <a:stretch><a:fillRect/></a:stretch>
+  </p:blipFill>
+  <p:spPr/>
 </p:pic>
 "#
 }

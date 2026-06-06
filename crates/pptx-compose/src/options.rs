@@ -5,6 +5,18 @@ pub struct OpenOptions {
     pub resource_limits: ResourceLimits,
 }
 
+impl OpenOptions {
+    #[must_use]
+    pub fn with_resource_limits(resource_limits: ResourceLimits) -> Self {
+        Self { resource_limits }
+    }
+
+    #[must_use]
+    pub const fn resource_limits(&self) -> &ResourceLimits {
+        &self.resource_limits
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentViewOptions {
     pub mode: pptx_compose_json::agent_view::views::ViewMode,

@@ -612,14 +612,19 @@ fn project_element(
     let image = if core_kind == CoreElementKind::Picture {
         match read_picture(element, path.clone(), slide_rels, package) {
             Ok(picture) if !picture.external => {
+                let Some(media_part) = picture.media_part else {
+                    return Err(JsonError::Projection(
+                        "Embedded picture did not resolve to a media part.".to_owned(),
+                    ));
+                };
                 let image = ImageView {
                     relationship_id: picture.embed_rel_id,
-                    media_part: trim_part(picture.media_part.as_str()),
+                    media_part: trim_part(media_part.as_str()),
                     content_type: picture.content_type,
                     byte_length: picture.byte_length,
                     checksum: package
                         .parts()
-                        .get(&picture.media_part)
+                        .get(&media_part)
                         .map(|part| part_checksum(part.bytes()))
                         .unwrap_or_else(|| "sha256:0000000000000000000000000000000000000000000000000000000000000000".to_owned()),
                     intrinsic_size_px: picture.intrinsic_size_px.map(|size| IntrinsicSizePx {
