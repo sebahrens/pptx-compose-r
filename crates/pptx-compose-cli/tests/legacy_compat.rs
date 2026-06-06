@@ -72,6 +72,48 @@ mod legacy_compat {
     }
 
     #[test]
+    fn media_image_legacy_roundtrip_preserves_content_types() {
+        let temp_dir = fresh_temp_dir("media_image_legacy_roundtrip_preserves_content_types");
+        let fixture = repo_root().join("fixtures/media/image.pptx");
+        let json_output = temp_dir.join("roundtrip.json");
+        let roundtrip = temp_dir.join("roundtrip.pptx");
+
+        run_cli([
+            "to-json",
+            fixture.to_str().expect("fixture path is UTF-8"),
+            json_output.to_str().expect("json path is UTF-8"),
+            "--compat-json",
+        ]);
+        run_cli([
+            "to-pptx",
+            json_output.to_str().expect("json path is UTF-8"),
+            roundtrip.to_str().expect("roundtrip path is UTF-8"),
+            "--compat-json",
+        ]);
+
+        assert_eq!(media_bytes(&fixture), media_bytes(&roundtrip));
+        assert_eq!(
+            zip_entry_bytes(&fixture, "[Content_Types].xml"),
+            zip_entry_bytes(&roundtrip, "[Content_Types].xml")
+        );
+
+        let validation_output = temp_dir.join("validation.json");
+        run_cli([
+            "validate",
+            roundtrip.to_str().expect("roundtrip path is UTF-8"),
+            "--report",
+            validation_output
+                .to_str()
+                .expect("validation path is UTF-8"),
+        ]);
+        let validation = read_json(&validation_output);
+        assert_eq!(
+            validation.get("status").and_then(serde_json::Value::as_str),
+            Some("valid")
+        );
+    }
+
+    #[test]
     fn powerpoint_media_chart_embedded_legacy_roundtrip_preserves_content_types() {
         let temp_dir = fresh_temp_dir(
             "powerpoint_media_chart_embedded_legacy_roundtrip_preserves_content_types",
