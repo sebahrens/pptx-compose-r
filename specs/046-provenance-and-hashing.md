@@ -82,7 +82,7 @@ The same normalization defines the value of the `normalized` field in 042, so th
 1. Build the CPJ preimage:
    ```
    {
-     "kind": <element kind, e.g. "text_box" | "image" | "shape" | "group">,
+     "kind": <fixed element-kind token>,
      "part": <canonical PartName of the slide part>,
      "sp_tree_path": <array of integers, the spTree child-index path>,
      "group_path": <array of integers, empty when top-level>,
@@ -95,6 +95,7 @@ The same normalization defines the value of the `normalized` field in 042, so th
 
 Notes:
 
+- `kind` is one of the fixed V1 tokens `text_box`, `shape`, `image`, `group`, `graphic_frame`, `connector`, or `other`, derived from the element kind used for agent IDs.
 - `sp_tree_path` / `group_path` use the same indexing as `xml_location` in 042 (positional child indices within `p:spTree`, descending through `p:grpSp`). They locate the element; `cnvpr_id` and `text_hash` detect substitution at that location.
 - `cnvpr_id` is included for substitution detection only. It is **not** the agent ID and must never be used to derive one (cNvPr ids are reassignable and may collide across the deck).
 

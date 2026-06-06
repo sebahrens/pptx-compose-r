@@ -222,6 +222,7 @@ pub enum ErrorCode {
     UnsupportedMediaType,
     InvalidBounds,
     ParseError,
+    MalformedXml,
     ValidationFailed,
     StalePatch,
     SelectorNotFound,
@@ -391,6 +392,42 @@ fn roundtrips_044_examples() {
           }
         }"#,
     );
+}
+
+#[cfg(test)]
+#[test]
+fn error_code_enum_matches_core_wire_vocabulary() {
+    let json_codes = [
+        ErrorCode::InvalidInput,
+        ErrorCode::UnsafePath,
+        ErrorCode::ResourceLimitExceeded,
+        ErrorCode::UnsupportedPackage,
+        ErrorCode::UnsupportedEdit,
+        ErrorCode::UnsupportedMediaType,
+        ErrorCode::InvalidBounds,
+        ErrorCode::ParseError,
+        ErrorCode::MalformedXml,
+        ErrorCode::ValidationFailed,
+        ErrorCode::StalePatch,
+        ErrorCode::SelectorNotFound,
+        ErrorCode::SelectorAmbiguous,
+        ErrorCode::SelectorGuardFailed,
+        ErrorCode::MissingMediaRef,
+        ErrorCode::MediaChecksumMismatch,
+        ErrorCode::PermissionDenied,
+        ErrorCode::WriteFailed,
+        ErrorCode::InternalError,
+    ];
+    let json_wire_codes = json_codes
+        .into_iter()
+        .map(|code| serde_json::to_value(code).expect("JSON error code serializes"))
+        .collect::<Vec<_>>();
+    let core_wire_codes = pptx_compose_core::error::ErrorCode::ALL
+        .into_iter()
+        .map(|code| serde_json::to_value(code).expect("core error code serializes"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(json_wire_codes, core_wire_codes);
 }
 
 #[cfg(test)]
