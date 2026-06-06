@@ -145,6 +145,30 @@ fn extension(part_name: &PartName) -> Option<&str> {
 
 #[cfg(test)]
 #[test]
+fn resolution_order() {
+    let mut content_types = ContentTypes::new();
+    content_types.insert_default("xml", "application/xml");
+    content_types.insert_default("png", "image/png");
+
+    let slide = PartName::from_zip_entry("/ppt/slides/slide1.xml").expect("valid slide part");
+    content_types.insert_override(
+        slide.clone(),
+        "application/vnd.openxmlformats-officedocument.presentationml.slide+xml",
+    );
+
+    let image = PartName::from_zip_entry("/ppt/media/image1.PNG").expect("valid image part");
+    let unknown = PartName::from_zip_entry("/ppt/media/image1.unknown").expect("valid part");
+
+    assert_eq!(
+        content_types.resolve(&slide),
+        Some("application/vnd.openxmlformats-officedocument.presentationml.slide+xml")
+    );
+    assert_eq!(content_types.resolve(&image), Some("image/png"));
+    assert_eq!(content_types.resolve(&unknown), None);
+}
+
+#[cfg(test)]
+#[test]
 fn parses_defaults_and_overrides() {
     let raw = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
