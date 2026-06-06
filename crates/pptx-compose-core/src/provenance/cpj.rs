@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 pub enum Cpj {
     Null,
     Int(i64),
+    Uint(u64),
     Str(String),
     Array(Vec<Cpj>),
     Object(BTreeMap<String, Cpj>),
@@ -28,6 +29,7 @@ fn encode_value(value: &Cpj, output: &mut String) {
     match value {
         Cpj::Null => output.push_str("null"),
         Cpj::Int(integer) => write!(output, "{integer}").expect("writing to String succeeds"),
+        Cpj::Uint(integer) => write!(output, "{integer}").expect("writing to String succeeds"),
         Cpj::Str(string) => encode_string(string, output),
         Cpj::Array(values) => {
             output.push('[');
