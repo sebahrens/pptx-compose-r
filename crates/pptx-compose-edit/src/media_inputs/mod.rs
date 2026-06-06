@@ -15,7 +15,7 @@ use pptx_compose_core::provenance::checksum::part_checksum;
 pub use limits::MediaLimits;
 pub use manifest::{
     InlineMedia, MEDIA_MANIFEST_SCHEMA, MEDIA_MANIFEST_VERSION, ManifestMediaBinding,
-    MediaManifest, MediaManifestEntry,
+    MediaManifest, MediaManifestEntry, media_manifest_json_schema,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]

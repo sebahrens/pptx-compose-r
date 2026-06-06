@@ -1,13 +1,58 @@
 use std::{fmt, path::PathBuf};
 
+use pptx_compose_core::error::{Error, ErrorCode};
 use schemars::JsonSchema;
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, MapAccess, Visitor},
 };
+use serde_json::{Value, json};
 
 pub const MEDIA_MANIFEST_SCHEMA: &str = "pptx-compose.media_manifest.v1";
 pub const MEDIA_MANIFEST_VERSION: u32 = 1;
+
+pub fn media_manifest_json_schema() -> pptx_compose_core::error::Result<Value> {
+    let binding_schema = schemars::schema_for!(ManifestMediaBinding);
+    let mut binding_value = serde_json::to_value(binding_schema).map_err(|source| {
+        Error::with_source(
+            ErrorCode::InternalError,
+            "Could not serialize media manifest JSON schema.",
+            source,
+        )
+    })?;
+    let definitions = binding_value
+        .as_object_mut()
+        .and_then(|object| object.remove("$defs"))
+        .unwrap_or_else(|| json!({}));
+    if let Some(object) = binding_value.as_object_mut() {
+        object.remove("$schema");
+        object.remove("title");
+    }
+
+    Ok(json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": MEDIA_MANIFEST_SCHEMA,
+        "$defs": definitions,
+        "title": "MediaManifest",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schema", "version", "media"],
+        "properties": {
+            "schema": {
+                "type": "string",
+                "const": MEDIA_MANIFEST_SCHEMA
+            },
+            "version": {
+                "type": "integer",
+                "const": MEDIA_MANIFEST_VERSION
+            },
+            "media": {
+                "type": "object",
+                "additionalProperties": binding_value
+            }
+        }
+    }))
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, JsonSchema, Serialize)]
 pub struct MediaManifest {

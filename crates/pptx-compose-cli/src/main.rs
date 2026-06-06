@@ -14,27 +14,23 @@ use exit::exit_code_for;
 use output::{OutputDest, OutputSink};
 use permissions::{PathIntent, PermissionContext};
 use pptx_compose::{
-    AgentViewOptions, MediaPartInfo, OpenOptions, Patch, PresentationDocument,
+    AgentViewOptions, MediaPartInfo, OpenOptions, PresentationDocument,
     core::{
         error::{Error, ErrorCode, ErrorDetails, ErrorLocation},
         zip::limits::ResourceLimits,
     },
-    edit::{
-        media_inputs::{MEDIA_MANIFEST_SCHEMA, MediaManifest},
-        patch::PATCH_SCHEMA,
-    },
+    edit::{media_inputs::media_manifest_json_schema, patch::patch_json_schema},
     json::{
         agent_view::{
-            AgentView, FindTextScope,
+            FindTextScope,
             views::{FindTextRequest, ViewMode},
         },
-        schema_versions::{
-            AGENT_VIEW_SCHEMA, ERROR_SCHEMA, PATCH_REPORT_SCHEMA, VALIDATION_REPORT_SCHEMA,
+        schemas::{
+            JsonError, ResultEnvelope, ResultStatus, agent_view_json_schema, error_json_schema,
+            patch_report_json_schema, validation_report_json_schema,
         },
-        schemas::{ErrorEnvelope, PatchReport, ResultEnvelope, ResultStatus, ValidationReport},
     },
 };
-use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
@@ -254,12 +250,12 @@ fn media_get(
 
 fn schema(args: cli::SchemaArgs, sink: OutputSink) -> Result<(), CliError> {
     let schema = match args.name.as_str() {
-        "agent-view-v1" => schema_value::<AgentView>(AGENT_VIEW_SCHEMA)?,
-        "patch-v1" => schema_value::<Patch>(PATCH_SCHEMA)?,
-        "media-manifest-v1" => schema_value::<MediaManifest>(MEDIA_MANIFEST_SCHEMA)?,
-        "patch-report-v1" => schema_value::<PatchReport>(PATCH_REPORT_SCHEMA)?,
-        "validation-report-v1" => schema_value::<ValidationReport>(VALIDATION_REPORT_SCHEMA)?,
-        "error-v1" => schema_value::<ErrorEnvelope>(ERROR_SCHEMA)?,
+        "agent-view-v1" => agent_view_json_schema().map_err(schema_error)?,
+        "patch-v1" => patch_json_schema().map_err(CliError::from_error)?,
+        "media-manifest-v1" => media_manifest_json_schema().map_err(CliError::from_error)?,
+        "patch-report-v1" => patch_report_json_schema().map_err(schema_error)?,
+        "validation-report-v1" => validation_report_json_schema().map_err(schema_error)?,
+        "error-v1" => error_json_schema().map_err(schema_error)?,
         _ => {
             return Err(CliError::invalid_input(
                 InvalidInputCause::CliArgument,
@@ -268,6 +264,23 @@ fn schema(args: cli::SchemaArgs, sink: OutputSink) -> Result<(), CliError> {
         }
     };
     sink.emit_json(&schema, OutputDest::Stdout)
+}
+
+fn schema_error(error: JsonError) -> CliError {
+    match error {
+        JsonError::SerializeSchema(message) => {
+            CliError::from_error(Error::new(ErrorCode::InternalError, message))
+        }
+        JsonError::InvalidCursor(message)
+        | JsonError::MalformedLegacyEnvelope(message)
+        | JsonError::Projection(message) => {
+            CliError::from_error(Error::new(ErrorCode::InvalidInput, message))
+        }
+        JsonError::NotFound { kind, id } => CliError::from_error(Error::new(
+            ErrorCode::InvalidInput,
+            format!("{kind} `{id}` was not found."),
+        )),
+    }
 }
 
 fn inspect_view_options(args: &cli::InspectArgs) -> Result<AgentViewOptions, CliError> {
@@ -343,21 +356,6 @@ fn media_info_from_bytes(package_path: &str, bytes: &[u8]) -> MediaPartInfo {
         byte_length: u64::try_from(bytes.len()).map_or(u64::MAX, |len| len),
         checksum: pptx_compose::core::provenance::checksum::part_checksum(bytes),
     }
-}
-
-fn schema_value<T: JsonSchema>(id: &str) -> Result<Value, CliError> {
-    let schema = schemars::schema_for!(T);
-    let mut value = serde_json::to_value(schema).map_err(|source| {
-        CliError::with_source(
-            ErrorCode::InternalError,
-            "Could not serialize JSON schema.",
-            source,
-        )
-    })?;
-    if let Some(object) = value.as_object_mut() {
-        object.insert("$id".to_owned(), Value::String(id.to_owned()));
-    }
-    Ok(value)
 }
 
 #[derive(Debug)]

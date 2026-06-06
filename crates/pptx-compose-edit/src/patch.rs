@@ -17,6 +17,7 @@ use pptx_compose_json::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     reports::{has_blocking_findings, patch_validation_summary, validation_report},
@@ -25,6 +26,21 @@ use crate::{
 
 pub const PATCH_SCHEMA: &str = "pptx-compose.patch.v1";
 pub const PATCH_VERSION: u32 = 1;
+
+pub fn patch_json_schema() -> Result<Value> {
+    let schema = schemars::schema_for!(Patch);
+    let mut value = serde_json::to_value(schema).map_err(|source| {
+        Error::with_source(
+            ErrorCode::InternalError,
+            "Could not serialize patch JSON schema.",
+            source,
+        )
+    })?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("$id".to_owned(), Value::String(PATCH_SCHEMA.to_owned()));
+    }
+    Ok(value)
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

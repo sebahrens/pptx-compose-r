@@ -244,15 +244,32 @@ pub enum JsonError {
 }
 
 pub fn agent_view_json_schema() -> Result<Value, JsonError> {
-    let schema = schemars::schema_for!(AgentView);
+    schema_value::<AgentView>(AGENT_VIEW_SCHEMA)
+}
+
+pub fn patch_report_json_schema() -> Result<Value, JsonError> {
+    schema_value::<PatchReport>(PATCH_REPORT_SCHEMA)
+}
+
+pub fn validation_report_json_schema() -> Result<Value, JsonError> {
+    schema_value::<ValidationReport>(VALIDATION_REPORT_SCHEMA)
+}
+
+pub fn result_json_schema() -> Result<Value, JsonError> {
+    schema_value::<ResultEnvelope>(RESULT_SCHEMA)
+}
+
+pub fn error_json_schema() -> Result<Value, JsonError> {
+    schema_value::<ErrorEnvelope>(ERROR_SCHEMA)
+}
+
+fn schema_value<T: JsonSchema>(id: &str) -> Result<Value, JsonError> {
+    let schema = schemars::schema_for!(T);
     let mut value =
         serde_json::to_value(schema).map_err(|err| JsonError::SerializeSchema(err.to_string()))?;
 
     if let Some(object) = value.as_object_mut() {
-        object.insert(
-            "$id".to_owned(),
-            Value::String(AGENT_VIEW_SCHEMA.to_owned()),
-        );
+        object.insert("$id".to_owned(), Value::String(id.to_owned()));
     }
 
     Ok(value)

@@ -4,11 +4,11 @@ use pptx_compose::{
     AgentViewOptions,
     capabilities::{CapabilitiesOptions, capabilities},
     core::error::{Error, ErrorCode},
-    edit::patch::{PATCH_SCHEMA, PATCH_VERSION, Patch},
+    edit::patch::{PATCH_SCHEMA, PATCH_VERSION, patch_json_schema},
     json::{
         agent_view::views::ViewMode,
         schema_versions::{AGENT_VIEW_SCHEMA, ERROR_SCHEMA, PATCH_REPORT_SCHEMA},
-        schemas::{ErrorEnvelope, JsonError, PatchReport, agent_view_json_schema},
+        schemas::{JsonError, agent_view_json_schema, error_json_schema, patch_report_json_schema},
     },
 };
 use schemars::JsonSchema;
@@ -386,26 +386,11 @@ fn schema_resource(name: &str, version: &str) -> Result<Value, Error> {
 
     match name {
         "agent-view" => agent_view_json_schema().map_err(json_error),
-        "patch" => schema_value::<Patch>(PATCH_SCHEMA),
-        "patch-report" => schema_value::<PatchReport>(PATCH_REPORT_SCHEMA),
-        "error" => schema_value::<ErrorEnvelope>(ERROR_SCHEMA),
+        "patch" => patch_json_schema(),
+        "patch-report" => patch_report_json_schema().map_err(json_error),
+        "error" => error_json_schema().map_err(json_error),
         _ => Err(invalid_uri(name, "Unknown schema resource name.")),
     }
-}
-
-fn schema_value<T: JsonSchema>(id: &str) -> Result<Value, Error> {
-    let schema = schemars::schema_for!(T);
-    let mut value = serde_json::to_value(schema).map_err(|source| {
-        Error::with_source(
-            ErrorCode::InternalError,
-            "Could not serialize JSON schema resource.",
-            source,
-        )
-    })?;
-    if let Some(object) = value.as_object_mut() {
-        object.insert("$id".to_owned(), Value::String(id.to_owned()));
-    }
-    Ok(value)
 }
 
 fn schema_resource_descriptors() -> Vec<ResourceDescriptor> {
