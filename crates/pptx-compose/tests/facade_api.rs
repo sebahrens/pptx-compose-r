@@ -298,6 +298,47 @@ fn add_image_write_reopens_with_content_type_and_relationship() {
 }
 
 #[test]
+fn add_image_dry_run_uses_edit_layer_validation() {
+    let bytes = text_deck();
+    assert_add_image_dry_run_failure(
+        &bytes,
+        serde_json::json!({
+            "bounds": { "x": 0, "y": 0, "cx": 0, "cy": 914400 }
+        }),
+        media_inputs("hero", "image/png", tiny_png()),
+        ErrorCode::InvalidBounds,
+        "invalid-bounds",
+    );
+    assert_add_image_dry_run_failure(
+        &bytes,
+        serde_json::json!({
+            "fit": "contain"
+        }),
+        media_inputs("hero", "image/png", tiny_png()),
+        ErrorCode::UnsupportedEdit,
+        "unsupported-fit",
+    );
+    assert_add_image_dry_run_failure(
+        &bytes,
+        serde_json::json!({
+            "dedupe": "checksum"
+        }),
+        media_inputs("hero", "image/png", tiny_png()),
+        ErrorCode::UnsupportedEdit,
+        "unsupported-dedupe",
+    );
+    assert_add_image_dry_run_failure(
+        &bytes,
+        serde_json::json!({
+            "content_type": "image/webp"
+        }),
+        media_inputs("hero", "image/webp", b"RIFF____WEBP".to_vec()),
+        ErrorCode::UnsupportedMediaType,
+        "unsupported-content-type",
+    );
+}
+
+#[test]
 fn successful_real_applies_increment_session_revision_and_reject_stale_patch() {
     let bytes = text_deck();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
@@ -348,6 +389,64 @@ fn successful_real_applies_increment_session_revision_and_reject_stale_patch() {
             .revision,
         3
     );
+}
+
+fn assert_add_image_dry_run_failure(
+    bytes: &[u8],
+    operation_override: serde_json::Value,
+    media: MediaInputs,
+    expected_code: ErrorCode,
+    operation_id: &str,
+) {
+    let mut operation = serde_json::json!({
+        "operation_id": operation_id,
+        "op": "add_image",
+        "slide_id": "slide-1",
+        "media_ref": "hero",
+        "content_type": "image/png",
+        "bounds": { "x": 0, "y": 0, "cx": 914400, "cy": 914400 }
+    });
+    merge_object(&mut operation, operation_override);
+    let patch = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(bytes),
+        "base_revision": 1,
+        "client_request_id": operation_id,
+        "operations": [operation]
+    }))
+    .expect("add_image patch parses");
+
+    let mut document = PresentationDocument::from_bytes(bytes).expect("text deck opens");
+    let error = document
+        .apply_patch_with_options(
+            patch,
+            media,
+            ApplyPatchOptions {
+                dry_run: true,
+                validate: true,
+            },
+        )
+        .expect_err("dry-run validation must fail");
+    assert_eq!(error.code(), expected_code, "{error}");
+    assert_eq!(
+        error.details().location.operation_id.as_deref(),
+        Some(operation_id)
+    );
+    assert_eq!(
+        error.details().location.operation.as_deref(),
+        Some("add_image")
+    );
+}
+
+fn merge_object(target: &mut serde_json::Value, patch: serde_json::Value) {
+    let target = target
+        .as_object_mut()
+        .expect("base operation is a JSON object");
+    let patch = patch.as_object().expect("patch override is a JSON object");
+    for (key, value) in patch {
+        target.insert(key.clone(), value.clone());
+    }
 }
 
 fn noop_patch(bytes: &[u8]) -> Patch {

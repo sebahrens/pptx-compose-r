@@ -235,6 +235,7 @@ pub enum ImageFit {
 #[serde(rename_all = "snake_case")]
 pub enum ImageDedupe {
     Never,
+    Checksum,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -17,7 +17,7 @@ pub use pptx_compose_edit::{media_inputs::MediaInputs, patch::Patch};
 pub use pptx_compose_json as json;
 
 use core::{
-    error::{Error, ErrorCode, ErrorLocation, Result},
+    error::{Error, ErrorCode, Result},
     opc::{
         content_types::ContentTypes,
         package::Package,
@@ -189,6 +189,8 @@ impl PresentationDocument {
         validate_envelope(&patch, &DocumentState::new(document_id.clone(), revision))?;
         if options.dry_run {
             let validation = self.validate()?;
+            let package = package_from_entries(&self.entries)?;
+            validate_patch_operations(&package, &patch.operations, &media)?;
             return Ok(PatchReport {
                 schema: pptx_compose_json::schema_versions::PATCH_REPORT_SCHEMA.to_owned(),
                 version: pptx_compose_json::schema_versions::PATCH_REPORT_VERSION,
@@ -921,25 +923,7 @@ fn validate_operation(
         }
         Operation::AddImage(operation) => {
             let _target = resolve_slide(model, &operation.slide_id)?;
-            let media = media_inputs
-                .resolve(&operation.media_ref)
-                .map_err(|error| {
-                    error.with_location(ErrorLocation {
-                        operation_id: Some(operation.operation_id.clone()),
-                        operation: Some("add_image".to_owned()),
-                        ..ErrorLocation::default()
-                    })
-                })?;
-            if media.content_type != operation.content_type {
-                return Err(Error::new(
-                    ErrorCode::UnsupportedMediaType,
-                    format!(
-                        "add_image content_type `{}` does not match bound media_ref `{}` content type `{}`.",
-                        operation.content_type, operation.media_ref, media.content_type
-                    ),
-                ));
-            }
-            Ok(())
+            AddImage::from(operation).validate(media_inputs)
         }
         Operation::ReplaceImage(operation) => {
             let target = resolve_element(model, &operation.element_id)?;
