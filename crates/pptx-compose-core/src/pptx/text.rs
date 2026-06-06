@@ -1,5 +1,4 @@
-use unicode_normalization::UnicodeNormalization;
-
+use crate::provenance::text_hash::{self, TextSegment};
 use crate::xml::document::{XmlElement, XmlNode};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -132,44 +131,14 @@ fn plain_projection(segments: &[ProjectionSegment]) -> String {
 }
 
 fn normalize_projection(segments: &[ProjectionSegment]) -> String {
-    let mut normalized = String::new();
-    let mut pending_space = false;
-
-    for segment in segments {
-        match segment {
-            ProjectionSegment::Text(text) => {
-                for ch in text.nfc() {
-                    if is_xml_whitespace(ch) {
-                        pending_space = true;
-                    } else {
-                        if pending_space && !normalized.is_empty() && !normalized.ends_with('\n') {
-                            normalized.push(' ');
-                        }
-                        normalized.push(ch);
-                        pending_space = false;
-                    }
-                }
-            }
-            ProjectionSegment::SoftBreak => {
-                trim_trailing_spaces(&mut normalized);
-                normalized.push('\n');
-                pending_space = false;
-            }
-        }
-    }
-
-    trim_trailing_spaces(&mut normalized);
-    normalized
-}
-
-fn trim_trailing_spaces(value: &mut String) {
-    while value.ends_with(' ') {
-        value.pop();
-    }
-}
-
-const fn is_xml_whitespace(ch: char) -> bool {
-    matches!(ch, ' ' | '\t' | '\n' | '\r')
+    let projection = segments
+        .iter()
+        .map(|segment| match segment {
+            ProjectionSegment::Text(text) => TextSegment::Run(text.as_str()),
+            ProjectionSegment::SoftBreak => TextSegment::SoftBreak,
+        })
+        .collect::<Vec<_>>();
+    text_hash::normalize_segments(&projection)
 }
 
 #[cfg(test)]
