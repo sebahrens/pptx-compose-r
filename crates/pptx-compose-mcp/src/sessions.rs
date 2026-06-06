@@ -14,7 +14,10 @@ use pptx_compose::{
         provenance::{document_id::document_id, revision},
         zip::reader::from_bytes,
     },
-    edit::media_inputs::{MediaBinding, MediaInputs, MediaLimits, MediaSource},
+    edit::{
+        media_inputs::{MediaBinding, MediaInputs, MediaLimits, MediaSource},
+        patch::Patch,
+    },
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -216,6 +219,25 @@ impl SessionStore {
                 session_id,
                 session.revision,
                 expected_revision,
+            ));
+        }
+        Ok(session.revision)
+    }
+
+    pub fn check_patch_envelope(&self, session_id: &str, patch: &Patch) -> Result<u64> {
+        let mut sessions = self.lock_sessions()?;
+        remove_expired(&mut sessions, SystemTime::now());
+        let session = sessions
+            .get(session_id)
+            .ok_or_else(|| missing_session(session_id))?;
+        if session.document_id != patch.document_id {
+            return Err(stale_document_error(session_id, session.revision));
+        }
+        if session.revision != u64::from(patch.base_revision) {
+            return Err(stale_revision_error(
+                session_id,
+                session.revision,
+                u64::from(patch.base_revision),
             ));
         }
         Ok(session.revision)
@@ -424,6 +446,16 @@ fn missing_session(session_id: &str) -> Error {
 fn stale_revision_error(session_id: &str, current_revision: u64, expected_revision: u64) -> Error {
     Error::stale_revision(format!(
         "Session {session_id} is at revision {current_revision}, not expected revision {expected_revision}."
+    ))
+    .with_location(ErrorLocation {
+        current_revision: Some(current_revision),
+        ..ErrorLocation::default()
+    })
+}
+
+fn stale_document_error(session_id: &str, current_revision: u64) -> Error {
+    Error::stale_revision(format!(
+        "Patch document_id does not match session {session_id}."
     ))
     .with_location(ErrorLocation {
         current_revision: Some(current_revision),

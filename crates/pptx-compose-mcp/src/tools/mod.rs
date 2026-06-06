@@ -96,7 +96,7 @@ async fn apply_rejects_stale_revision() {
         .pptx_apply_patch(rmcp::handler::server::wrapper::Parameters(
             crate::ApplyPatchInput {
                 session_id: opened.session_id.clone(),
-                expected_revision: opened.revision,
+                patch: empty_patch(&opened.document_id, opened.revision),
                 dry_run: false,
             },
         ))
@@ -108,7 +108,7 @@ async fn apply_rejects_stale_revision() {
         .pptx_apply_patch(rmcp::handler::server::wrapper::Parameters(
             crate::ApplyPatchInput {
                 session_id: opened.session_id.clone(),
-                expected_revision: opened.revision,
+                patch: empty_patch(&opened.document_id, opened.revision),
                 dry_run: false,
             },
         ))
@@ -131,4 +131,44 @@ async fn apply_rejects_stale_revision() {
             .revision,
         2
     );
+}
+
+#[tokio::test]
+async fn validate_rejects_wrong_document_id() {
+    let server = PptxServer::default();
+    let opened = open_fixture(&server);
+
+    let result = server
+        .pptx_validate_patch(rmcp::handler::server::wrapper::Parameters(
+            crate::ValidatePatchInput {
+                session_id: opened.session_id.clone(),
+                patch: empty_patch(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    opened.revision,
+                ),
+            },
+        ))
+        .await;
+    let Err(error) = result else {
+        panic!("wrong document_id is rejected");
+    };
+    let envelope = error
+        .structured_content
+        .expect("wrong-document error has structured content");
+
+    assert_eq!(error.is_error, Some(true));
+    assert_eq!(envelope["error"]["code"], "stale_patch");
+    assert_eq!(envelope["error"]["location"]["current_revision"], 1);
+}
+
+#[cfg(test)]
+fn empty_patch(document_id: &str, base_revision: u64) -> pptx_compose::edit::patch::Patch {
+    pptx_compose::edit::patch::Patch {
+        schema: pptx_compose::edit::patch::PATCH_SCHEMA.to_owned(),
+        version: pptx_compose::edit::patch::PATCH_VERSION,
+        document_id: document_id.to_owned(),
+        base_revision: u32::try_from(base_revision).expect("test fixture revision fits u32"),
+        client_request_id: "test-request".to_owned(),
+        operations: Vec::new(),
+    }
 }

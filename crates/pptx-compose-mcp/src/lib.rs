@@ -14,6 +14,7 @@ pub mod resources;
 pub mod sessions;
 pub mod tools;
 
+use pptx_compose::edit::patch::Patch;
 use sessions::SessionStore;
 
 const RAW_GET_PART_XML: &str = "pptx_get_part_xml";
@@ -121,7 +122,7 @@ pub struct ImportMediaInput {
 #[serde(deny_unknown_fields)]
 pub struct ApplyPatchInput {
     pub session_id: String,
-    pub expected_revision: u64,
+    pub patch: Patch,
     #[serde(default)]
     pub dry_run: bool,
 }
@@ -130,7 +131,7 @@ pub struct ApplyPatchInput {
 #[serde(deny_unknown_fields)]
 pub struct ValidatePatchInput {
     pub session_id: String,
-    pub expected_revision: u64,
+    pub patch: Patch,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -315,7 +316,7 @@ impl PptxServer {
         input: rmcp::handler::server::wrapper::Parameters<ValidatePatchInput>,
     ) -> Result<Json<outputs::ValidatePatchOutput>, rmcp::model::CallToolResult> {
         self.sessions
-            .check_revision(&input.0.session_id, input.0.expected_revision)
+            .check_patch_envelope(&input.0.session_id, &input.0.patch)
             .map_err(outputs::map_error)?;
         Ok(rmcp::Json(outputs::ValidatePatchOutput::stub(
             "pptx_validate_patch",
@@ -337,11 +338,14 @@ impl PptxServer {
         &self,
         input: rmcp::handler::server::wrapper::Parameters<ApplyPatchInput>,
     ) -> Result<Json<outputs::ApplyPatchOutput>, rmcp::model::CallToolResult> {
+        self.sessions
+            .check_patch_envelope(&input.0.session_id, &input.0.patch)
+            .map_err(outputs::map_error)?;
         let revision = self
             .sessions
             .record_apply(
                 &input.0.session_id,
-                input.0.expected_revision,
+                u64::from(input.0.patch.base_revision),
                 input.0.dry_run,
                 true,
             )
