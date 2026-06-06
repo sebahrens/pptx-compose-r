@@ -342,12 +342,17 @@ impl SessionStore {
         Ok(handle)
     }
 
+    pub fn media_inputs(&self, session_id: &str) -> Result<MediaInputs> {
+        let session = self.get(session_id)?;
+        Ok(media_inputs_from_session(&session))
+    }
+
     pub fn validate_patch(&self, session_id: &str, patch: Patch) -> Result<PatchReport> {
         self.check_patch_envelope(session_id, &patch)?;
         let session = self.get(session_id)?;
         session.package.clone().apply_patch_with_options(
             patch,
-            media_inputs(&session),
+            media_inputs_from_session(&session),
             ApplyPatchOptions {
                 dry_run: true,
                 validate: true,
@@ -383,7 +388,7 @@ impl SessionStore {
                     expected_revision,
                 ));
             }
-            (session.package.clone(), media_inputs(session))
+            (session.package.clone(), media_inputs_from_session(session))
         };
 
         let report = package.apply_patch_with_options(
@@ -479,7 +484,7 @@ pub struct ApplyResult {
     pub report: PatchReport,
 }
 
-fn media_inputs(session: &Session) -> MediaInputs {
+fn media_inputs_from_session(session: &Session) -> MediaInputs {
     MediaInputs::with_limits(
         session
             .staged_media
@@ -825,6 +830,38 @@ fn concurrent_same_revision_applies_serialize_and_reject_stale_patch() {
 
 #[cfg(test)]
 #[test]
+fn imported_media_resolves_from_session_media_inputs() {
+    let store = SessionStore::default();
+    let opened = store
+        .open_package(test_empty_deck(), &test_minimal_pptx_bytes())
+        .expect("session opens");
+    let bytes = one_by_one_png_bytes();
+
+    let handle = store
+        .import_media_bytes(&opened.session_id, bytes.clone(), "image/png")
+        .expect("media imports");
+    let inputs = store
+        .media_inputs(&opened.session_id)
+        .expect("session media inputs build");
+    let resolved = inputs
+        .resolve(&handle.media_ref)
+        .expect("imported media_ref resolves");
+
+    assert_eq!(resolved.bytes, bytes);
+    assert_eq!(resolved.content_type, "image/png");
+    assert_eq!(resolved.sha256, handle.sha256);
+    assert_eq!(handle.byte_length, 68);
+    assert_eq!(
+        handle.dimensions_px,
+        Some(ImageDimensions {
+            width: 1,
+            height: 1
+        })
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn session_ttl_eviction() {
     let store = SessionStore::with_config(SessionConfig {
         ttl: Duration::from_millis(1),
@@ -884,6 +921,17 @@ fn test_minimal_pptx_bytes() -> Vec<u8> {
         zip.finish().expect("zip finishes");
     }
     cursor.into_inner()
+}
+
+#[cfg(test)]
+fn one_by_one_png_bytes() -> Vec<u8> {
+    vec![
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xb5,
+        0x1c, 0x0c, 0x02, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xfc,
+        0xff, 0x1f, 0x00, 0x03, 0x03, 0x02, 0x00, 0xef, 0xbf, 0xa7, 0xdb, 0x00, 0x00, 0x00, 0x00,
+        0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ]
 }
 
 #[cfg(test)]
