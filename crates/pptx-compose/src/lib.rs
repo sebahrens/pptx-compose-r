@@ -12,14 +12,32 @@ pub use pptx_compose_json as json;
 
 use core::{
     error::{Error, ErrorCode, ErrorLocation, Result},
+    opc::{
+        content_types::ContentTypes,
+        package::Package,
+        part::Part,
+        part_name::PartName,
+        relationships::{Relationship, RelationshipSet, RelationshipSource, TargetMode},
+    },
+    pptx::presentation as core_presentation,
     provenance::revision,
+    xml::{document::XmlElement, parser::parse_document},
     zip::{
         reader::{RawEntry, from_bytes},
+        sniff::sniff_package,
         writer::{self as zip_writer, WriteEntry},
     },
 };
 use pptx_compose_edit::diffs::SemanticDiff;
-use pptx_compose_edit::patch::{DocumentState, parse_patch, validate_envelope};
+use pptx_compose_edit::{
+    media_inputs::MediaInputs,
+    operations::{
+        ResolvedTarget, add_text_box::AddTextBox, move_resize::MoveResize,
+        replace_image::ReplaceImage, replace_text::ReplaceText, set_alt_text::SetAltText,
+    },
+    patch::{DocumentState, Operation, parse_patch, validate_envelope},
+    selectors::{self, Selector},
+};
 use pptx_compose_json::schemas::{
     PatchReport, PatchStatus, PatchValidationSummary, ValidationStatus,
 };
@@ -46,10 +64,11 @@ impl Default for WriteOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApplyPatchOptions {
     pub dry_run: bool,
     pub validate: bool,
+    pub media_inputs: MediaInputs,
 }
 
 impl Default for ApplyPatchOptions {
@@ -57,6 +76,7 @@ impl Default for ApplyPatchOptions {
         Self {
             dry_run: false,
             validate: true,
+            media_inputs: MediaInputs::default(),
         }
     }
 }
@@ -95,6 +115,7 @@ impl PresentationDocument {
 
     pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Result<Self> {
         let source_bytes = bytes.into();
+        sniff_package(&mut Cursor::new(source_bytes.as_slice()))?;
         let entries = from_bytes(&source_bytes)?;
         Ok(Self {
             source_path: None,
@@ -152,6 +173,10 @@ impl PresentationDocument {
         reject_known_unsupported_operations(patch)?;
         let patch = parse_patch(patch.clone())?;
         validate_envelope(&patch, &DocumentState::new(document_id.clone(), revision))?;
+        if !options.dry_run {
+            let package = package_from_entries(&self.entries)?;
+            validate_patch_operations(&package, &patch.operations, &options.media_inputs)?;
+        }
 
         let dry_run = options.dry_run;
         Ok(ApplyPatchResult {
@@ -397,6 +422,248 @@ fn sha256_hex(bytes: &[u8]) -> String {
         write!(&mut output, "{byte:02x}").expect("writing to String succeeds");
     }
     output
+}
+
+fn package_from_entries(entries: &[RawEntry]) -> Result<Package> {
+    let mut package = Package::new();
+    for entry in entries {
+        package.insert_part(Part::from_zip_entry(
+            entry.meta.original_name.clone(),
+            entry.bytes.clone(),
+        )?)?;
+    }
+
+    hydrate_content_types(&mut package)?;
+    hydrate_relationships(&mut package)?;
+    Ok(package)
+}
+
+fn hydrate_content_types(package: &mut Package) -> Result<()> {
+    let name = PartName::from_zip_entry("[Content_Types].xml")?;
+    let part = package
+        .parts()
+        .get(&name)
+        .ok_or_else(|| Error::unsupported_package("Package is missing [Content_Types].xml."))?;
+    *package.content_types_mut() = ContentTypes::parse(part.bytes())?;
+    Ok(())
+}
+
+fn hydrate_relationships(package: &mut Package) -> Result<()> {
+    let rels_parts = package
+        .parts()
+        .iter()
+        .filter(|part| part.name().as_str().ends_with(".rels"))
+        .map(|part| (part.name().clone(), part.bytes().to_vec()))
+        .collect::<Vec<_>>();
+
+    for (rels_part, bytes) in rels_parts {
+        if rels_part.as_str() == "/_rels/.rels" {
+            for relationship in parse_root_relationships(&bytes)? {
+                package.push_relationship(relationship);
+            }
+        } else {
+            let source = relationship_source_for(&rels_part)?;
+            let set = RelationshipSet::parse(&source, &bytes)?;
+            package.relationships_mut().insert_set(set);
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_root_relationships(bytes: &[u8]) -> Result<Vec<Relationship>> {
+    let document = parse_document(bytes).map_err(|source| {
+        Error::with_source(
+            source.code(),
+            "Could not parse package root relationships.",
+            source,
+        )
+    })?;
+    let root = document.root_element().ok_or_else(|| {
+        Error::unsupported_package("Package root relationships part has no root element.")
+    })?;
+    if root.name.local_name != "Relationships" {
+        return Err(Error::unsupported_package(
+            "Package root relationships part root element is not Relationships.",
+        ));
+    }
+
+    root.children
+        .iter()
+        .filter_map(|node| node.as_element())
+        .filter(|element| element.name.local_name == "Relationship")
+        .map(parse_root_relationship)
+        .collect()
+}
+
+fn parse_root_relationship(element: &XmlElement) -> Result<Relationship> {
+    let id = required_attr(element, "Id")?;
+    let rel_type = required_attr(element, "Type")?;
+    let target = required_attr(element, "Target")?;
+    let target_mode = match optional_attr(element, "TargetMode") {
+        None | Some("Internal") => TargetMode::Internal,
+        Some("External") => TargetMode::External,
+        Some(other) => {
+            return Err(Error::unsupported_package(format!(
+                "Package root relationship {id} has unsupported TargetMode {other}."
+            )));
+        }
+    };
+
+    Ok(match target_mode {
+        TargetMode::Internal => {
+            Relationship::internal(RelationshipSource::Package, id, rel_type, target)
+        }
+        TargetMode::External => {
+            Relationship::external(RelationshipSource::Package, id, rel_type, target)
+        }
+    })
+}
+
+fn relationship_source_for(rels_part: &PartName) -> Result<PartName> {
+    let rels_path = rels_part.as_str();
+    let Some((directory, file_name)) = rels_path.rsplit_once("/_rels/") else {
+        return Err(Error::unsupported_package(format!(
+            "Relationship part {rels_part} is not in an _rels directory."
+        )));
+    };
+    let Some(source_file_name) = file_name.strip_suffix(".rels") else {
+        return Err(Error::unsupported_package(format!(
+            "Relationship part {rels_part} does not end with .rels."
+        )));
+    };
+
+    PartName::from_zip_entry(format!("{directory}/{source_file_name}").as_str())
+}
+
+fn required_attr<'a>(element: &'a XmlElement, name: &str) -> Result<&'a str> {
+    optional_attr(element, name).ok_or_else(|| {
+        Error::unsupported_package(format!(
+            "Relationship element is missing required attribute {name}."
+        ))
+    })
+}
+
+fn optional_attr<'a>(element: &'a XmlElement, name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.local_name == name)
+        .map(|attribute| attribute.value.as_str())
+}
+
+fn validate_patch_operations(
+    package: &Package,
+    operations: &[Operation],
+    media_inputs: &MediaInputs,
+) -> Result<()> {
+    media_inputs.check_references(
+        operations.iter().filter_map(operation_media_ref),
+        pptx_compose_edit::media_inputs::ExtraBindingPolicy::Warn,
+    )?;
+
+    let model = core_presentation::PresentationDocument::open(package.clone())?;
+    for operation in operations {
+        validate_operation(package, &model, operation, media_inputs)?;
+    }
+    Ok(())
+}
+
+fn operation_media_ref(operation: &Operation) -> Option<&str> {
+    match operation {
+        Operation::AddImage(operation) => Some(operation.media_ref.as_str()),
+        Operation::ReplaceImage(operation) => Some(operation.media_ref.as_str()),
+        Operation::ReplaceText(_)
+        | Operation::AddTextBox(_)
+        | Operation::MoveResizeElement(_)
+        | Operation::SetAltText(_) => None,
+    }
+}
+
+fn validate_operation(
+    package: &Package,
+    model: &core_presentation::PresentationDocument,
+    operation: &Operation,
+    media_inputs: &MediaInputs,
+) -> Result<()> {
+    match operation {
+        Operation::ReplaceText(operation) => {
+            let target = resolve_element(model, &operation.element_id)?;
+            ReplaceText::from(operation).validate(package, &target)
+        }
+        Operation::AddTextBox(operation) => {
+            let _target = resolve_slide(model, &operation.slide_id)?;
+            AddTextBox::from(operation).validate()
+        }
+        Operation::MoveResizeElement(operation) => {
+            let _target = resolve_element(model, &operation.element_id)?;
+            MoveResize::from(operation).validate()
+        }
+        Operation::SetAltText(operation) => {
+            let target = resolve_element(model, &operation.element_id)?;
+            SetAltText::from(operation).validate(package, &target)
+        }
+        Operation::AddImage(operation) => {
+            let _target = resolve_slide(model, &operation.slide_id)?;
+            let media = media_inputs
+                .resolve(&operation.media_ref)
+                .map_err(|error| {
+                    error.with_location(ErrorLocation {
+                        operation_id: Some(operation.operation_id.clone()),
+                        operation: Some("add_image".to_owned()),
+                        ..ErrorLocation::default()
+                    })
+                })?;
+            if media.content_type != operation.content_type {
+                return Err(Error::new(
+                    ErrorCode::UnsupportedMediaType,
+                    format!(
+                        "add_image content_type `{}` does not match bound media_ref `{}` content type `{}`.",
+                        operation.content_type, operation.media_ref, media.content_type
+                    ),
+                ));
+            }
+            Ok(())
+        }
+        Operation::ReplaceImage(operation) => {
+            let target = resolve_element(model, &operation.element_id)?;
+            ReplaceImage::from(operation).validate(package, &target, media_inputs)
+        }
+    }
+}
+
+fn resolve_element(
+    model: &core_presentation::PresentationDocument,
+    element_id: &str,
+) -> Result<pptx_compose_edit::operations::ResolvedElement> {
+    let selector = Selector::ElementId {
+        id: element_id.to_owned(),
+        guards: None,
+    };
+    match selectors::resolve(model, &selector)? {
+        ResolvedTarget::Element(target) => Ok(target),
+        ResolvedTarget::Slide(_) | ResolvedTarget::MediaPart(_) => Err(Error::new(
+            ErrorCode::SelectorGuardFailed,
+            "Selector did not resolve to an element.",
+        )),
+    }
+}
+
+fn resolve_slide(
+    model: &core_presentation::PresentationDocument,
+    slide_id: &str,
+) -> Result<pptx_compose_edit::operations::ResolvedSlide> {
+    let selector = Selector::SlideId {
+        id: slide_id.to_owned(),
+        guards: None,
+    };
+    match selectors::resolve(model, &selector)? {
+        ResolvedTarget::Slide(target) => Ok(target),
+        ResolvedTarget::Element(_) | ResolvedTarget::MediaPart(_) => Err(Error::new(
+            ErrorCode::SelectorGuardFailed,
+            "Selector did not resolve to a slide.",
+        )),
+    }
 }
 
 #[cfg(test)]

@@ -33,6 +33,7 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
                 ApplyPatchOptions {
                     dry_run: true,
                     validate: true,
+                    ..ApplyPatchOptions::default()
                 },
             )
             .map_err(apply_error)?;
@@ -60,6 +61,7 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
             ApplyPatchOptions {
                 dry_run: false,
                 validate: true,
+                ..ApplyPatchOptions::default()
             },
         )
         .map_err(apply_error)?;

@@ -8,6 +8,7 @@ use std::{
 };
 
 use pptx_compose_core::error::{Error, ErrorCode, Result};
+use pptx_compose_core::provenance::checksum::part_checksum;
 
 pub use manifest::{InlineMedia, ManifestMediaBinding, MediaManifest, MediaManifestEntry};
 
@@ -98,6 +99,28 @@ impl MediaInputs {
             MediaSource::Bytes(bytes) => bytes.clone(),
             MediaSource::InlineBase64(encoded) => decode_base64(encoded)?,
         };
+        if let Some(expected_len) = binding.declared_byte_length {
+            let actual_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+            if actual_len != expected_len {
+                return Err(Error::new(
+                    ErrorCode::InvalidInput,
+                    format!(
+                        "Media input `{media_ref}` byte_length declared {expected_len} but resolved {actual_len} bytes."
+                    ),
+                ));
+            }
+        }
+        if let Some(expected_sha256) = &binding.declared_sha256 {
+            let actual_sha256 = part_checksum(&bytes);
+            if &actual_sha256 != expected_sha256 {
+                return Err(Error::new(
+                    ErrorCode::MediaChecksumMismatch,
+                    format!(
+                        "Media input `{media_ref}` sha256 declared `{expected_sha256}` but resolved `{actual_sha256}`."
+                    ),
+                ));
+            }
+        }
         sniff::verify_declared(&binding.content_type, &bytes)?;
 
         Ok(ResolvedMedia {
@@ -428,7 +451,7 @@ pub mod resolve {
                         data: "iVBORw0KGgppbmxpbmUgYnl0ZXM=".to_owned(),
                     }),
                     sha256: None,
-                    byte_length: Some(12),
+                    byte_length: Some(20),
                 },
             }],
         };

@@ -279,19 +279,26 @@ fn exactly_one<T>(
     let count = matches.len();
     if count == 1 {
         return matches.into_iter().next().ok_or_else(|| {
-            selector_guard_failed(
+            selector_not_found(
                 format!("Selector for {target_type} {selector} resolved unexpectedly empty."),
                 element_id,
             )
         });
     }
 
-    Err(selector_guard_failed(
-        format!(
-            "Selector for {target_type} {selector} resolved to {count} targets; expected exactly one."
-        ),
-        element_id,
-    ))
+    if count == 0 {
+        Err(selector_not_found(
+            format!("Selector for {target_type} {selector} resolved to 0 targets."),
+            element_id,
+        ))
+    } else {
+        Err(selector_ambiguous(
+            format!(
+                "Selector for {target_type} {selector} resolved to {count} targets; expected exactly one."
+            ),
+            element_id,
+        ))
+    }
 }
 
 fn guard_eq(
@@ -342,6 +349,20 @@ fn reject_inapplicable_guard(
 
 fn selector_guard_failed(message: String, element_id: Option<&str>) -> Error {
     Error::new(ErrorCode::SelectorGuardFailed, message).with_location(ErrorLocation {
+        element_id: element_id.map(str::to_owned),
+        ..ErrorLocation::default()
+    })
+}
+
+fn selector_not_found(message: String, element_id: Option<&str>) -> Error {
+    Error::new(ErrorCode::SelectorNotFound, message).with_location(ErrorLocation {
+        element_id: element_id.map(str::to_owned),
+        ..ErrorLocation::default()
+    })
+}
+
+fn selector_ambiguous(message: String, element_id: Option<&str>) -> Error {
+    Error::new(ErrorCode::SelectorAmbiguous, message).with_location(ErrorLocation {
         element_id: element_id.map(str::to_owned),
         ..ErrorLocation::default()
     })
@@ -424,7 +445,7 @@ fn resolve_and_guard() {
         },
     )
     .expect_err("ambiguous media selector fails");
-    assert_eq!(ambiguous.code(), ErrorCode::SelectorGuardFailed);
+    assert_eq!(ambiguous.code(), ErrorCode::SelectorAmbiguous);
 }
 
 #[cfg(test)]
