@@ -281,12 +281,30 @@ mod test_support {
     }
 
     fn unique_dir() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let nanos = SystemTime::now()
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+        let base_nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time after epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("pptx-compose-apply-{}-{nanos}", std::process::id()))
+        let temp_dir = std::env::temp_dir();
+
+        for _ in 0..100 {
+            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let path = temp_dir.join(format!(
+                "pptx-compose-apply-{}-{base_nanos}-{id}",
+                std::process::id()
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return path,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("test dir creates: {error}"),
+            }
+        }
+
+        panic!("could not create a unique apply test directory")
     }
 }
