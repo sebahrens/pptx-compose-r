@@ -9,7 +9,7 @@ use std::{
 use pptx_compose::{
     PresentationDocument,
     core::{
-        error::{Error, ErrorCode, Result},
+        error::{Error, ErrorCode, ErrorLocation, Result},
         opc::{part::Part, part_name::PartName},
         provenance::{document_id::document_id, revision},
         zip::reader::from_bytes,
@@ -196,19 +196,29 @@ impl SessionStore {
         session_id: &str,
         expected_revision: u64,
     ) -> Result<SessionApplyGuard> {
-        let session = self.get(session_id)?;
-        if session.revision != expected_revision {
-            return Err(Error::stale_revision(format!(
-                "Session {session_id} is at revision {}, not expected revision {expected_revision}.",
-                session.revision
-            )));
-        }
-        let guard = session.apply_lock.clone();
+        let revision = self.check_revision(session_id, expected_revision)?;
+        let guard = self.get(session_id)?.apply_lock.clone();
         Ok(SessionApplyGuard {
             session_id: session_id.to_owned(),
-            revision: expected_revision,
+            revision,
             _guard: guard,
         })
+    }
+
+    pub fn check_revision(&self, session_id: &str, expected_revision: u64) -> Result<u64> {
+        let mut sessions = self.lock_sessions()?;
+        remove_expired(&mut sessions, SystemTime::now());
+        let session = sessions
+            .get(session_id)
+            .ok_or_else(|| missing_session(session_id))?;
+        if session.revision != expected_revision {
+            return Err(stale_revision_error(
+                session_id,
+                session.revision,
+                expected_revision,
+            ));
+        }
+        Ok(session.revision)
     }
 
     pub fn finish_apply(
@@ -223,10 +233,11 @@ impl SessionStore {
             .get_mut(&guard.session_id)
             .ok_or_else(|| missing_session(&guard.session_id))?;
         if session.revision != guard.revision {
-            return Err(Error::stale_revision(format!(
-                "Session {} changed from revision {} to {} while applying.",
-                guard.session_id, guard.revision, session.revision
-            )));
+            return Err(stale_revision_error(
+                &guard.session_id,
+                session.revision,
+                guard.revision,
+            ));
         }
         if succeeded && !dry_run {
             session.revision = session.revision.saturating_add(1);
@@ -241,8 +252,30 @@ impl SessionStore {
         dry_run: bool,
         succeeded: bool,
     ) -> Result<u64> {
-        let guard = self.begin_apply(session_id, expected_revision)?;
-        self.finish_apply(guard, dry_run, succeeded)
+        let session = self.get(session_id)?;
+        let _apply_guard = session.apply_lock.lock().map_err(|_| {
+            Error::new(
+                ErrorCode::InternalError,
+                "Session apply lock was poisoned by a previous failure.",
+            )
+        })?;
+
+        let mut sessions = self.lock_sessions()?;
+        remove_expired(&mut sessions, SystemTime::now());
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| missing_session(session_id))?;
+        if session.revision != expected_revision {
+            return Err(stale_revision_error(
+                session_id,
+                session.revision,
+                expected_revision,
+            ));
+        }
+        if succeeded && !dry_run {
+            session.revision = session.revision.saturating_add(1);
+        }
+        Ok(session.revision)
     }
 
     pub fn import_media_path(
@@ -386,6 +419,16 @@ fn missing_session(session_id: &str) -> Error {
         ErrorCode::InvalidInput,
         format!("Session {session_id} does not exist or has expired."),
     )
+}
+
+fn stale_revision_error(session_id: &str, current_revision: u64, expected_revision: u64) -> Error {
+    Error::stale_revision(format!(
+        "Session {session_id} is at revision {current_revision}, not expected revision {expected_revision}."
+    ))
+    .with_location(ErrorLocation {
+        current_revision: Some(current_revision),
+        ..ErrorLocation::default()
+    })
 }
 
 fn unique_prefixed_id(prefix: &str) -> String {

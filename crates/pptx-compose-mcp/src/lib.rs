@@ -128,6 +128,13 @@ pub struct ApplyPatchInput {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ValidatePatchInput {
+    pub session_id: String,
+    pub expected_revision: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CloseInput {
     pub session_id: String,
 }
@@ -303,8 +310,16 @@ impl PptxServer {
             open_world_hint = false
         )
     )]
-    pub async fn pptx_validate_patch(&self) -> rmcp::Json<outputs::ValidatePatchOutput> {
-        rmcp::Json(outputs::ValidatePatchOutput::stub("pptx_validate_patch"))
+    pub async fn pptx_validate_patch(
+        &self,
+        input: rmcp::handler::server::wrapper::Parameters<ValidatePatchInput>,
+    ) -> Result<Json<outputs::ValidatePatchOutput>, rmcp::model::CallToolResult> {
+        self.sessions
+            .check_revision(&input.0.session_id, input.0.expected_revision)
+            .map_err(outputs::map_error)?;
+        Ok(rmcp::Json(outputs::ValidatePatchOutput::stub(
+            "pptx_validate_patch",
+        )))
     }
 
     /// Apply an atomic patch to the session.

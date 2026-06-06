@@ -39,6 +39,8 @@ pub enum ErrorCategory {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ErrorLocation {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub io_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zip_entry: Option<String>,
