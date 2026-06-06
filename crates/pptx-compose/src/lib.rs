@@ -345,6 +345,11 @@ impl PresentationDocument {
     pub fn source_path(&self) -> Option<&Path> {
         self.source_path.as_deref()
     }
+
+    #[must_use]
+    pub fn source_bytes(&self) -> &[u8] {
+        &self.source_bytes
+    }
 }
 
 fn temp_sibling_path(output_path: &Path) -> PathBuf {

@@ -30,7 +30,6 @@ use pptx_compose_core::{
         parser::parse_document,
     },
 };
-#[cfg(test)]
 use pptx_compose_core::{
     opc::{content_types::ContentTypes, part::Part, relationships::resolve_internal_target},
     zip::reader::{RawEntry, from_bytes},
@@ -807,14 +806,12 @@ fn core_error(error: Error) -> JsonError {
     JsonError::Projection(error.message().to_owned())
 }
 
-#[cfg(test)]
 pub fn package_from_pptx_bytes(bytes: &[u8]) -> Result<PptxPackage, JsonError> {
     let entries = from_bytes(bytes).map_err(core_error)?;
     let package = package_from_entries(&entries)?;
     PresentationDocument::open(package).map_err(core_error)
 }
 
-#[cfg(test)]
 fn package_from_entries(entries: &[RawEntry]) -> Result<Package, JsonError> {
     let mut package = Package::new();
     for entry in entries {
@@ -830,7 +827,6 @@ fn package_from_entries(entries: &[RawEntry]) -> Result<Package, JsonError> {
     Ok(package)
 }
 
-#[cfg(test)]
 fn hydrate_content_types(package: &mut Package) -> Result<(), JsonError> {
     let content_types_name = PartName::from_zip_entry("[Content_Types].xml").map_err(core_error)?;
     let raw = package
@@ -842,7 +838,6 @@ fn hydrate_content_types(package: &mut Package) -> Result<(), JsonError> {
     Ok(())
 }
 
-#[cfg(test)]
 fn hydrate_relationships(package: &mut Package) -> Result<(), JsonError> {
     let rels_entries = package
         .parts()
@@ -874,7 +869,6 @@ fn hydrate_relationships(package: &mut Package) -> Result<(), JsonError> {
     Ok(())
 }
 
-#[cfg(test)]
 fn relationship_source_for(rels_part_name: &PartName) -> Result<PartName, JsonError> {
     let path = rels_part_name.as_str();
     let Some((directory, file_name)) = path.rsplit_once("/_rels/") else {
