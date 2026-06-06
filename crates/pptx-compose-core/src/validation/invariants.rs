@@ -1,12 +1,22 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     opc::{package::Package, part_name::PartName},
     validation::{Finding, FindingCode, location},
+    xml::{
+        document::{XmlElement, XmlNode},
+        parser::parse_document,
+    },
 };
 
 pub(crate) const PRODUCER_CHECK_DUPLICATE_SLIDE_ID: &str =
     "validation::invariants::check_duplicate_slide_id";
+pub(crate) const PRODUCER_CHECK_DUPLICATE_DRAWING_ID: &str =
+    "validation::invariants::check_duplicate_drawing_id";
+pub(crate) const PRODUCER_CHECK_MALFORMED_DIRTY_XML: &str =
+    "validation::invariants::check_malformed_dirty_xml";
+pub(crate) const PRODUCER_CHECK_MISSING_NAMESPACE_DECLARATION: &str =
+    "validation::invariants::check_missing_namespace_declaration";
 pub(crate) const PRODUCER_CHECK_PART_DROPPED: &str = "validation::invariants::check_part_dropped";
 pub(crate) const PRODUCER_CHECK_EXTERNAL_RELATIONSHIP_NOT_CHECKED: &str =
     "validation::invariants::check_external_relationship_not_checked";
@@ -22,6 +32,7 @@ const DIGITAL_SIGNATURE_XML_CONTENT_TYPE: &str =
 
 pub fn check_invariants(pkg: &Package, findings: &mut Vec<Finding>) {
     check_duplicate_slide_id(pkg, findings);
+    check_dirty_xml_parts(pkg, findings);
     check_external_relationship_not_checked(pkg, findings);
     check_part_dropped(pkg, findings);
     check_signature_invalidated_by_edit(pkg, findings);
@@ -50,6 +61,208 @@ fn check_duplicate_slide_id(pkg: &Package, findings: &mut Vec<Finding>) {
             ));
         }
     }
+}
+
+fn check_dirty_xml_parts(pkg: &Package, findings: &mut Vec<Finding>) {
+    for part_name in pkg.dirty_parts() {
+        if !is_xml_part(part_name) {
+            continue;
+        }
+        let Some(part) = pkg.parts().get(part_name) else {
+            continue;
+        };
+
+        match parse_document(part.bytes()) {
+            Ok(document) => {
+                if let Some(root) = document.root_element() {
+                    check_missing_namespace_declaration(part_name, root, findings);
+                    if is_slide_part(pkg, part_name) {
+                        check_duplicate_drawing_id(part_name, root, findings);
+                    }
+                }
+            }
+            Err(error) => findings.push(Finding::new(
+                "",
+                FindingCode::MalformedXml,
+                format!(
+                    "Dirty XML part {part_name} is not well-formed: {}",
+                    error.message()
+                ),
+                false,
+                location(&[("part", part_name.zip_entry_name().to_owned())]),
+                Some("Regenerate or repair the dirty XML before writing.".to_owned()),
+            )),
+        }
+    }
+}
+
+fn is_xml_part(part_name: &PartName) -> bool {
+    part_name
+        .as_str()
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("xml"))
+}
+
+fn is_slide_part(pkg: &Package, part_name: &PartName) -> bool {
+    pkg.slide_ids()
+        .iter()
+        .any(|slide| slide.part.as_ref() == Some(part_name))
+        || {
+            let path = part_name.as_str();
+            path.starts_with("/ppt/slides/slide") && path.ends_with(".xml")
+        }
+}
+
+fn check_missing_namespace_declaration(
+    part_name: &PartName,
+    root: &XmlElement,
+    findings: &mut Vec<Finding>,
+) {
+    let mut reported = BTreeSet::new();
+    check_element_namespaces(part_name, root, &BTreeMap::new(), &mut reported, findings);
+}
+
+fn check_element_namespaces(
+    part_name: &PartName,
+    element: &XmlElement,
+    inherited: &BTreeMap<String, String>,
+    reported: &mut BTreeSet<String>,
+    findings: &mut Vec<Finding>,
+) {
+    let mut in_scope = inherited.clone();
+    for binding in element.namespaces.bindings() {
+        if let Some(prefix) = &binding.prefix {
+            in_scope.insert(prefix.clone(), binding.uri.clone());
+        }
+    }
+
+    if let Some(prefix) = &element.name.prefix {
+        check_prefix(
+            part_name,
+            prefix,
+            &element.name.raw,
+            &in_scope,
+            reported,
+            findings,
+        );
+    }
+
+    for attribute in &element.attributes {
+        if attribute.namespace_declaration {
+            continue;
+        }
+        if let Some(prefix) = &attribute.name.prefix {
+            check_prefix(
+                part_name,
+                prefix,
+                &attribute.name.raw,
+                &in_scope,
+                reported,
+                findings,
+            );
+        }
+    }
+
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        check_element_namespaces(part_name, child, &in_scope, reported, findings);
+    }
+}
+
+fn check_prefix(
+    part_name: &PartName,
+    prefix: &str,
+    qualified_name: &str,
+    in_scope: &BTreeMap<String, String>,
+    reported: &mut BTreeSet<String>,
+    findings: &mut Vec<Finding>,
+) {
+    if in_scope.contains_key(prefix) || !reported.insert(prefix.to_owned()) {
+        return;
+    }
+
+    findings.push(Finding::new(
+        "",
+        FindingCode::MissingNamespaceDeclaration,
+        format!("Dirty XML part {part_name} uses undeclared namespace prefix {prefix}."),
+        false,
+        location(&[
+            ("part", part_name.zip_entry_name().to_owned()),
+            ("prefix", prefix.to_owned()),
+            ("qualified_name", qualified_name.to_owned()),
+        ]),
+        Some(
+            "Declare the namespace prefix on the element or an ancestor before writing.".to_owned(),
+        ),
+    ));
+}
+
+fn check_duplicate_drawing_id(
+    part_name: &PartName,
+    root: &XmlElement,
+    findings: &mut Vec<Finding>,
+) {
+    let mut seen = BTreeSet::new();
+    let mut reported = BTreeSet::new();
+    for sp_tree in descendants_named(root, "spTree") {
+        collect_duplicate_cnvpr_ids(sp_tree, part_name, &mut seen, &mut reported, findings);
+    }
+}
+
+fn collect_duplicate_cnvpr_ids(
+    element: &XmlElement,
+    part_name: &PartName,
+    seen: &mut BTreeSet<String>,
+    reported: &mut BTreeSet<String>,
+    findings: &mut Vec<Finding>,
+) {
+    if element.name.local_name == "cNvPr"
+        && let Some(id) = attr(element, "id")
+        && !seen.insert(id.to_owned())
+        && reported.insert(id.to_owned())
+    {
+        findings.push(Finding::new(
+            "",
+            FindingCode::DuplicateDrawingId,
+            format!("Drawing non-visual id {id} appears more than once in slide {part_name}."),
+            false,
+            location(&[
+                ("part", part_name.zip_entry_name().to_owned()),
+                ("drawing_id", id.to_owned()),
+            ]),
+            Some("Allocate a unique p:cNvPr/@id within the slide shape tree.".to_owned()),
+        ));
+    }
+
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_duplicate_cnvpr_ids(child, part_name, seen, reported, findings);
+    }
+}
+
+fn descendants_named<'a>(element: &'a XmlElement, local_name: &str) -> Vec<&'a XmlElement> {
+    let mut descendants = Vec::new();
+    collect_descendants_named(element, local_name, &mut descendants);
+    descendants
+}
+
+fn collect_descendants_named<'a>(
+    element: &'a XmlElement,
+    local_name: &str,
+    descendants: &mut Vec<&'a XmlElement>,
+) {
+    if element.name.local_name == local_name {
+        descendants.push(element);
+    }
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_descendants_named(child, local_name, descendants);
+    }
+}
+
+fn attr<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.local_name == local_name)
+        .map(|attribute| attribute.value.as_str())
 }
 
 fn check_external_relationship_not_checked(pkg: &Package, findings: &mut Vec<Finding>) {
@@ -186,5 +399,87 @@ mod tests {
             })
         );
         assert_eq!(outcome.summary.errors, 2);
+    }
+
+    #[test]
+    fn detects_dirty_xml_violations() {
+        let slide_part =
+            PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid slide part");
+        let mut package = Package::new();
+        package
+            .insert_zip_entry(
+                "ppt/slides/slide1.xml",
+                br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="4" name="Title"/></p:nvSpPr><p:spPr><a:xfrm/></p:spPr></p:sp><p:pic><p:nvPicPr><p:cNvPr id="4" name="Picture"/></p:nvPicPr></p:pic></p:spTree></p:cSld></p:sld>"#.to_vec(),
+            )
+            .expect("slide inserted");
+        package
+            .content_types_mut()
+            .insert_default("xml", "application/xml");
+        package.mark_dirty(slide_part.clone());
+        package.push_slide_id(SlideIdEntry {
+            slide_id: "256".to_owned(),
+            relationship_id: Some("rId1".to_owned()),
+            part: Some(slide_part),
+        });
+
+        let outcome = validate_package(&package, ValidationMode::Edited);
+
+        assert_eq!(outcome.status, ValidationStatus::Invalid);
+        let duplicate_drawing = outcome
+            .findings
+            .iter()
+            .find(|finding| finding.code == FindingCode::DuplicateDrawingId)
+            .expect("duplicate drawing id finding");
+        assert_eq!(
+            duplicate_drawing.location,
+            serde_json::json!({
+                "part": "ppt/slides/slide1.xml",
+                "drawing_id": "4"
+            })
+        );
+        let missing_namespace = outcome
+            .findings
+            .iter()
+            .find(|finding| finding.code == FindingCode::MissingNamespaceDeclaration)
+            .expect("missing namespace finding");
+        assert_eq!(
+            missing_namespace.location,
+            serde_json::json!({
+                "part": "ppt/slides/slide1.xml",
+                "prefix": "a",
+                "qualified_name": "a:xfrm"
+            })
+        );
+    }
+
+    #[test]
+    fn detects_malformed_dirty_xml() {
+        let slide_part =
+            PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid slide part");
+        let mut package = Package::new();
+        package
+            .insert_zip_entry(
+                "ppt/slides/slide1.xml",
+                br#"<p:sld xmlns:p="urn:p"><p:cSld></p:sld>"#.to_vec(),
+            )
+            .expect("slide inserted");
+        package
+            .content_types_mut()
+            .insert_default("xml", "application/xml");
+        package.mark_dirty(slide_part);
+
+        let outcome = validate_package(&package, ValidationMode::Edited);
+
+        assert_eq!(outcome.status, ValidationStatus::Invalid);
+        let malformed_xml = outcome
+            .findings
+            .iter()
+            .find(|finding| finding.code == FindingCode::MalformedXml)
+            .expect("malformed dirty XML finding");
+        assert_eq!(
+            malformed_xml.location,
+            serde_json::json!({"part": "ppt/slides/slide1.xml"})
+        );
+        assert_eq!(malformed_xml.severity, crate::validation::Severity::Fatal);
     }
 }

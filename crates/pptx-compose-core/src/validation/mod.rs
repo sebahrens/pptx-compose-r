@@ -212,43 +212,29 @@ pub const FINDING_COVERAGE: &[FindingCoverage] = &[
     },
     FindingCoverage {
         code: FindingCode::DuplicateDrawingId,
-        producer: None,
-        producer_test: None,
-        deferral: Some(Deferral {
-            owner: "slide shape-tree validation task",
-            spec: "specs/050-roundtrip-invariants.md",
-            reason: "Drawing non-visual id validation belongs with slide shape-tree parsing.",
-        }),
+        producer: Some(invariants::PRODUCER_CHECK_DUPLICATE_DRAWING_ID),
+        producer_test: Some("validation::invariants::tests::detects_dirty_xml_violations"),
+        deferral: None,
     },
     FindingCoverage {
         code: FindingCode::InvalidBounds,
-        producer: None,
-        producer_test: None,
-        deferral: Some(Deferral {
-            owner: "edit/DrawingML validation task",
-            spec: "specs/047-drawingml-construction.md; specs/044-results-validation-errors.md",
-            reason: "Bounds are validated when constructing or moving DrawingML elements, not by the package-level invariant pass.",
-        }),
+        producer: Some("edit::operations::bounds::validate_bounds"),
+        producer_test: Some(
+            "operations::add_text_box::rejects_bounds_above_emu_max_without_writing; operations::move_resize::rejects_bounds_above_emu_max_without_writing",
+        ),
+        deferral: None,
     },
     FindingCoverage {
         code: FindingCode::MalformedXml,
-        producer: None,
-        producer_test: None,
-        deferral: Some(Deferral {
-            owner: "dirty XML writer validation task",
-            spec: "specs/050-roundtrip-invariants.md",
-            reason: "Only dirty XML parts are reserialized; malformed written XML detection belongs with dirty-part XML writing.",
-        }),
+        producer: Some(invariants::PRODUCER_CHECK_MALFORMED_DIRTY_XML),
+        producer_test: Some("validation::invariants::tests::detects_malformed_dirty_xml"),
+        deferral: None,
     },
     FindingCoverage {
         code: FindingCode::MissingNamespaceDeclaration,
-        producer: None,
-        producer_test: None,
-        deferral: Some(Deferral {
-            owner: "dirty XML namespace validation task",
-            spec: "specs/047-drawingml-construction.md; specs/050-roundtrip-invariants.md",
-            reason: "Namespace declaration checks require dirty XML construction/writer context.",
-        }),
+        producer: Some(invariants::PRODUCER_CHECK_MISSING_NAMESPACE_DECLARATION),
+        producer_test: Some("validation::invariants::tests::detects_dirty_xml_violations"),
+        deferral: None,
     },
     FindingCoverage {
         code: FindingCode::PartDropped,

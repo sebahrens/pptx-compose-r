@@ -50,9 +50,14 @@ fn every_044_finding_has_producer_or_deferral() {
 
     assert_deferral(FindingCode::MediaContentTypeMismatch, "specs/032");
     assert_deferral(
-        FindingCode::InvalidBounds,
-        "specs/047-drawingml-construction.md",
+        FindingCode::UnresolvedRelationshipReference,
+        "specs/012-content-types-and-relationships.md",
     );
+    assert_deferral(
+        FindingCode::SlideOrderMismatch,
+        "specs/050-roundtrip-invariants.md",
+    );
+    assert_deferral(FindingCode::OrphanPart, "specs/010");
 }
 
 fn coverage_entries(code: FindingCode) -> Vec<&'static FindingCoverage> {

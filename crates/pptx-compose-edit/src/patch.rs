@@ -1147,7 +1147,11 @@ mod test_support {
     fn base_package() -> Package {
         let mut package = Package::new();
         package
-            .insert_zip_entry("ppt/slides/slide1.xml", b"<p:sld/>".to_vec())
+            .insert_zip_entry(
+                "ppt/slides/slide1.xml",
+                br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>"#
+                    .to_vec(),
+            )
             .expect("slide part inserted");
         package.content_types_mut().insert_override(
             part("ppt/slides/slide1.xml"),

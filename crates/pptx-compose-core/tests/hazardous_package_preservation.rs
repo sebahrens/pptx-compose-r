@@ -87,13 +87,21 @@ fn hazardous_fixture_package() -> Package {
     let mut package = Package::new();
     insert(&mut package, "[Content_Types].xml", b"<Types/>");
     insert(&mut package, "_rels/.rels", b"<Relationships/>");
-    insert(&mut package, "ppt/presentation.xml", b"<p:presentation/>");
+    insert(
+        &mut package,
+        "ppt/presentation.xml",
+        br#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>"#,
+    );
     insert(
         &mut package,
         "ppt/_rels/presentation.xml.rels",
         b"<Relationships/>",
     );
-    insert(&mut package, "ppt/slides/slide1.xml", b"<p:sld/>");
+    insert(
+        &mut package,
+        "ppt/slides/slide1.xml",
+        br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>"#,
+    );
     insert(
         &mut package,
         "ppt/slides/_rels/slide1.xml.rels",
