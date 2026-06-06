@@ -53,6 +53,11 @@ impl Package {
     }
 
     #[must_use]
+    pub fn parts_mut(&mut self) -> &mut PartStore {
+        &mut self.parts
+    }
+
+    #[must_use]
     pub fn content_types(&self) -> &ContentTypes {
         &self.content_types
     }

@@ -1,5 +1,7 @@
 use pptx_compose_core::{opc::part_name::PartName, pptx::ids::ElementKind};
 
+pub mod move_resize;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolvedTarget {
     Slide(ResolvedSlide),
