@@ -4,6 +4,7 @@ use pptx_compose::{
     AgentViewOptions, ApplyPatchOptions, MediaInputs, OpenOptions, Patch, PresentationDocument,
     WriteMode, WriteOptions,
     core::{
+        error::ErrorCode,
         provenance::document_id::document_id as provenance_document_id,
         zip::reader::{RawEntry, from_bytes},
     },
@@ -161,6 +162,59 @@ fn replace_text_apply_writes_only_dirtied_slide_part() {
     assert!(slide_xml.contains(">Updated title<"));
 }
 
+#[test]
+fn successful_real_applies_increment_session_revision_and_reject_stale_patch() {
+    let bytes = text_deck();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let initial = document.validate().expect("initial validation succeeds");
+    assert_eq!(initial.revision, 1);
+
+    let first_report = document
+        .apply_patch(
+            replace_title_patch(&initial.document_id, 1, "revision-first", "First update"),
+            MediaInputs::default(),
+        )
+        .expect("first replace_text applies");
+    assert_eq!(first_report.base_revision, 1);
+    assert_eq!(first_report.new_revision, 2);
+
+    let after_first = document.validate().expect("post-apply validation succeeds");
+    assert_eq!(after_first.revision, 2);
+    let stale_error = document
+        .apply_patch(
+            replace_title_patch(
+                &after_first.document_id,
+                1,
+                "revision-stale",
+                "Stale update",
+            ),
+            MediaInputs::default(),
+        )
+        .expect_err("stale base_revision is rejected");
+    assert_eq!(stale_error.code(), ErrorCode::StalePatch);
+
+    let second_report = document
+        .apply_patch(
+            replace_title_patch(
+                &after_first.document_id,
+                2,
+                "revision-second",
+                "Second update",
+            ),
+            MediaInputs::default(),
+        )
+        .expect("second replace_text applies");
+    assert_eq!(second_report.base_revision, 2);
+    assert_eq!(second_report.new_revision, 3);
+    assert_eq!(
+        document
+            .validate()
+            .expect("final validation succeeds")
+            .revision,
+        3
+    );
+}
+
 fn noop_patch(bytes: &[u8]) -> Patch {
     serde_json::from_value(serde_json::json!({
         "schema": "pptx-compose.patch.v1",
@@ -171,6 +225,28 @@ fn noop_patch(bytes: &[u8]) -> Patch {
         "operations": []
     }))
     .expect("noop patch parses")
+}
+
+fn replace_title_patch(
+    document_id: &str,
+    base_revision: u32,
+    operation_id: &str,
+    text: &str,
+) -> Patch {
+    parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id,
+        "base_revision": base_revision,
+        "client_request_id": operation_id,
+        "operations": [{
+            "operation_id": operation_id,
+            "op": "replace_text",
+            "element_id": "slide-1:shape-3",
+            "text": text
+        }]
+    }))
+    .expect("replace title patch parses")
 }
 
 fn document_id(bytes: &[u8]) -> String {

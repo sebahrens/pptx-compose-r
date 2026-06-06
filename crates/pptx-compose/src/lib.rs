@@ -54,6 +54,7 @@ pub struct PresentationDocument {
     source_bytes: Vec<u8>,
     entries: Vec<RawEntry>,
     dirty_parts: BTreeSet<PartName>,
+    revision: revision::Revision,
 }
 
 impl PresentationDocument {
@@ -84,6 +85,7 @@ impl PresentationDocument {
             source_bytes,
             entries,
             dirty_parts: BTreeSet::new(),
+            revision: revision::on_open(),
         })
     }
 
@@ -170,13 +172,7 @@ impl PresentationDocument {
         }
 
         let document_id = document_id_from_entries(&self.entries)?;
-        let revision = u32::try_from(revision::on_open().value()).map_err(|source| {
-            Error::with_source(
-                ErrorCode::InternalError,
-                "Revision value exceeds the patch report schema range.",
-                source,
-            )
-        })?;
+        let revision = self.current_revision()?;
         validate_envelope(&patch, &DocumentState::new(document_id.clone(), revision))?;
         if options.dry_run {
             let validation = self.validate()?;
@@ -201,19 +197,36 @@ impl PresentationDocument {
         let mut executor = RealOperationExecutor {
             media_inputs: &media,
         };
+        let next_revision = next_revision_value(self.revision)?;
         let report = pptx_compose_edit::patch::apply_patch(
             &mut package,
             pptx_compose_edit::patch::PatchContext::new(
                 document_id.clone(),
                 revision,
                 document_id,
-                revision,
+                next_revision,
             ),
             &patch,
             options.dry_run,
             &mut executor,
         )?;
         self.replace_entries_from_package(&package)?;
+        if !report.changed_parts.is_empty() {
+            let recorded_revision =
+                u32::try_from(self.revision.record_apply(true)).map_err(|source| {
+                    Error::with_source(
+                        ErrorCode::InternalError,
+                        "Revision value exceeds the patch report schema range.",
+                        source,
+                    )
+                })?;
+            if recorded_revision != report.new_revision {
+                return Err(Error::new(
+                    ErrorCode::InternalError,
+                    "Patch report revision does not match the recorded session revision.",
+                ));
+            }
+        }
         Ok(report)
     }
 
@@ -348,13 +361,7 @@ impl PresentationDocument {
         pptx_compose_edit::reports::validation_report(
             core::validation::validate_package(&package, core::validation::ValidationMode::Edited),
             document_id_from_entries(&self.entries)?,
-            u32::try_from(revision::on_open().value()).map_err(|source| {
-                Error::with_source(
-                    ErrorCode::InternalError,
-                    "Revision value exceeds the validation report schema range.",
-                    source,
-                )
-            })?,
+            self.current_revision()?,
         )
     }
 
@@ -365,6 +372,16 @@ impl PresentationDocument {
     #[must_use]
     pub fn source_path(&self) -> Option<&Path> {
         self.source_path.as_deref()
+    }
+
+    fn current_revision(&self) -> Result<u32> {
+        u32::try_from(self.revision.value()).map_err(|source| {
+            Error::with_source(
+                ErrorCode::InternalError,
+                "Revision value exceeds the report schema range.",
+                source,
+            )
+        })
     }
 
     #[must_use]
@@ -484,6 +501,22 @@ fn document_id_from_entries(entries: &[RawEntry]) -> Result<String> {
         .collect::<Vec<_>>();
 
     Ok(provenance_document_id(&ordinary_parts, content_types_bytes))
+}
+
+fn next_revision_value(revision: revision::Revision) -> Result<u32> {
+    let next = revision.value().checked_add(1).ok_or_else(|| {
+        Error::new(
+            ErrorCode::InternalError,
+            "Revision value exceeds the patch report schema range.",
+        )
+    })?;
+    u32::try_from(next).map_err(|source| {
+        Error::with_source(
+            ErrorCode::InternalError,
+            "Revision value exceeds the patch report schema range.",
+            source,
+        )
+    })
 }
 
 fn package_to_zip_bytes(package: &Package) -> Result<Vec<u8>> {
