@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     error::{Error, ErrorCode, Result},
@@ -130,6 +130,29 @@ impl RelationshipSet {
     #[must_use]
     pub fn get(&self, id: &str) -> Option<&Relationship> {
         self.rels.iter().find(|relationship| relationship.id == id)
+    }
+
+    #[must_use]
+    pub fn allocate_id(&self) -> String {
+        let existing = self
+            .rels
+            .iter()
+            .map(|relationship| relationship.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let max_suffix = existing
+            .iter()
+            .filter_map(|id| relationship_id_suffix(id))
+            .max_by(|left, right| compare_decimal(left, right))
+            .unwrap_or("0");
+
+        let mut candidate_suffix = increment_decimal(max_suffix);
+        loop {
+            let candidate = format!("rId{candidate_suffix}");
+            if !existing.contains(candidate.as_str()) {
+                return candidate;
+            }
+            candidate_suffix = increment_decimal(&candidate_suffix);
+        }
     }
 }
 
@@ -277,6 +300,44 @@ fn split_part_segments(part_name: &PartName) -> Vec<String> {
         .collect()
 }
 
+fn relationship_id_suffix(id: &str) -> Option<&str> {
+    let suffix = id.strip_prefix("rId")?;
+    if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(suffix)
+}
+
+fn compare_decimal(left: &str, right: &str) -> std::cmp::Ordering {
+    let left = normalize_decimal(left);
+    let right = normalize_decimal(right);
+    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+}
+
+fn normalize_decimal(value: &str) -> &str {
+    let trimmed = value.trim_start_matches('0');
+    if trimmed.is_empty() { "0" } else { trimmed }
+}
+
+fn increment_decimal(value: &str) -> String {
+    let mut digits = value.as_bytes().to_vec();
+    let mut index = digits.len();
+
+    while index > 0 {
+        index -= 1;
+        if digits[index] != b'9' {
+            digits[index] += 1;
+            return digits.into_iter().map(char::from).collect();
+        }
+        digits[index] = b'0';
+    }
+
+    let mut incremented = String::with_capacity(digits.len() + 1);
+    incremented.push('1');
+    incremented.extend(digits.into_iter().map(char::from));
+    incremented
+}
+
 #[cfg(test)]
 #[test]
 fn parse_and_resolve() {
@@ -315,4 +376,54 @@ fn parse_and_resolve() {
         "/ppt/slides/slide1.xml"
     );
     assert!(graph.resolve(&source, "rId2").is_none());
+}
+
+#[cfg(test)]
+mod allocate_id {
+    use super::*;
+
+    fn relationship_set(ids: &[&str]) -> RelationshipSet {
+        let source = PartName::from_zip_entry("/ppt/slides/slide1.xml").expect("valid source");
+        let rels = ids
+            .iter()
+            .map(|id| {
+                Relationship::internal(
+                    RelationshipSource::Part(source.clone()),
+                    *id,
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+                    "../media/image1.png",
+                )
+            })
+            .collect();
+
+        RelationshipSet { source, rels }
+    }
+
+    #[test]
+    fn allocates_after_max_numeric_suffix() {
+        let set = relationship_set(&["rId1", "rId2", "rId5"]);
+
+        assert_eq!(set.allocate_id(), "rId6");
+    }
+
+    #[test]
+    fn empty_set_starts_at_one() {
+        let set = relationship_set(&[]);
+
+        assert_eq!(set.allocate_id(), "rId1");
+    }
+
+    #[test]
+    fn ignores_non_conforming_ids_for_max_but_avoids_collisions() {
+        let set = relationship_set(&["rId1", "rId2x", "custom", "rId2"]);
+
+        assert_eq!(set.allocate_id(), "rId3");
+    }
+
+    #[test]
+    fn increments_until_candidate_is_free() {
+        let set = relationship_set(&["rId1", "rId03", "rId4"]);
+
+        assert_eq!(set.allocate_id(), "rId5");
+    }
 }
