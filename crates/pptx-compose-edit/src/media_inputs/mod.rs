@@ -4,7 +4,8 @@ pub mod sniff;
 
 use std::{
     collections::{HashMap, HashSet},
-    fs,
+    fs::{self, File},
+    io::Read,
     path::{Component, Path, PathBuf},
 };
 
@@ -114,15 +115,13 @@ impl MediaInputs {
         })?;
 
         let bytes = match &binding.source {
-            MediaSource::Path(path) => fs::read(path).map_err(|source| {
-                Error::with_source(
-                    ErrorCode::InvalidInput,
-                    format!("Could not read media input `{}`.", path.display()),
-                    source,
-                )
-            })?,
+            MediaSource::Path(path) => read_path_media(media_ref, path, &self.limits)?,
             MediaSource::Bytes(bytes) => bytes.clone(),
-            MediaSource::InlineBase64(encoded) => decode_base64(encoded)?,
+            MediaSource::InlineBase64(encoded) => {
+                let decoded_len = decoded_base64_len(encoded)?;
+                limits::check_size(media_ref, decoded_len, &self.limits)?;
+                decode_base64(encoded)?
+            }
         };
         let actual_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
         limits::check_size(media_ref, actual_len, &self.limits)?;
@@ -190,6 +189,40 @@ impl MediaInputs {
 
         Ok(MediaInputReport { warnings })
     }
+}
+
+fn read_path_media(media_ref: &str, path: &Path, limits: &MediaLimits) -> Result<Vec<u8>> {
+    let metadata = fs::metadata(path).map_err(|source| {
+        Error::with_source(
+            ErrorCode::InvalidInput,
+            format!("Could not inspect media input `{}`.", path.display()),
+            source,
+        )
+    })?;
+    limits::check_size(media_ref, metadata.len(), limits)?;
+
+    let file = File::open(path).map_err(|source| {
+        Error::with_source(
+            ErrorCode::InvalidInput,
+            format!("Could not read media input `{}`.", path.display()),
+            source,
+        )
+    })?;
+
+    let capped_len = limits.max_media_bytes.saturating_add(1);
+    let mut reader = file.take(capped_len);
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).map_err(|source| {
+        Error::with_source(
+            ErrorCode::InvalidInput,
+            format!("Could not read media input `{}`.", path.display()),
+            source,
+        )
+    })?;
+
+    let actual_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    limits::check_size(media_ref, actual_len, limits)?;
+    Ok(bytes)
 }
 
 fn manifest_binding(binding: &ManifestMediaBinding, media_root: &Path) -> Result<MediaBinding> {
@@ -312,6 +345,55 @@ fn decode_base64(encoded: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn decoded_base64_len(encoded: &str) -> Result<u64> {
+    let mut encoded_len = 0_u64;
+    let mut padding_len = 0_u64;
+    let mut saw_padding = false;
+
+    for byte in encoded.bytes().filter(|byte| !byte.is_ascii_whitespace()) {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' => {
+                if saw_padding {
+                    return Err(Error::new(
+                        ErrorCode::InvalidInput,
+                        "Inline media contains invalid base64 padding.",
+                    ));
+                }
+            }
+            b'=' => {
+                saw_padding = true;
+                padding_len += 1;
+                if padding_len > 2 {
+                    return Err(Error::new(
+                        ErrorCode::InvalidInput,
+                        "Inline media contains invalid base64 padding.",
+                    ));
+                }
+            }
+            _ => {
+                return Err(Error::new(
+                    ErrorCode::InvalidInput,
+                    "Inline media contains invalid base64 characters.",
+                ));
+            }
+        }
+
+        encoded_len += 1;
+    }
+
+    if !encoded_len.is_multiple_of(4) {
+        return Err(Error::new(
+            ErrorCode::InvalidInput,
+            "Inline media contains incomplete base64 data.",
+        ));
+    }
+    if encoded_len == 0 {
+        return Ok(0);
+    }
+
+    Ok((encoded_len / 4) * 3 - padding_len)
+}
+
 fn push_base64_quartet(quartet: [u8; 4], bytes: &mut Vec<u8>) -> Result<()> {
     if quartet[0] == 64 || quartet[1] == 64 {
         return Err(Error::new(
@@ -407,6 +489,7 @@ pub mod checksum {
 #[cfg(test)]
 pub mod resolve {
     use std::{
+        collections::HashMap,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -555,6 +638,65 @@ pub mod resolve {
         let resolved = inputs.resolve("inline").expect("inline media resolves");
         assert_eq!(resolved.content_type, "image/png");
         assert_eq!(resolved.bytes, b"\x89PNG\r\n\x1a\ninline bytes");
+    }
+
+    #[test]
+    fn rejects_oversized_path_before_reading_payload() {
+        let media_root = temp_media_root();
+        fs::create_dir_all(&media_root).expect("media root can be created");
+        let media_path = media_root.join("oversized.png");
+        fs::write(&media_path, b"\x89PNG\r\n\x1a\nx").expect("oversized media can be written");
+
+        let inputs = inputs_with_limits(
+            "oversized-path",
+            MediaSource::Path(media_path),
+            MediaLimits { max_media_bytes: 8 },
+        );
+
+        let error = inputs
+            .resolve("oversized-path")
+            .expect_err("oversized path fails before resolution");
+        assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
+        assert!(error.message().contains("oversized-path"));
+        assert!(error.message().contains("9"));
+        assert!(error.message().contains("8"));
+
+        fs::remove_dir_all(media_root).expect("temp media root can be removed");
+    }
+
+    #[test]
+    fn rejects_oversized_inline_base64_before_decoding_payload() {
+        let inputs = inputs_with_limits(
+            "oversized-inline",
+            MediaSource::InlineBase64("iVBORw0KGgppbmxpbmU=".to_owned()),
+            MediaLimits { max_media_bytes: 8 },
+        );
+
+        let error = inputs
+            .resolve("oversized-inline")
+            .expect_err("oversized inline media fails before resolution");
+        assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
+        assert!(error.message().contains("oversized-inline"));
+        assert!(error.message().contains("14"));
+        assert!(error.message().contains("8"));
+    }
+
+    fn inputs_with_limits(
+        media_ref: &str,
+        source: MediaSource,
+        limits: MediaLimits,
+    ) -> MediaInputs {
+        let mut bindings = HashMap::new();
+        bindings.insert(
+            media_ref.to_owned(),
+            MediaBinding {
+                content_type: "image/png".to_owned(),
+                declared_sha256: None,
+                declared_byte_length: None,
+                source,
+            },
+        );
+        MediaInputs::with_limits(bindings, limits)
     }
 
     fn temp_media_root() -> PathBuf {
