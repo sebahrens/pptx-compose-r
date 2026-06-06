@@ -27,9 +27,11 @@ pub(crate) fn apply(
 ) -> Result<(), CliError> {
     let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
     let patch = permissions.authorize_read(&args.patch, PathIntent::InputPptx)?;
-    if let Some(manifest) = &args.media_manifest {
-        permissions.authorize_read(manifest, PathIntent::MediaInput)?;
-    }
+    let media_manifest = args
+        .media_manifest
+        .as_ref()
+        .map(|manifest| permissions.authorize_read(manifest, PathIntent::MediaInput))
+        .transpose()?;
     if let Some(report) = &args.report {
         permissions.authorize_write(report, PathIntent::ReportOutput)?;
     }
@@ -38,7 +40,7 @@ pub(crate) fn apply(
     }
 
     let patch = read_patch(&patch)?;
-    let media_inputs = read_media_inputs(args.media_manifest.as_deref())?;
+    let media_inputs = read_media_inputs(media_manifest.as_deref(), permissions)?;
     let mut document = PresentationDocument::open_path_with_options(&input, open_options)
         .map_err(CliError::from_error)?;
     if args.dry_run {
@@ -122,7 +124,10 @@ fn read_patch(path: &Path) -> Result<Patch, CliError> {
     parse_patch(value).map_err(apply_error)
 }
 
-fn read_media_inputs(path: Option<&Path>) -> Result<MediaInputs, CliError> {
+fn read_media_inputs(
+    path: Option<&Path>,
+    permissions: &PermissionContext,
+) -> Result<MediaInputs, CliError> {
     let Some(path) = path else {
         return Ok(MediaInputs::default());
     };
@@ -141,7 +146,27 @@ fn read_media_inputs(path: Option<&Path>) -> Result<MediaInputs, CliError> {
         )
     })?;
     let media_root = path.parent().unwrap_or_else(|| Path::new("."));
-    MediaInputs::from_manifest(&manifest, media_root).map_err(CliError::from_error)
+    MediaInputs::from_manifest_with_limits_and_path_resolver(
+        &manifest,
+        media_root,
+        Default::default(),
+        |root, manifest_path| {
+            resolve_cli_manifest_media_path(root, manifest_path, permissions)
+                .map_err(CliError::into_error)
+        },
+    )
+    .map_err(CliError::from_error)
+}
+
+fn resolve_cli_manifest_media_path(
+    media_root: &Path,
+    manifest_path: &Path,
+    permissions: &PermissionContext,
+) -> Result<PathBuf, CliError> {
+    let resolved =
+        pptx_compose::edit::media_inputs::resolve_manifest_media_path(media_root, manifest_path)
+            .map_err(CliError::from_error)?;
+    permissions.authorize_read(&resolved, PathIntent::MediaInput)
 }
 
 fn reject_known_unsupported_operations(patch: &serde_json::Value) -> Result<(), Error> {
@@ -351,6 +376,12 @@ fn dry_run_add_image_uses_media_manifest() {
 #[test]
 fn media_manifest_mismatches_return_structured_errors() {
     test_support::media_manifest_mismatches_return_structured_errors();
+}
+
+#[cfg(test)]
+#[test]
+fn media_manifest_symlink_escape_is_rejected() {
+    test_support::media_manifest_symlink_escape_is_rejected();
 }
 
 #[cfg(test)]
@@ -765,6 +796,45 @@ mod test_support {
         }
     }
 
+    pub(super) fn media_manifest_symlink_escape_is_rejected() {
+        let root = unique_dir();
+        let workspace = root.join("workspace");
+        let outside = root.join("outside");
+        let input = workspace.join("input.pptx");
+        let patch = workspace.join("patch.json");
+        let manifest = workspace.join("media.json");
+        let assets = workspace.join("assets");
+        let image = assets.join("hero.png");
+        let outside_image = outside.join("secret.png");
+        let output = workspace.join("output.pptx");
+        fs::create_dir_all(&assets).expect("asset dir creates");
+        fs::create_dir_all(&outside).expect("outside dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&outside_image, png_bytes()).expect("outside image writes");
+        create_symlink(&outside_image, &image);
+        fs::write(&patch, add_image_patch(&input_bytes)).expect("patch fixture writes");
+        fs::write(
+            &manifest,
+            media_manifest("assets/hero.png", "image/png", None, None),
+        )
+        .expect("manifest writes");
+
+        let mut args = args(&input, &patch, &output, false, false);
+        args.dry_run = true;
+        args.output = None;
+        args.media_manifest = Some(manifest);
+
+        let err = apply(args, &permissions(&workspace), OpenOptions::default())
+            .expect_err("manifest symlink escape must fail");
+        assert!(matches!(
+            err.code(),
+            ErrorCode::PermissionDenied | ErrorCode::UnsafePath
+        ));
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
     fn args(
         input: &Path,
         patch: &Path,
@@ -894,6 +964,16 @@ mod test_support {
 
     fn png_bytes() -> &'static [u8] {
         b"\x89PNG\r\n\x1a\npptx-compose-test-image"
+    }
+
+    #[cfg(unix)]
+    fn create_symlink(target: &Path, link: &Path) {
+        std::os::unix::fs::symlink(target, link).expect("symlink fixture");
+    }
+
+    #[cfg(windows)]
+    fn create_symlink(target: &Path, link: &Path) {
+        std::os::windows::fs::symlink_file(target, link).expect("symlink fixture");
     }
 
     fn text_deck() -> Vec<u8> {

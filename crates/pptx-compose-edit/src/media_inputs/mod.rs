@@ -89,6 +89,23 @@ impl MediaInputs {
         media_root: &Path,
         limits: MediaLimits,
     ) -> Result<Self> {
+        Self::from_manifest_with_limits_and_path_resolver(
+            manifest,
+            media_root,
+            limits,
+            resolve_manifest_media_path,
+        )
+    }
+
+    pub fn from_manifest_with_limits_and_path_resolver<F>(
+        manifest: &MediaManifest,
+        media_root: &Path,
+        limits: MediaLimits,
+        mut path_resolver: F,
+    ) -> Result<Self>
+    where
+        F: FnMut(&Path, &Path) -> Result<PathBuf>,
+    {
         let mut bindings = HashMap::with_capacity(manifest.media.len());
 
         for entry in &manifest.media {
@@ -102,7 +119,7 @@ impl MediaInputs {
                 ));
             }
 
-            let binding = manifest_binding(&entry.binding, media_root)?;
+            let binding = manifest_binding(&entry.binding, media_root, &mut path_resolver)?;
             bindings.insert(entry.media_ref.clone(), binding);
         }
 
@@ -228,7 +245,14 @@ fn read_path_media(media_ref: &str, path: &Path, limits: &MediaLimits) -> Result
     Ok(bytes)
 }
 
-fn manifest_binding(binding: &ManifestMediaBinding, media_root: &Path) -> Result<MediaBinding> {
+fn manifest_binding<F>(
+    binding: &ManifestMediaBinding,
+    media_root: &Path,
+    path_resolver: &mut F,
+) -> Result<MediaBinding>
+where
+    F: FnMut(&Path, &Path) -> Result<PathBuf>,
+{
     match &binding.inline {
         Some(inline) => {
             if inline.encoding != "base64" {
@@ -263,13 +287,13 @@ fn manifest_binding(binding: &ManifestMediaBinding, media_root: &Path) -> Result
                 content_type: content_type.clone(),
                 declared_sha256: binding.sha256.clone(),
                 declared_byte_length: binding.byte_length,
-                source: MediaSource::Path(resolve_media_path(media_root, relative_path)?),
+                source: MediaSource::Path(path_resolver(media_root, relative_path)?),
             })
         }
     }
 }
 
-fn resolve_media_path(media_root: &Path, manifest_path: &Path) -> Result<PathBuf> {
+pub fn resolve_manifest_media_path(media_root: &Path, manifest_path: &Path) -> Result<PathBuf> {
     if manifest_path.is_absolute() {
         return Err(Error::unsafe_path(
             "Manifest media paths must be relative to media_root.",
@@ -294,7 +318,28 @@ fn resolve_media_path(media_root: &Path, manifest_path: &Path) -> Result<PathBuf
         }
     }
 
-    Ok(media_root.join(safe_relative))
+    let root = fs::canonicalize(media_root).map_err(|source| {
+        Error::with_source(
+            ErrorCode::PermissionDenied,
+            format!("Could not resolve media_root `{}`.", media_root.display()),
+            source,
+        )
+    })?;
+    let candidate = root.join(safe_relative);
+    let resolved = fs::canonicalize(&candidate).map_err(|source| {
+        Error::with_source(
+            ErrorCode::PermissionDenied,
+            format!("Could not resolve media input `{}`.", candidate.display()),
+            source,
+        )
+    })?;
+    if !resolved.starts_with(&root) {
+        return Err(Error::unsafe_path(
+            "Manifest media path resolves outside media_root.",
+        ));
+    }
+
+    Ok(resolved)
 }
 
 fn decode_base64(encoded: &str) -> Result<Vec<u8>> {
@@ -616,6 +661,40 @@ pub mod resolve {
     }
 
     #[test]
+    fn rejects_symlink_that_escapes_media_root() {
+        let media_root = temp_media_root();
+        let outside_root = temp_media_root();
+        fs::create_dir_all(&media_root).expect("media root can be created");
+        fs::create_dir_all(&outside_root).expect("outside root can be created");
+        let outside = outside_root.join("secret.png");
+        fs::write(&outside, b"\x89PNG\r\n\x1a\nsecret").expect("outside media can be written");
+        let link = media_root.join("linked.png");
+        create_symlink(&outside, &link);
+
+        let manifest = MediaManifest {
+            schema: "pptx-compose.media_manifest.v1".to_owned(),
+            version: 1,
+            media: vec![MediaManifestEntry {
+                media_ref: "escape".to_owned(),
+                binding: ManifestMediaBinding {
+                    path: Some(PathBuf::from("linked.png")),
+                    content_type: Some("image/png".to_owned()),
+                    inline: None,
+                    sha256: None,
+                    byte_length: None,
+                },
+            }],
+        };
+
+        let err = MediaInputs::from_manifest(&manifest, &media_root)
+            .expect_err("symlink escape fails during manifest binding");
+        assert_eq!(err.code(), ErrorCode::UnsafePath);
+
+        fs::remove_dir_all(media_root).expect("temp media root can be removed");
+        fs::remove_dir_all(outside_root).expect("outside root can be removed");
+    }
+
+    #[test]
     fn resolves_inline_base64() {
         let manifest = MediaManifest {
             schema: "pptx-compose.media_manifest.v1".to_owned(),
@@ -708,5 +787,15 @@ pub mod resolve {
             .expect("clock is after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("pptx-compose-media-inputs-{unique}"))
+    }
+
+    #[cfg(unix)]
+    fn create_symlink(target: &Path, link: &Path) {
+        std::os::unix::fs::symlink(target, link).expect("symlink fixture");
+    }
+
+    #[cfg(windows)]
+    fn create_symlink(target: &Path, link: &Path) {
+        std::os::windows::fs::symlink_file(target, link).expect("symlink fixture");
     }
 }

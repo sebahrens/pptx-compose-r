@@ -424,6 +424,10 @@ impl CliError {
         }
     }
 
+    fn into_error(self) -> Error {
+        self.error
+    }
+
     fn write_with_source(
         message: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,

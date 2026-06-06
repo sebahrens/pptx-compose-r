@@ -440,14 +440,12 @@ impl PptxServer {
         &self,
         input: rmcp::handler::server::wrapper::Parameters<OpenInput>,
     ) -> Result<Json<outputs::OpenOutput>, rmcp::model::CallToolResult> {
-        self.permission_policy
+        let path = self
+            .permission_policy
             .check_read(&input.0.path)
             .map_err(|error| outputs::map_error(error.into_core_error()))?;
 
-        let opened = self
-            .sessions
-            .open_path(&input.0.path)
-            .map_err(outputs::map_error)?;
+        let opened = self.sessions.open_path(path).map_err(outputs::map_error)?;
         Ok(Json(outputs::OpenOutput::opened(opened)))
     }
 
@@ -667,7 +665,8 @@ impl PptxServer {
                 "pptx_import_media accepts either media_path or inline, not both.",
             ))),
             (Some(media_path), None) => {
-                self.permission_policy
+                let media_path = self
+                    .permission_policy
                     .check_read(&media_path)
                     .map_err(|error| outputs::map_error(error.into_core_error()))?;
                 let handle = self
@@ -808,7 +807,8 @@ impl PptxServer {
             .changed_parts(&input.session_id)
             .map_err(outputs::map_error)?;
         if let Some(output_path) = input.output_path {
-            self.permission_policy
+            let output_path = self
+                .permission_policy
                 .check_write_with_overwrite(&output_path, input.overwrite)
                 .map_err(|error| outputs::map_error(error.into_core_error()))?;
             let byte_length = self
