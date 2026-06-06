@@ -11,10 +11,24 @@
     "dry_run": true,
     "document_id": "sha256:5aec353488af9781b58006c600039722d5f3a6bb1f0c4d8667f8f98a03e33e2e",
     "base_revision": 1,
-    "new_document_id": "sha256:5aec353488af9781b58006c600039722d5f3a6bb1f0c4d8667f8f98a03e33e2e",
+    "new_document_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "new_revision": 1,
-    "operation_reports": [],
-    "changed_parts": [],
+    "operation_reports": [
+      {
+        "operation_id": "op-replace-title",
+        "op": "replace_text",
+        "status": "validated",
+        "target": {
+          "slide_id": "slide-1",
+          "element_id": "slide-1:shape-3",
+          "part": "ppt/slides/slide1.xml"
+        },
+        "changed_parts": ["ppt/slides/slide1.xml"],
+        "created_element_ids": [],
+        "warnings": []
+      }
+    ],
+    "changed_parts": ["ppt/slides/slide1.xml"],
     "validation": {
       "status": "valid",
       "errors": 0,

@@ -18,38 +18,63 @@ mod evals {
     ];
 
     #[test]
-    fn cli_golden_transcripts() {
+    fn cli_negative_golden_transcripts() {
+        assert_golden_transcript("stale-revision");
+        assert_golden_transcript("unsupported-chart-edit");
+    }
+
+    #[test]
+    #[ignore = "replace_text dry-run reports are not wired yet; do not re-pin this eval to no-op success"]
+    fn cli_replace_title_golden_transcript() {
+        assert_golden_transcript("replace-title");
+    }
+
+    #[test]
+    #[ignore = "add_image media resolution is not wired into dry-run yet; do not re-pin this eval to no-op success"]
+    fn cli_add_image_golden_transcript() {
+        assert_golden_transcript("add-image");
+    }
+
+    #[test]
+    fn edit_goldens_do_not_assert_successful_noop() {
         let repo_root = repo_root();
-        let bin = env!("CARGO_BIN_EXE_pptx-compose");
-
         for case_name in SEED_CASES {
-            let case = EvalCase::load(&repo_root, case_name);
-            let output = Command::new(bin)
-                .current_dir(&repo_root)
-                .args(case.command_args())
-                .output()
-                .unwrap_or_else(|err| panic!("{case_name}: CLI process should run: {err}"));
+            let case_dir = repo_root.join("evals").join("cli").join(case_name);
+            let transcript = read_transcript(&case_dir.join("expected.transcript.json"), case_name);
+            if transcript.expected_exit != 0
+                || patch_operation_count(&case_dir.join("patch.json")) == 0
+            {
+                continue;
+            }
 
-            let actual_exit = output.status.code().unwrap_or(-1);
-            assert_eq!(
-                actual_exit,
-                case.expected_exit,
-                "{case_name}: exit code mismatch\nstdout: {}\nstderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+            let stdout = transcript
+                .stdout_json
+                .as_ref()
+                .unwrap_or_else(|| panic!("{case_name}: successful edit must emit stdout JSON"));
+            let operation_reports = stdout
+                .get("operation_reports")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| {
+                    panic!("{case_name}: successful edit must include operation_reports")
+                });
+            let changed_parts = stdout
+                .get("changed_parts")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| {
+                    panic!("{case_name}: successful edit must include changed_parts")
+                });
+            assert!(
+                !operation_reports.is_empty(),
+                "{case_name}: successful edit must not assert empty operation_reports"
             );
-
-            assert_json_stream(
-                case_name,
-                "stdout",
-                &output.stdout,
-                case.expected_stdout.as_ref(),
+            assert!(
+                !changed_parts.is_empty(),
+                "{case_name}: successful edit must not assert empty changed_parts"
             );
-            assert_json_stream(
-                case_name,
-                "stderr",
-                &output.stderr,
-                case.expected_stderr.as_ref(),
+            assert_ne!(
+                stdout.get("document_id"),
+                stdout.get("new_document_id"),
+                "{case_name}: successful edit must not assert unchanged document_id"
             );
         }
     }
@@ -74,11 +99,7 @@ mod evals {
         fn load(repo_root: &Path, case_name: &str) -> Self {
             let case_dir = repo_root.join("evals").join("cli").join(case_name);
             let transcript_path = case_dir.join("expected.transcript.json");
-            let transcript: Transcript = serde_json::from_slice(
-                &fs::read(&transcript_path)
-                    .unwrap_or_else(|err| panic!("{case_name}: transcript should read: {err}")),
-            )
-            .unwrap_or_else(|err| panic!("{case_name}: transcript should parse: {err}"));
+            let transcript = read_transcript(&transcript_path, case_name);
 
             let input_ref = fs::read_to_string(case_dir.join("input-ref.txt"))
                 .unwrap_or_else(|err| panic!("{case_name}: input ref should read: {err}"));
@@ -108,6 +129,59 @@ mod evals {
         fn command_args(&self) -> &[String] {
             &self.command
         }
+    }
+
+    fn assert_golden_transcript(case_name: &str) {
+        let repo_root = repo_root();
+        let bin = env!("CARGO_BIN_EXE_pptx-compose");
+        let case = EvalCase::load(&repo_root, case_name);
+        let output = Command::new(bin)
+            .current_dir(&repo_root)
+            .args(case.command_args())
+            .output()
+            .unwrap_or_else(|err| panic!("{case_name}: CLI process should run: {err}"));
+
+        let actual_exit = output.status.code().unwrap_or(-1);
+        assert_eq!(
+            actual_exit,
+            case.expected_exit,
+            "{case_name}: exit code mismatch\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert_json_stream(
+            case_name,
+            "stdout",
+            &output.stdout,
+            case.expected_stdout.as_ref(),
+        );
+        assert_json_stream(
+            case_name,
+            "stderr",
+            &output.stderr,
+            case.expected_stderr.as_ref(),
+        );
+    }
+
+    fn read_transcript(transcript_path: &Path, case_name: &str) -> Transcript {
+        serde_json::from_slice(
+            &fs::read(transcript_path)
+                .unwrap_or_else(|err| panic!("{case_name}: transcript should read: {err}")),
+        )
+        .unwrap_or_else(|err| panic!("{case_name}: transcript should parse: {err}"))
+    }
+
+    fn patch_operation_count(patch_path: &Path) -> usize {
+        let patch: Value =
+            serde_json::from_slice(&fs::read(patch_path).unwrap_or_else(|err| {
+                panic!("patch should read at {}: {err}", patch_path.display())
+            }))
+            .unwrap_or_else(|err| panic!("patch should parse at {}: {err}", patch_path.display()));
+        patch
+            .get("operations")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len)
     }
 
     fn assert_json_stream(

@@ -8,9 +8,9 @@
     {
       "op": "replace_text",
       "operation_id": "op-replace-title",
-      "element_id": "slide-1-title",
+      "element_id": "slide-1:shape-3",
       "text": "Quarterly Plan",
-      "match": "Old Title",
+      "match": "Original title",
       "mode": "whole_element",
       "format_policy": "preserve_existing_runs",
       "overflow_policy": "allow"

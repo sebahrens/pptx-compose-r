@@ -3,23 +3,25 @@
   "version": 1,
   "case": "add-image",
   "command": ["--json-errors", "apply", "{input}", "{patch}", "--dry-run"],
-  "expected_exit": 0,
-  "stdout_json": {
-    "schema": "pptx-compose.patch_report.v1",
+  "expected_exit": 23,
+  "stdout_json": null,
+  "stderr_json": {
+    "schema": "pptx-compose.error.v1",
     "version": 1,
-    "status": "dry_run_success",
-    "dry_run": true,
-    "document_id": "sha256:5aec353488af9781b58006c600039722d5f3a6bb1f0c4d8667f8f98a03e33e2e",
-    "base_revision": 1,
-    "new_document_id": "sha256:5aec353488af9781b58006c600039722d5f3a6bb1f0c4d8667f8f98a03e33e2e",
-    "new_revision": 1,
-    "operation_reports": [],
-    "changed_parts": [],
-    "validation": {
-      "status": "valid",
-      "errors": 0,
-      "warnings": 0
+    "status": "error",
+    "error": {
+      "code": "missing_media_ref",
+      "message": "Patch references media_ref `hero`, but no media input binding was provided.",
+      "severity": "error",
+      "category": "media",
+      "retryable": false,
+      "state_changed": false,
+      "location": {
+        "slide_id": "slide-1",
+        "operation_id": "op-add-image",
+        "operation": "add_image"
+      },
+      "suggestions": ["Provide a media manifest entry for media_ref `hero`."]
     }
-  },
-  "stderr_json": null
+  }
 }
