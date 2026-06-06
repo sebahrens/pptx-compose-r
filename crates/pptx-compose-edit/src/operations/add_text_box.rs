@@ -31,7 +31,7 @@ impl From<&AddTextBoxOperation> for AddTextBox {
     fn from(operation: &AddTextBoxOperation) -> Self {
         Self {
             operation_id: operation.operation_id.clone(),
-            slide_id: operation.slide_id.clone(),
+            slide_id: operation.target_slide_id().to_owned(),
             text: operation.text.clone(),
             bounds: operation.bounds.clone(),
             name: operation.name.clone(),

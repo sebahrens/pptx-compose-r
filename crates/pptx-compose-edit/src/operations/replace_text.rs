@@ -31,7 +31,7 @@ impl From<&ReplaceTextOperation> for ReplaceText {
     fn from(operation: &ReplaceTextOperation) -> Self {
         Self {
             operation_id: operation.operation_id.clone(),
-            element_id: operation.element_id.clone(),
+            element_id: operation.target_element_id().to_owned(),
             text: operation.text.clone(),
             current_text_match: operation.current_text_match.clone(),
             mode: operation.mode.unwrap_or(ReplaceTextMode::WholeElement),

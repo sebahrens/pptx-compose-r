@@ -18,7 +18,10 @@ use pptx_compose_json::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::reports::{has_blocking_findings, patch_validation_summary, validation_report};
+use crate::{
+    reports::{has_blocking_findings, patch_validation_summary, validation_report},
+    selectors::Selector,
+};
 
 pub const PATCH_SCHEMA: &str = "pptx-compose.patch.v1";
 pub const PATCH_VERSION: u32 = 1;
@@ -71,11 +74,196 @@ impl Operation {
     }
 }
 
+impl ReplaceTextOperation {
+    pub fn target_selector(&self) -> Result<Selector> {
+        element_target_selector(&self.operation_id, &self.element_id, self.selector.as_ref())
+    }
+
+    #[must_use]
+    pub fn target_element_id(&self) -> &str {
+        target_element_id(&self.element_id, self.selector.as_ref()).unwrap_or(&self.element_id)
+    }
+}
+
+impl AddTextBoxOperation {
+    pub fn target_selector(&self) -> Result<Selector> {
+        slide_target_selector(&self.operation_id, &self.slide_id, self.selector.as_ref())
+    }
+
+    #[must_use]
+    pub fn target_slide_id(&self) -> &str {
+        target_slide_id(&self.slide_id, self.selector.as_ref()).unwrap_or(&self.slide_id)
+    }
+}
+
+impl MoveResizeElementOperation {
+    pub fn target_selector(&self) -> Result<Selector> {
+        element_target_selector(&self.operation_id, &self.element_id, self.selector.as_ref())
+    }
+
+    #[must_use]
+    pub fn target_element_id(&self) -> &str {
+        target_element_id(&self.element_id, self.selector.as_ref()).unwrap_or(&self.element_id)
+    }
+}
+
+impl SetAltTextOperation {
+    pub fn target_selector(&self) -> Result<Selector> {
+        element_target_selector(&self.operation_id, &self.element_id, self.selector.as_ref())
+    }
+
+    #[must_use]
+    pub fn target_element_id(&self) -> &str {
+        target_element_id(&self.element_id, self.selector.as_ref()).unwrap_or(&self.element_id)
+    }
+}
+
+impl AddImageOperation {
+    pub fn target_selector(&self) -> Result<Selector> {
+        slide_target_selector(&self.operation_id, &self.slide_id, self.selector.as_ref())
+    }
+
+    #[must_use]
+    pub fn target_slide_id(&self) -> &str {
+        target_slide_id(&self.slide_id, self.selector.as_ref()).unwrap_or(&self.slide_id)
+    }
+}
+
+impl ReplaceImageOperation {
+    pub fn target_selector(&self) -> Result<Selector> {
+        element_target_selector(&self.operation_id, &self.element_id, self.selector.as_ref())
+    }
+
+    #[must_use]
+    pub fn target_element_id(&self) -> &str {
+        target_element_id(&self.element_id, self.selector.as_ref()).unwrap_or(&self.element_id)
+    }
+}
+
+fn element_target_selector(
+    operation_id: &str,
+    shorthand: &str,
+    selector: Option<&Selector>,
+) -> Result<Selector> {
+    match selector {
+        Some(Selector::ElementId { id, .. }) if shorthand.is_empty() || shorthand == id => {
+            selector.cloned().ok_or_else(|| {
+                selector_conflict(
+                    operation_id,
+                    None,
+                    "Operation must include either element_id shorthand or an element_id selector.",
+                )
+            })
+        }
+        Some(Selector::ElementId { id, .. }) => Err(selector_conflict(
+            operation_id,
+            Some(shorthand),
+            format!(
+                "Operation target conflict: element_id `{shorthand}` does not match selector id `{id}`."
+            ),
+        )),
+        Some(Selector::SlideId { .. } | Selector::MediaPart { .. }) => Err(selector_conflict(
+            operation_id,
+            target_element_id(shorthand, selector),
+            "Operation selector must have type `element_id` for an element-targeting operation.",
+        )),
+        None if shorthand.is_empty() => Err(selector_conflict(
+            operation_id,
+            None,
+            "Operation must include either element_id shorthand or an element_id selector.",
+        )),
+        None => Ok(Selector::ElementId {
+            id: shorthand.to_owned(),
+            guards: None,
+        }),
+    }
+}
+
+fn slide_target_selector(
+    operation_id: &str,
+    shorthand: &str,
+    selector: Option<&Selector>,
+) -> Result<Selector> {
+    match selector {
+        Some(Selector::SlideId { id, .. }) if shorthand.is_empty() || shorthand == id => {
+            selector.cloned().ok_or_else(|| {
+                selector_conflict(
+                    operation_id,
+                    None,
+                    "Operation must include either slide_id shorthand or a slide_id selector.",
+                )
+            })
+        }
+        Some(Selector::SlideId { id, .. }) => Err(selector_conflict(
+            operation_id,
+            None,
+            format!(
+                "Operation target conflict: slide_id `{shorthand}` does not match selector id `{id}`."
+            ),
+        )),
+        Some(Selector::ElementId { .. } | Selector::MediaPart { .. }) => Err(selector_conflict(
+            operation_id,
+            target_element_id(shorthand, selector),
+            "Operation selector must have type `slide_id` for a slide-targeting operation.",
+        )),
+        None if shorthand.is_empty() => Err(selector_conflict(
+            operation_id,
+            None,
+            "Operation must include either slide_id shorthand or a slide_id selector.",
+        )),
+        None => Ok(Selector::SlideId {
+            id: shorthand.to_owned(),
+            guards: None,
+        }),
+    }
+}
+
+fn target_element_id<'a>(shorthand: &'a str, selector: Option<&'a Selector>) -> Option<&'a str> {
+    if !shorthand.is_empty() {
+        return Some(shorthand);
+    }
+    match selector {
+        Some(Selector::ElementId { id, .. }) => Some(id),
+        Some(Selector::SlideId { .. } | Selector::MediaPart { .. }) | None => None,
+    }
+}
+
+fn target_slide_id<'a>(shorthand: &'a str, selector: Option<&'a Selector>) -> Option<&'a str> {
+    if !shorthand.is_empty() {
+        return Some(shorthand);
+    }
+    match selector {
+        Some(Selector::SlideId { id, .. }) => Some(id),
+        Some(Selector::ElementId { .. } | Selector::MediaPart { .. }) | None => None,
+    }
+}
+
+fn selector_conflict(
+    operation_id: &str,
+    element_id: Option<&str>,
+    message: impl Into<String>,
+) -> Error {
+    Error::new(ErrorCode::InvalidInput, message).with_location(ErrorLocation {
+        operation_id: Some(operation_id.to_owned()),
+        element_id: element_id.map(str::to_owned),
+        ..ErrorLocation::default()
+    })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReplaceTextOperation {
     pub operation_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(
+        description = "Target element shorthand. Either element_id or selector is required; when both are present, they must identify the same element."
+    )]
     pub element_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Canonical target selector with optional guards. For replace_text this must be type element_id."
+    )]
+    pub selector: Option<Selector>,
     pub text: String,
     #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
     pub current_text_match: Option<String>,
@@ -111,7 +299,16 @@ pub enum OverflowPolicy {
 #[serde(deny_unknown_fields)]
 pub struct AddTextBoxOperation {
     pub operation_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(
+        description = "Target slide shorthand. Either slide_id or selector is required; when both are present, they must identify the same slide."
+    )]
     pub slide_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Canonical target selector with optional guards. For add_text_box this must be type slide_id."
+    )]
+    pub selector: Option<Selector>,
     pub text: String,
     pub bounds: Bounds,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -128,7 +325,16 @@ pub struct AddTextBoxOperation {
 #[serde(deny_unknown_fields)]
 pub struct MoveResizeElementOperation {
     pub operation_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(
+        description = "Target element shorthand. Either element_id or selector is required; when both are present, they must identify the same element."
+    )]
     pub element_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Canonical target selector with optional guards. For move_resize_element this must be type element_id."
+    )]
+    pub selector: Option<Selector>,
     pub bounds: Bounds,
 }
 
@@ -136,7 +342,16 @@ pub struct MoveResizeElementOperation {
 #[serde(deny_unknown_fields)]
 pub struct SetAltTextOperation {
     pub operation_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(
+        description = "Target element shorthand. Either element_id or selector is required; when both are present, they must identify the same element."
+    )]
     pub element_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Canonical target selector with optional guards. For set_alt_text this must be type element_id."
+    )]
+    pub selector: Option<Selector>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -149,7 +364,16 @@ pub struct SetAltTextOperation {
 #[serde(deny_unknown_fields)]
 pub struct AddImageOperation {
     pub operation_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(
+        description = "Target slide shorthand. Either slide_id or selector is required; when both are present, they must identify the same slide."
+    )]
     pub slide_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Canonical target selector with optional guards. For add_image this must be type slide_id."
+    )]
+    pub selector: Option<Selector>,
     pub media_ref: String,
     pub content_type: String,
     pub bounds: Bounds,
@@ -167,7 +391,16 @@ pub struct AddImageOperation {
 #[serde(deny_unknown_fields)]
 pub struct ReplaceImageOperation {
     pub operation_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(
+        description = "Target picture element shorthand. Either element_id or selector is required; when both are present, they must identify the same element."
+    )]
     pub element_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Canonical target selector with optional guards. For replace_image this must be type element_id."
+    )]
+    pub selector: Option<Selector>,
     pub media_ref: String,
     pub content_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -603,6 +836,92 @@ fn envelope_and_stale() {
 
 #[cfg(test)]
 #[test]
+fn selector_object_targets_parse_and_detect_shorthand_conflicts() {
+    let patch = parse_patch(serde_json::json!({
+        "schema": PATCH_SCHEMA,
+        "version": PATCH_VERSION,
+        "document_id": "sha256:current",
+        "base_revision": 3,
+        "client_request_id": "agent-run-001",
+        "operations": [
+            {
+                "operation_id": "op-1",
+                "op": "replace_text",
+                "selector": {
+                    "type": "element_id",
+                    "id": "slide-1:shape-4",
+                    "guards": {
+                        "slide_id": "slide-1",
+                        "kind": "text_box",
+                        "part": "ppt/slides/slide1.xml",
+                        "text_hash": "sha256:text",
+                        "fingerprint": "sha256:fingerprint"
+                    }
+                },
+                "text": "Updated title"
+            }
+        ]
+    }))
+    .expect("selector-only target parses");
+
+    let Operation::ReplaceText(operation) = &patch.operations[0] else {
+        panic!("operation type");
+    };
+    assert_eq!(operation.target_element_id(), "slide-1:shape-4");
+    assert!(matches!(
+        operation.target_selector().expect("selector resolves"),
+        Selector::ElementId { .. }
+    ));
+
+    let conflict = parse_patch(serde_json::json!({
+        "schema": PATCH_SCHEMA,
+        "version": PATCH_VERSION,
+        "document_id": "sha256:current",
+        "base_revision": 3,
+        "client_request_id": "agent-run-001",
+        "operations": [
+            {
+                "operation_id": "op-1",
+                "op": "replace_text",
+                "element_id": "slide-1:shape-4",
+                "selector": {
+                    "type": "element_id",
+                    "id": "slide-1:shape-5"
+                },
+                "text": "Updated title"
+            }
+        ]
+    }))
+    .expect("conflicting target parses for semantic validation");
+    let Operation::ReplaceText(operation) = &conflict.operations[0] else {
+        panic!("operation type");
+    };
+    let error = operation
+        .target_selector()
+        .expect_err("conflicting shorthand and selector fails");
+    assert_eq!(error.code(), ErrorCode::InvalidInput);
+    assert_eq!(
+        error.details().location.operation_id.as_deref(),
+        Some("op-1")
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn patch_schema_documents_selector_targets() {
+    let schema = serde_json::to_value(schemars::schema_for!(Patch)).expect("schema serializes");
+    let schema_text = serde_json::to_string(&schema).expect("schema text serializes");
+
+    assert!(schema_text.contains("\"selector\""));
+    assert!(schema_text.contains("Canonical target selector with optional guards"));
+    assert!(schema_text.contains("Either element_id or selector is required"));
+    assert!(schema_text.contains("\"element_id\""));
+    assert!(schema_text.contains("\"slide_id\""));
+    assert!(schema_text.contains("\"media_part\""));
+}
+
+#[cfg(test)]
+#[test]
 fn apply_is_atomic() {
     test_support::apply_is_atomic();
 }
@@ -780,6 +1099,7 @@ mod test_support {
                 Operation::AddTextBox(AddTextBoxOperation {
                     operation_id: "op-1".to_owned(),
                     slide_id: "slide-1".to_owned(),
+                    selector: None,
                     text: "One".to_owned(),
                     bounds: super::Bounds {
                         x: 0,
@@ -795,6 +1115,7 @@ mod test_support {
                 Operation::AddTextBox(AddTextBoxOperation {
                     operation_id: "op-2".to_owned(),
                     slide_id: "slide-1".to_owned(),
+                    selector: None,
                     text: "Two".to_owned(),
                     bounds: super::Bounds {
                         x: 0,

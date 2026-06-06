@@ -971,27 +971,51 @@ impl OperationExecutor for RealOperationExecutor<'_> {
         let model = core_presentation::PresentationDocument::open(package.clone())?;
         match operation {
             Operation::ReplaceText(operation) => {
-                let target = resolve_element(&model, &operation.element_id)?;
+                let target = resolve_element(
+                    &model,
+                    operation.operation_id.as_str(),
+                    &operation.target_selector()?,
+                )?;
                 ReplaceText::from(operation).apply(package, &target)
             }
             Operation::AddTextBox(operation) => {
-                let target = resolve_slide(&model, &operation.slide_id)?;
+                let target = resolve_slide(
+                    &model,
+                    operation.operation_id.as_str(),
+                    &operation.target_selector()?,
+                )?;
                 AddTextBox::from(operation).apply(package, &target)
             }
             Operation::MoveResizeElement(operation) => {
-                let target = resolve_element(&model, &operation.element_id)?;
+                let target = resolve_element(
+                    &model,
+                    operation.operation_id.as_str(),
+                    &operation.target_selector()?,
+                )?;
                 MoveResize::from(operation).apply(package, &target)
             }
             Operation::SetAltText(operation) => {
-                let target = resolve_element(&model, &operation.element_id)?;
+                let target = resolve_element(
+                    &model,
+                    operation.operation_id.as_str(),
+                    &operation.target_selector()?,
+                )?;
                 SetAltText::from(operation).apply(package, &target)
             }
             Operation::AddImage(operation) => {
-                let target = resolve_slide(&model, &operation.slide_id)?;
+                let target = resolve_slide(
+                    &model,
+                    operation.operation_id.as_str(),
+                    &operation.target_selector()?,
+                )?;
                 AddImage::from(operation).apply(package, &target, self.media_inputs)
             }
             Operation::ReplaceImage(operation) => {
-                let target = resolve_element(&model, &operation.element_id)?;
+                let target = resolve_element(
+                    &model,
+                    operation.operation_id.as_str(),
+                    &operation.target_selector()?,
+                )?;
                 ReplaceImage::from(operation).apply(package, &target, self.media_inputs)
             }
         }
@@ -1034,27 +1058,51 @@ fn validate_operation(
 ) -> Result<()> {
     match operation {
         Operation::ReplaceText(operation) => {
-            let target = resolve_element(model, &operation.element_id)?;
+            let target = resolve_element(
+                model,
+                operation.operation_id.as_str(),
+                &operation.target_selector()?,
+            )?;
             ReplaceText::from(operation).validate(package, &target)
         }
         Operation::AddTextBox(operation) => {
-            let _target = resolve_slide(model, &operation.slide_id)?;
+            let _target = resolve_slide(
+                model,
+                operation.operation_id.as_str(),
+                &operation.target_selector()?,
+            )?;
             AddTextBox::from(operation).validate()
         }
         Operation::MoveResizeElement(operation) => {
-            let _target = resolve_element(model, &operation.element_id)?;
+            let _target = resolve_element(
+                model,
+                operation.operation_id.as_str(),
+                &operation.target_selector()?,
+            )?;
             MoveResize::from(operation).validate()
         }
         Operation::SetAltText(operation) => {
-            let target = resolve_element(model, &operation.element_id)?;
+            let target = resolve_element(
+                model,
+                operation.operation_id.as_str(),
+                &operation.target_selector()?,
+            )?;
             SetAltText::from(operation).validate(package, &target)
         }
         Operation::AddImage(operation) => {
-            let _target = resolve_slide(model, &operation.slide_id)?;
+            let _target = resolve_slide(
+                model,
+                operation.operation_id.as_str(),
+                &operation.target_selector()?,
+            )?;
             AddImage::from(operation).validate(media_inputs)
         }
         Operation::ReplaceImage(operation) => {
-            let target = resolve_element(model, &operation.element_id)?;
+            let target = resolve_element(
+                model,
+                operation.operation_id.as_str(),
+                &operation.target_selector()?,
+            )?;
             ReplaceImage::from(operation).validate(package, &target, media_inputs)
         }
     }
@@ -1062,13 +1110,12 @@ fn validate_operation(
 
 fn resolve_element(
     model: &core_presentation::PresentationDocument,
-    element_id: &str,
+    operation_id: &str,
+    selector: &Selector,
 ) -> Result<pptx_compose_edit::operations::ResolvedElement> {
-    let selector = Selector::ElementId {
-        id: element_id.to_owned(),
-        guards: None,
-    };
-    match selectors::resolve(model, &selector)? {
+    match selectors::resolve(model, selector)
+        .map_err(|error| with_operation_location(error, operation_id))?
+    {
         ResolvedTarget::Element(target) => Ok(target),
         ResolvedTarget::Slide(_) | ResolvedTarget::MediaPart(_) => Err(Error::new(
             ErrorCode::SelectorGuardFailed,
@@ -1079,19 +1126,29 @@ fn resolve_element(
 
 fn resolve_slide(
     model: &core_presentation::PresentationDocument,
-    slide_id: &str,
+    operation_id: &str,
+    selector: &Selector,
 ) -> Result<pptx_compose_edit::operations::ResolvedSlide> {
-    let selector = Selector::SlideId {
-        id: slide_id.to_owned(),
-        guards: None,
-    };
-    match selectors::resolve(model, &selector)? {
+    match selectors::resolve(model, selector)
+        .map_err(|error| with_operation_location(error, operation_id))?
+    {
         ResolvedTarget::Slide(target) => Ok(target),
         ResolvedTarget::Element(_) | ResolvedTarget::MediaPart(_) => Err(Error::new(
             ErrorCode::SelectorGuardFailed,
             "Selector did not resolve to a slide.",
         )),
     }
+}
+
+fn with_operation_location(error: Error, operation_id: &str) -> Error {
+    if operation_id.is_empty() {
+        return error;
+    }
+    let mut location = error.details().location.clone();
+    location
+        .operation_id
+        .get_or_insert_with(|| operation_id.to_owned());
+    error.with_location(location)
 }
 
 #[cfg(test)]

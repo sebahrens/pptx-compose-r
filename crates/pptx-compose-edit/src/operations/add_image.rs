@@ -46,7 +46,7 @@ impl From<&AddImageOperation> for AddImage {
     fn from(operation: &AddImageOperation) -> Self {
         Self {
             operation_id: operation.operation_id.clone(),
-            slide_id: operation.slide_id.clone(),
+            slide_id: operation.target_slide_id().to_owned(),
             media_ref: operation.media_ref.clone(),
             content_type: operation.content_type.clone(),
             bounds: operation.bounds.clone(),

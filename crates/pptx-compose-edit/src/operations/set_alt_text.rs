@@ -27,7 +27,7 @@ impl From<&SetAltTextOperation> for SetAltText {
     fn from(operation: &SetAltTextOperation) -> Self {
         Self {
             operation_id: operation.operation_id.clone(),
-            element_id: operation.element_id.clone(),
+            element_id: operation.target_element_id().to_owned(),
             title: operation.title.clone(),
             description: operation.description.clone(),
             alt_text: operation.alt_text.clone(),

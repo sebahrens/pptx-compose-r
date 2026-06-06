@@ -36,7 +36,7 @@ impl From<&ReplaceImageOperation> for ReplaceImage {
     fn from(operation: &ReplaceImageOperation) -> Self {
         Self {
             operation_id: operation.operation_id.clone(),
-            element_id: operation.element_id.clone(),
+            element_id: operation.target_element_id().to_owned(),
             media_ref: operation.media_ref.clone(),
             content_type: operation.content_type.clone(),
             allow_shared_mutation: operation.allow_shared_mutation.unwrap_or(false),

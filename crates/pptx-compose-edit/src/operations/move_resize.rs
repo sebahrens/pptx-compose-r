@@ -24,7 +24,7 @@ pub struct MoveResize {
 impl From<&MoveResizeElementOperation> for MoveResize {
     fn from(operation: &MoveResizeElementOperation) -> Self {
         Self {
-            element_id: operation.element_id.clone(),
+            element_id: operation.target_element_id().to_owned(),
             bounds: operation.bounds.clone(),
         }
     }

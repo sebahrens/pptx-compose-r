@@ -374,6 +374,92 @@ fn replace_text_apply_writes_only_dirtied_slide_part() {
 }
 
 #[test]
+fn guarded_selector_replace_text_applies_and_rejects_stale_fingerprint() {
+    let bytes = text_deck();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let hit = document
+        .find_text(FindTextRequest {
+            query: "Original".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds")
+        .matches
+        .into_iter()
+        .next()
+        .expect("text hit exists");
+
+    let patch = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(&bytes),
+        "base_revision": 1,
+        "client_request_id": "guarded-replace-text",
+        "operations": [{
+            "operation_id": "replace-title",
+            "op": "replace_text",
+            "selector": {
+                "type": "element_id",
+                "id": hit.element_id,
+                "guards": {
+                    "slide_id": hit.slide_id,
+                    "kind": hit.kind,
+                    "part": hit.part,
+                    "text_hash": hit.text_hash,
+                    "fingerprint": hit.fingerprint
+                }
+            },
+            "text": "Guarded title"
+        }]
+    }))
+    .expect("guarded patch parses");
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("matching guarded selector applies");
+    assert_eq!(report.changed_parts, vec!["ppt/slides/slide1.xml"]);
+
+    let mut stale_document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let stale_patch = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(&bytes),
+        "base_revision": 1,
+        "client_request_id": "guarded-replace-text",
+        "operations": [{
+            "operation_id": "replace-title",
+            "op": "replace_text",
+            "selector": {
+                "type": "element_id",
+                "id": "slide-1:shape-3",
+                "guards": {
+                    "slide_id": "slide-1",
+                    "kind": "text_box",
+                    "part": "ppt/slides/slide1.xml",
+                    "fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                }
+            },
+            "text": "Guarded title"
+        }]
+    }))
+    .expect("stale guarded patch parses");
+
+    let error = stale_document
+        .apply_patch(stale_patch, MediaInputs::default())
+        .expect_err("mismatched fingerprint guard fails");
+    assert_eq!(error.code(), ErrorCode::SelectorGuardFailed);
+    assert_eq!(
+        error.details().location.operation_id.as_deref(),
+        Some("replace-title")
+    );
+    assert_eq!(
+        error.details().location.element_id.as_deref(),
+        Some("slide-1:shape-3")
+    );
+}
+
+#[test]
 fn add_image_write_reopens_with_content_type_and_relationship() {
     let bytes = text_deck();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
