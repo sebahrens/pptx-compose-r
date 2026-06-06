@@ -91,13 +91,6 @@ pub struct SessionConfig {
     pub max_session_mem_bytes: u64,
 }
 
-#[derive(Clone, Debug)]
-pub struct SessionApplyGuard {
-    session_id: String,
-    revision: u64,
-    _guard: Arc<Mutex<()>>,
-}
-
 impl Default for SessionStore {
     fn default() -> Self {
         Self::with_config(SessionConfig::default())
@@ -205,20 +198,6 @@ impl SessionStore {
             .ok_or_else(|| missing_session(session_id))
     }
 
-    pub fn begin_apply(
-        &self,
-        session_id: &str,
-        expected_revision: u64,
-    ) -> Result<SessionApplyGuard> {
-        let revision = self.check_revision(session_id, expected_revision)?;
-        let guard = self.get(session_id)?.apply_lock.clone();
-        Ok(SessionApplyGuard {
-            session_id: session_id.to_owned(),
-            revision,
-            _guard: guard,
-        })
-    }
-
     pub fn check_revision(&self, session_id: &str, expected_revision: u64) -> Result<u64> {
         let mut sessions = self.lock_sessions()?;
         remove_expired(&mut sessions, SystemTime::now());
@@ -250,30 +229,6 @@ impl SessionStore {
                 session.revision,
                 u64::from(patch.base_revision),
             ));
-        }
-        Ok(session.revision)
-    }
-
-    pub fn finish_apply(
-        &self,
-        guard: SessionApplyGuard,
-        dry_run: bool,
-        succeeded: bool,
-    ) -> Result<u64> {
-        let mut sessions = self.lock_sessions()?;
-        remove_expired(&mut sessions, SystemTime::now());
-        let session = sessions
-            .get_mut(&guard.session_id)
-            .ok_or_else(|| missing_session(&guard.session_id))?;
-        if session.revision != guard.revision {
-            return Err(stale_revision_error(
-                &guard.session_id,
-                session.revision,
-                guard.revision,
-            ));
-        }
-        if succeeded && !dry_run {
-            session.revision = session.revision.saturating_add(1);
         }
         Ok(session.revision)
     }
@@ -406,7 +361,6 @@ impl SessionStore {
         patch: Patch,
         dry_run: bool,
     ) -> Result<ApplyResult> {
-        let expected_revision = self.check_patch_envelope(session_id, &patch)?;
         let apply_lock = self.get(session_id)?.apply_lock.clone();
         let _apply_guard = apply_lock.lock().map_err(|_| {
             Error::new(
@@ -415,6 +369,7 @@ impl SessionStore {
             )
         })?;
 
+        let expected_revision = self.check_patch_envelope(session_id, &patch)?;
         let (mut package, media) = {
             let mut sessions = self.lock_sessions()?;
             remove_expired(&mut sessions, SystemTime::now());
@@ -545,13 +500,6 @@ fn media_inputs(session: &Session) -> MediaInputs {
             max_media_bytes: session.mem_bytes,
         },
     )
-}
-
-impl SessionApplyGuard {
-    #[must_use]
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -824,6 +772,59 @@ fn revision_increments_on_apply() {
 
 #[cfg(test)]
 #[test]
+fn concurrent_same_revision_applies_serialize_and_reject_stale_patch() {
+    let store = SessionStore::default();
+    let fixture = test_text_pptx_bytes();
+    let opened = store
+        .open_package(
+            PresentationDocument::from_bytes(fixture.clone()).expect("fixture pptx opens"),
+            &fixture,
+        )
+        .expect("session opens");
+    let barrier = Arc::new(std::sync::Barrier::new(3));
+    let first = replace_text_patch(&opened.document_id, opened.revision, "Concurrent title A");
+    let second = replace_text_patch(&opened.document_id, opened.revision, "Concurrent title B");
+
+    let first_thread = spawn_concurrent_apply(
+        store.clone(),
+        opened.session_id.clone(),
+        first,
+        barrier.clone(),
+    );
+    let second_thread = spawn_concurrent_apply(
+        store.clone(),
+        opened.session_id.clone(),
+        second,
+        barrier.clone(),
+    );
+
+    barrier.wait();
+    let outcomes = [
+        first_thread.join().expect("first apply thread completes"),
+        second_thread.join().expect("second apply thread completes"),
+    ];
+    let applied = outcomes
+        .iter()
+        .filter(|outcome| matches!(outcome, ApplyOutcome::Applied(2)))
+        .count();
+    let stale = outcomes
+        .iter()
+        .filter(|outcome| matches!(outcome, ApplyOutcome::Failed(ErrorCode::StalePatch)))
+        .count();
+
+    assert_eq!(applied, 1, "exactly one apply mutates and increments");
+    assert_eq!(stale, 1, "the same-revision loser is stale");
+    assert_eq!(
+        store
+            .get(&opened.session_id)
+            .expect("session remains open")
+            .revision,
+        2
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn session_ttl_eviction() {
     let store = SessionStore::with_config(SessionConfig {
         ttl: Duration::from_millis(1),
@@ -883,4 +884,136 @@ fn test_minimal_pptx_bytes() -> Vec<u8> {
         zip.finish().expect("zip finishes");
     }
     cursor.into_inner()
+}
+
+#[cfg(test)]
+#[derive(Debug, Eq, PartialEq)]
+enum ApplyOutcome {
+    Applied(u64),
+    Failed(ErrorCode),
+}
+
+#[cfg(test)]
+fn spawn_concurrent_apply(
+    store: SessionStore,
+    session_id: String,
+    patch: Patch,
+    barrier: Arc<std::sync::Barrier>,
+) -> std::thread::JoinHandle<ApplyOutcome> {
+    std::thread::spawn(move || {
+        barrier.wait();
+        match store.apply_patch(&session_id, patch, false) {
+            Ok(result) => ApplyOutcome::Applied(result.revision),
+            Err(error) => ApplyOutcome::Failed(error.code()),
+        }
+    })
+}
+
+#[cfg(test)]
+fn replace_text_patch(document_id: &str, base_revision: u64, text: &str) -> Patch {
+    let value = serde_json::json!({
+        "schema": pptx_compose::edit::patch::PATCH_SCHEMA,
+        "version": pptx_compose::edit::patch::PATCH_VERSION,
+        "document_id": document_id,
+        "base_revision": u32::try_from(base_revision).expect("test fixture revision fits u32"),
+        "client_request_id": "test-request",
+        "operations": [{
+            "operation_id": "replace-title",
+            "op": "replace_text",
+            "element_id": "slide-1:shape-3",
+            "text": text
+        }]
+    });
+    serde_json::from_value(value).expect("test patch deserializes")
+}
+
+#[cfg(test)]
+fn test_text_pptx_bytes() -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+
+    let content_types = test_text_content_types();
+    let root_rels = test_text_root_rels();
+    let presentation = test_text_presentation();
+    let presentation_rels = test_text_presentation_rels();
+    let slide = test_text_slide();
+    let entries = [
+        ("[Content_Types].xml", content_types.as_bytes()),
+        ("_rels/.rels", root_rels.as_bytes()),
+        ("ppt/presentation.xml", presentation.as_bytes()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            presentation_rels.as_bytes(),
+        ),
+        ("ppt/slides/slide1.xml", slide.as_bytes()),
+    ];
+    let mut bytes = Vec::new();
+    {
+        let mut writer = ZipWriter::new(Cursor::new(&mut bytes));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        for (name, data) in entries {
+            writer.start_file(name, options).expect("start ZIP entry");
+            writer.write_all(data).expect("write ZIP entry");
+        }
+        writer.finish().expect("finish ZIP");
+    }
+    bytes
+}
+
+#[cfg(test)]
+fn test_text_content_types() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>"#
+        .to_owned()
+}
+
+#[cfg(test)]
+fn test_text_root_rels() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>"#
+        .to_owned()
+}
+
+#[cfg(test)]
+fn test_text_presentation() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>"#
+        .to_owned()
+}
+
+#[cfg(test)]
+fn test_text_presentation_rels() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>"#
+        .to_owned()
+}
+
+#[cfg(test)]
+fn test_text_slide() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="3" name="Title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Original title</a:t></a:r></a:p></p:txBody>
+      </p:sp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+        .to_owned()
 }
