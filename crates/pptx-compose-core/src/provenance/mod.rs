@@ -1,3 +1,4 @@
+pub mod checksum;
 pub mod cpj;
 pub mod fingerprint;
 pub mod revision;
