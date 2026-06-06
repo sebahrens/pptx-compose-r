@@ -1,11 +1,27 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    opc::{part::PartStore, part_name::PartName},
+    error::{Error, Result},
+    opc::{
+        package::Package,
+        part::PartStore,
+        part_name::PartName,
+        relationships::{Relationship, RelationshipSet, TargetMode, resolve_internal_target},
+    },
     provenance::checksum::part_checksum,
 };
 
 const MEDIA_PREFIX: &str = "/ppt/media/image";
+pub const IMAGE_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedMedia {
+    pub part_name: PartName,
+    pub content_type: String,
+    pub byte_length: u64,
+    pub shared_ref_count: u32,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct MediaPartNameAllocator {
@@ -44,6 +60,74 @@ pub fn dedup_lookup(parts: &PartStore, sha256: &str, opt_in: bool) -> Option<Par
         .filter(|part| is_media_part(part.name()))
         .find(|part| part_checksum(part.bytes()) == sha256)
         .map(|part| part.name().clone())
+}
+
+pub fn resolve_embedded_media(
+    rel_id: &str,
+    slide_rels: &RelationshipSet,
+    package: &Package,
+) -> Result<ResolvedMedia> {
+    let relationship = slide_rels.get(rel_id).ok_or_else(|| {
+        Error::unsupported_package(format!("Picture relationship {rel_id} is missing."))
+    })?;
+
+    if relationship.target_mode != TargetMode::Internal {
+        return Err(Error::unsupported_package(format!(
+            "Picture relationship {rel_id} does not target an internal media part."
+        )));
+    }
+
+    if relationship.rel_type != IMAGE_REL_TYPE {
+        return Err(Error::unsupported_package(format!(
+            "Picture relationship {rel_id} is not an image relationship."
+        )));
+    }
+
+    let part_name = relationship_target_part(relationship)?;
+    let part = package.parts().get(&part_name).ok_or_else(|| {
+        Error::unsupported_package(format!(
+            "Picture relationship {rel_id} targets missing media part {part_name}."
+        ))
+    })?;
+    let content_type = package
+        .content_types()
+        .resolve(&part_name)
+        .ok_or_else(|| {
+            Error::unsupported_package(format!("Media part {part_name} has no content type."))
+        })?
+        .to_owned();
+    let byte_length = u64::try_from(part.bytes().len()).map_err(|_| {
+        Error::resource_limit_exceeded(format!("Media part {part_name} is too large."))
+    })?;
+    let shared_ref_count = shared_media_ref_count(package, &part_name);
+
+    Ok(ResolvedMedia {
+        part_name,
+        content_type,
+        byte_length,
+        shared_ref_count,
+    })
+}
+
+#[must_use]
+pub fn shared_media_ref_count(package: &Package, media_part: &PartName) -> u32 {
+    let count = package
+        .relationships()
+        .iter()
+        .filter(|relationship| relationship.target_mode == TargetMode::Internal)
+        .filter_map(|relationship| relationship_target_part(relationship).ok())
+        .filter(|part_name| part_name == media_part)
+        .count();
+
+    u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+fn relationship_target_part(relationship: &Relationship) -> Result<PartName> {
+    if let Some(target) = &relationship.resolved_target {
+        Ok(target.clone())
+    } else {
+        resolve_internal_target(&relationship.source, &relationship.target)
+    }
 }
 
 fn next_media_index<'a>(
