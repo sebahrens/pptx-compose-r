@@ -2,6 +2,7 @@ use pptx_compose_core::{opc::part_name::PartName, pptx::ids::ElementKind};
 
 pub mod add_text_box;
 pub mod move_resize;
+pub mod replace_text;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolvedTarget {
