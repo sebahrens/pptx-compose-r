@@ -114,6 +114,7 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
         document_id: &context.document_id,
         revision: context.revision,
         mode,
+        collection: None,
     };
 
     match req.mode {
@@ -145,10 +146,19 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
                 kind: "slide",
                 id: slide_id.to_owned(),
             })?;
+            let (detail, meta, omitted_count) = paginate_slide_elements(
+                slide,
+                &context.document_id,
+                context.revision,
+                mode,
+                slide_id,
+                limit,
+                req.cursor.as_deref(),
+            )?;
             Ok(to_value(context.agent_view(
-                view_meta(mode, limit),
-                0,
-                vec![slide.detail.clone()],
+                meta,
+                omitted_count,
+                vec![detail],
                 scope_value(&req),
             ))?)
         }
@@ -211,6 +221,28 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
     }
 }
 
+fn paginate_slide_elements(
+    slide: &SlideProjection,
+    document_id: &str,
+    revision: u32,
+    mode: &str,
+    slide_id: &str,
+    limit: u32,
+    cursor: Option<&str>,
+) -> Result<(SlideView, ViewMeta, u32), JsonError> {
+    let detail_scope = CursorScope {
+        document_id,
+        revision,
+        mode,
+        collection: Some(slide_id),
+    };
+    let (elements, meta, omitted_count) =
+        paginate(&slide.detail.elements, limit, cursor, detail_scope)?;
+    let mut detail = slide.summary.clone();
+    detail.elements = elements.into_iter().cloned().collect();
+    Ok((detail, meta, omitted_count))
+}
+
 pub fn find_text(pkg: &PptxPackage, req: FindTextRequest) -> Result<FindTextResult, JsonError> {
     if req.query.is_empty() {
         return Err(JsonError::Projection(
@@ -227,6 +259,7 @@ pub fn find_text(pkg: &PptxPackage, req: FindTextRequest) -> Result<FindTextResu
         document_id: &context.document_id,
         revision: context.revision,
         mode,
+        collection: None,
     };
     let matches = collect_text_matches(&context, &req.query, &req.scope)?;
     let (page, meta, omitted_count) = paginate(&matches, limit, req.cursor.as_deref(), scope)?;
@@ -1102,6 +1135,122 @@ fn all_modes() {
             ..
         }
     ));
+}
+
+#[cfg(test)]
+#[test]
+fn slide_detail_paginates_elements_with_working_cursor() {
+    let slide = slide_projection_with_elements(3);
+    let document_id = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    let (first_page, meta, omitted_count) = paginate_slide_elements(
+        &slide,
+        document_id,
+        1,
+        ViewMode::SlideDetail.as_token(),
+        "slide-1",
+        2,
+        None,
+    )
+    .expect("first element page builds");
+
+    assert_eq!(first_page.elements.len(), 2);
+    assert_eq!(first_page.elements[0].id, "slide-1:shape-0");
+    assert_eq!(first_page.elements[1].id, "slide-1:shape-1");
+    assert_eq!(meta.mode, "slide_detail");
+    assert_eq!(meta.limit, 2);
+    assert!(meta.truncated);
+    assert_eq!(omitted_count, 1);
+
+    let next_cursor = meta.next_cursor.expect("first page has a cursor");
+    let (second_page, meta, omitted_count) = paginate_slide_elements(
+        &slide,
+        document_id,
+        1,
+        ViewMode::SlideDetail.as_token(),
+        "slide-1",
+        2,
+        Some(&next_cursor),
+    )
+    .expect("cursor retrieves second element page");
+
+    assert_eq!(second_page.elements.len(), 1);
+    assert_eq!(second_page.elements[0].id, "slide-1:shape-2");
+    assert!(!meta.truncated);
+    assert_eq!(meta.next_cursor, None);
+    assert_eq!(omitted_count, 0);
+
+    let err = paginate_slide_elements(
+        &slide,
+        document_id,
+        1,
+        ViewMode::SlideDetail.as_token(),
+        "slide-2",
+        2,
+        Some(&next_cursor),
+    )
+    .expect_err("element cursor is scoped to its slide");
+    assert!(matches!(err, JsonError::InvalidCursor(_)));
+}
+
+#[cfg(test)]
+fn slide_projection_with_elements(count: u32) -> SlideProjection {
+    let summary = SlideView {
+        id: "slide-1".to_owned(),
+        index: 0,
+        ppt_slide_id: Some(256),
+        part: "ppt/slides/slide1.xml".to_owned(),
+        relationship_id: "rId1".to_owned(),
+        layout_part: "ppt/slideLayouts/slideLayout1.xml".to_owned(),
+        part_checksum: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            .to_owned(),
+        elements: Vec::new(),
+    };
+    let mut detail = summary.clone();
+    detail.elements = (0..count).map(test_element).collect();
+    SlideProjection { summary, detail }
+}
+
+#[cfg(test)]
+fn test_element(index: u32) -> ElementView {
+    ElementView {
+        id: format!("slide-1:shape-{index}"),
+        kind: ElementKind::Shape,
+        slide_id: "slide-1".to_owned(),
+        part: "ppt/slides/slide1.xml".to_owned(),
+        xml_location: XmlLocation {
+            sp_tree_path: vec![index],
+            group_path: Vec::new(),
+            element_tag: "p:sp".to_owned(),
+            cnvpr_id: index + 1,
+            cnvpr_name: format!("Shape {index}"),
+        },
+        z_order: index,
+        bounds: Bounds {
+            x: 0,
+            y: 0,
+            cx: 1000,
+            cy: 1000,
+        },
+        editable: Editable {
+            text: EditableSupport {
+                supported: false,
+                reason: Some("shape has no text body".to_owned()),
+            },
+            bounds: EditableSupport {
+                supported: true,
+                reason: None,
+            },
+            image: EditableSupport {
+                supported: false,
+                reason: Some("shape is not an image".to_owned()),
+            },
+        },
+        fingerprint: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            .to_owned(),
+        text: None,
+        image: None,
+    }
 }
 
 #[cfg(test)]

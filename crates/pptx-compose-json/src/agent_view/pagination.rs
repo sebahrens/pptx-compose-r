@@ -30,7 +30,7 @@ pub const DEFAULT_LIMITS: &[DefaultLimit] = &[
     },
     DefaultLimit {
         mode: "slide_detail",
-        limit: 1,
+        limit: 50,
     },
     DefaultLimit {
         mode: "element_detail",
@@ -55,6 +55,7 @@ pub struct CursorScope<'a> {
     pub document_id: &'a str,
     pub revision: u32,
     pub mode: &'a str,
+    pub collection: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +150,10 @@ fn cursor_salt(scope: CursorScope<'_>) -> String {
     hasher.update(scope.revision.to_be_bytes());
     hasher.update([0]);
     hasher.update(scope.mode.as_bytes());
+    hasher.update([0]);
+    if let Some(collection) = scope.collection {
+        hasher.update(collection.as_bytes());
+    }
     let digest = hasher.finalize();
     let mut output = String::with_capacity(64);
     for byte in digest {
@@ -258,6 +263,7 @@ fn cursor_roundtrip_and_truncation() {
         document_id: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         revision: 7,
         mode: "slide_page",
+        collection: None,
     };
 
     let (page, meta, omitted_count) =
@@ -279,6 +285,7 @@ fn cursor_roundtrip_and_truncation() {
         document_id: scope.document_id,
         revision: scope.revision + 1,
         mode: scope.mode,
+        collection: scope.collection,
     };
     let error =
         Cursor::decode(&next_cursor, foreign_scope).expect_err("foreign cursor must be rejected");
