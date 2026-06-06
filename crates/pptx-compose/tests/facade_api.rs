@@ -307,6 +307,7 @@ fn agent_view_rejects_huge_page_limit() {
         .to_agent_json_with_options(AgentViewOptions {
             mode: ViewMode::SlidePage,
             slide_id: None,
+            slide_ids: Vec::new(),
             element_id: None,
             cursor: None,
             limit: Some(101),
@@ -372,6 +373,7 @@ fn agent_text_view_does_not_emit_unaddressable_run_or_paragraph_ids() {
         .to_agent_json_with_options(AgentViewOptions {
             mode: ViewMode::SlideDetail,
             slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
             element_id: None,
             cursor: None,
             limit: None,

@@ -88,6 +88,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         ViewRequest {
             mode: ViewMode::SlideDetail,
             slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
             element_id: None,
             cursor: None,
             limit: None,
@@ -103,6 +104,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         ViewRequest {
             mode: ViewMode::DeckSummary,
             slide_id: None,
+            slide_ids: Vec::new(),
             element_id: None,
             cursor: None,
             limit: None,
@@ -110,6 +112,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         ViewRequest {
             mode: ViewMode::SlidePage,
             slide_id: None,
+            slide_ids: Vec::new(),
             element_id: None,
             cursor: None,
             limit: None,
@@ -117,6 +120,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         ViewRequest {
             mode: ViewMode::SlideDetail,
             slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
             element_id: None,
             cursor: None,
             limit: None,
@@ -124,6 +128,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         ViewRequest {
             mode: ViewMode::ElementDetail,
             slide_id: None,
+            slide_ids: Vec::new(),
             element_id: Some(element_id),
             cursor: None,
             limit: None,
@@ -131,6 +136,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         ViewRequest {
             mode: ViewMode::MediaMetadata,
             slide_id: None,
+            slide_ids: Vec::new(),
             element_id: None,
             cursor: None,
             limit: None,
@@ -138,6 +144,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         ViewRequest {
             mode: ViewMode::ValidationReport,
             slide_id: None,
+            slide_ids: Vec::new(),
             element_id: None,
             cursor: None,
             limit: None,

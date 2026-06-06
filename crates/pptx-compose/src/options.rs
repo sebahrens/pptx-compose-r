@@ -21,6 +21,7 @@ impl OpenOptions {
 pub struct AgentViewOptions {
     pub mode: pptx_compose_json::agent_view::views::ViewMode,
     pub slide_id: Option<String>,
+    pub slide_ids: Vec<String>,
     pub element_id: Option<String>,
     pub cursor: Option<String>,
     pub limit: Option<u32>,
@@ -38,6 +39,7 @@ impl Default for AgentViewOptions {
         Self {
             mode: pptx_compose_json::agent_view::views::ViewMode::DeckSummary,
             slide_id: None,
+            slide_ids: Vec::new(),
             element_id: None,
             cursor: None,
             limit: None,

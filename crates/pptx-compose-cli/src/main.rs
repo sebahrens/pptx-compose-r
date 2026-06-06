@@ -33,12 +33,24 @@ use pptx_compose::{
 };
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf};
 
 fn main() {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => {
+            if should_emit_json_parse_error(&error) && json_errors_requested(std::env::args_os()) {
+                let sink = OutputSink::new(false, false, true, true);
+                let cli_error = CliError::invalid_input(
+                    InvalidInputCause::CliArgument,
+                    parse_error_message(&error),
+                );
+                if let Err(emit_error) = sink.emit_error(&cli_error) {
+                    eprintln!("{emit_error}");
+                    std::process::exit(exit::WRITE_FAILURE);
+                }
+                std::process::exit(exit::USAGE);
+            }
             let exit_code = match error.kind() {
                 ErrorKind::DisplayHelp
                 | ErrorKind::DisplayVersion
@@ -165,10 +177,10 @@ fn inspect(
     let view = document
         .to_agent_json_with_options(inspect_view_options(&args)?)
         .map_err(CliError::from_error)?;
-    sink.emit_json(&view, OutputDest::from(args.output))?;
+    sink.emit_json_overwrite(&view, OutputDest::from(args.output), args.overwrite)?;
     if args.report.is_some() {
         let report = document.validate().map_err(CliError::from_error)?;
-        sink.emit_json(&report, OutputDest::from(args.report))?;
+        sink.emit_json_overwrite(&report, OutputDest::from(args.report), args.overwrite)?;
     }
     Ok(())
 }
@@ -186,7 +198,7 @@ fn validate(
     let document = PresentationDocument::open_path_with_options(&input, open_options)
         .map_err(CliError::from_error)?;
     let report = document.validate().map_err(CliError::from_error)?;
-    sink.emit_json(&report, OutputDest::from(args.report))
+    sink.emit_json_overwrite(&report, OutputDest::from(args.report), args.overwrite)
 }
 
 fn media_list(
@@ -225,9 +237,7 @@ fn media_get(
     let bytes = document
         .media_part_bytes(&args.package_path)
         .map_err(CliError::from_error)?;
-    fs::write(&output, &bytes).map_err(|source| {
-        CliError::write_with_source("Could not write extracted media output.", source)
-    })?;
+    output::write_bytes_atomic(&output, &bytes, args.overwrite)?;
 
     let info = document
         .media_parts()
@@ -243,9 +253,10 @@ fn media_get(
         checksum: info.checksum,
     };
     if args.report.is_some() {
-        sink.emit_json(
+        sink.emit_json_overwrite(
             &success_envelope(json!(report)),
             OutputDest::from(args.report),
+            args.overwrite,
         )?;
     }
     Ok(())
@@ -267,6 +278,26 @@ fn schema(args: cli::SchemaArgs, sink: OutputSink) -> Result<(), CliError> {
         }
     };
     sink.emit_json(&schema, OutputDest::Stdout)
+}
+
+fn should_emit_json_parse_error(error: &clap::Error) -> bool {
+    !matches!(
+        error.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    )
+}
+
+fn parse_error_message(error: &clap::Error) -> String {
+    error
+        .to_string()
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(|line| line.trim_start_matches("error: ").to_owned())
+        .unwrap_or_else(|| "Command-line arguments are invalid.".to_owned())
+}
+
+fn json_errors_requested(args: impl IntoIterator<Item = OsString>) -> bool {
+    args.into_iter().any(|arg| arg == "--json-errors")
 }
 
 fn schema_error(error: JsonError) -> CliError {
@@ -302,25 +333,79 @@ fn inspect_view_options(args: &cli::InspectArgs) -> Result<AgentViewOptions, Cli
         options.mode = ViewMode::SlidePage;
     }
     if let Some(slides) = &args.slides {
-        if let Some(slide_id) = single_slide_id(slides) {
+        let slide_ids = parse_slide_scope(slides)?;
+        if slide_ids.len() == 1 {
             options.mode = ViewMode::SlideDetail;
-            options.slide_id = Some(slide_id);
+            options.slide_id = slide_ids.into_iter().next();
         } else {
             options.mode = ViewMode::SlidePage;
+            options.slide_ids = slide_ids;
         }
     }
     Ok(options)
 }
 
-fn single_slide_id(slides: &str) -> Option<String> {
+fn parse_slide_scope(slides: &str) -> Result<Vec<String>, CliError> {
     let trimmed = slides.trim();
-    if trimmed.is_empty() || trimmed.contains(',') || trimmed.contains('-') {
-        return None;
+    if trimmed.is_empty() {
+        return Err(CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            "--slides must not be empty.",
+        ));
     }
-    if trimmed.starts_with("slide-") {
-        Some(trimmed.to_owned())
-    } else {
-        Some(format!("slide-{trimmed}"))
+
+    let mut slide_ids = Vec::new();
+    for token in trimmed.split(',') {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(CliError::invalid_input(
+                InvalidInputCause::CliArgument,
+                "--slides contains an empty list item.",
+            ));
+        }
+        if let Some((start, end)) = token.split_once('-') {
+            let start = parse_slide_number(start)?;
+            let end = parse_slide_number(end)?;
+            if start > end {
+                return Err(CliError::invalid_input(
+                    InvalidInputCause::CliArgument,
+                    "--slides ranges must be ascending.",
+                ));
+            }
+            for number in start..=end {
+                push_unique_slide_id(&mut slide_ids, format!("slide-{number}"));
+            }
+        } else if token.starts_with("slide-") {
+            let number = parse_slide_number(token.trim_start_matches("slide-"))?;
+            push_unique_slide_id(&mut slide_ids, format!("slide-{number}"));
+        } else {
+            let number = parse_slide_number(token)?;
+            push_unique_slide_id(&mut slide_ids, format!("slide-{number}"));
+        }
+    }
+    Ok(slide_ids)
+}
+
+fn parse_slide_number(value: &str) -> Result<u32, CliError> {
+    let number = value.trim().parse::<u32>().map_err(|source| {
+        CliError::invalid_input_with_source(
+            InvalidInputCause::CliArgument,
+            "--slides values must be positive slide numbers.",
+            source,
+        )
+    })?;
+    if number == 0 {
+        return Err(CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            "--slides values are 1-based and must be greater than zero.",
+        ));
+    }
+    Ok(number)
+}
+
+fn push_unique_slide_id(slide_ids: &mut Vec<String>, slide_id: String) {
+    if !slide_ids.contains(&slide_id) {
+        slide_ids.push(slide_id);
     }
 }
 

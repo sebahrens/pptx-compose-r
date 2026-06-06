@@ -84,6 +84,8 @@ pub struct ViewRequest {
     pub mode: ViewMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slide_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slide_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub element_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,8 +125,9 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
             ViewPayload::default(),
         ))?),
         ViewMode::SlidePage => {
+            let slides = scoped_slides(&context, &req.slide_ids)?;
             let (page, meta, omitted_count) =
-                paginate(&context.slides, limit, req.cursor.as_deref(), scope)?;
+                paginate(&slides, limit, req.cursor.as_deref(), scope)?;
             let slides = page
                 .into_iter()
                 .map(|slide| slide.summary.clone())
@@ -888,6 +891,17 @@ fn scope_value(req: &ViewRequest) -> Cpj {
     if let Some(slide_id) = &req.slide_id {
         scope.insert("slide_id".to_owned(), Cpj::Str(slide_id.clone()));
     }
+    if !req.slide_ids.is_empty() {
+        scope.insert(
+            "slide_ids".to_owned(),
+            Cpj::Array(
+                req.slide_ids
+                    .iter()
+                    .map(|slide_id| Cpj::Str(slide_id.clone()))
+                    .collect(),
+            ),
+        );
+    }
     if let Some(element_id) = &req.element_id {
         scope.insert("element_id".to_owned(), Cpj::Str(element_id.clone()));
     }
@@ -898,6 +912,25 @@ fn scope_value(req: &ViewRequest) -> Cpj {
         scope.insert("limit".to_owned(), Cpj::Uint(u64::from(limit)));
     }
     Cpj::Object(scope)
+}
+
+fn scoped_slides<'a>(
+    context: &'a ViewContext,
+    slide_ids: &[String],
+) -> Result<Vec<&'a SlideProjection>, JsonError> {
+    if slide_ids.is_empty() {
+        return Ok(context.slides.iter().collect());
+    }
+
+    let mut slides = Vec::with_capacity(slide_ids.len());
+    for slide_id in slide_ids {
+        let slide = context.slide(slide_id).ok_or_else(|| JsonError::NotFound {
+            kind: "slide",
+            id: slide_id.clone(),
+        })?;
+        slides.push(slide);
+    }
+    Ok(slides)
 }
 
 fn view_meta(mode: &str, limit: u32) -> ViewMeta {
@@ -1116,6 +1149,7 @@ fn all_modes() {
         ViewRequest {
             mode: ViewMode::DeckSummary,
             slide_id: None,
+            slide_ids: Vec::new(),
             element_id: None,
             cursor: None,
             limit: None,
@@ -1162,6 +1196,7 @@ fn all_modes() {
         ViewRequest {
             mode: ViewMode::ElementDetail,
             slide_id: None,
+            slide_ids: Vec::new(),
             element_id: Some("slide-1:missing-999".to_owned()),
             cursor: None,
             limit: None,
@@ -1308,6 +1343,7 @@ fn request_for(
         slide_id: matches!(mode, ViewMode::SlideDetail)
             .then(|| slide_id.clone())
             .flatten(),
+        slide_ids: Vec::new(),
         element_id: matches!(mode, ViewMode::ElementDetail)
             .then(|| element_id.clone())
             .flatten(),

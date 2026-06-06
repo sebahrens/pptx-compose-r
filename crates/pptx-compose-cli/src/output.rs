@@ -1,6 +1,6 @@
 use std::{
-    fs::File,
-    io::{self, BufWriter, IsTerminal, Write},
+    fs::{self, File, OpenOptions},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
 };
 
@@ -90,13 +90,24 @@ impl OutputSink {
                 let mut lock = stdout.lock();
                 self.emit_json_to_writer(doc, &mut lock)
             }
-            OutputDest::Path(path) => {
-                let file = File::create(&path).map_err(|source| {
-                    CliError::write_with_source("Could not open JSON output path.", source)
-                })?;
-                let mut writer = BufWriter::new(file);
-                self.emit_json_to_writer(doc, &mut writer)
+            OutputDest::Path(path) => self.emit_json_overwrite(doc, OutputDest::Path(path), false),
+        }
+    }
+
+    pub(crate) fn emit_json_overwrite(
+        &self,
+        doc: &impl Serialize,
+        dest: OutputDest,
+        overwrite: bool,
+    ) -> Result<(), CliError> {
+        match dest {
+            OutputDest::Stdout => self.emit_json(doc, OutputDest::Stdout),
+            OutputDest::Path(path) if path == Path::new("-") => {
+                self.emit_json(doc, OutputDest::Path(path))
             }
+            OutputDest::Path(path) => write_atomic(&path, overwrite, |writer| {
+                self.emit_json_to_writer(doc, writer)
+            }),
         }
     }
 
@@ -104,17 +115,19 @@ impl OutputSink {
         &self,
         report: &impl Serialize,
         dest: Option<PathBuf>,
+        overwrite: bool,
     ) -> Result<(), CliError> {
-        self.emit_json(report, OutputDest::from(dest))
+        self.emit_json_overwrite(report, OutputDest::from(dest), overwrite)
     }
 
     pub(crate) fn emit_optional_patch_report(
         &self,
         report: &impl Serialize,
         dest: Option<PathBuf>,
+        overwrite: bool,
     ) -> Result<(), CliError> {
         if let Some(dest) = dest {
-            self.emit_json(report, OutputDest::Path(dest))
+            self.emit_json_overwrite(report, OutputDest::Path(dest), overwrite)
         } else {
             Ok(())
         }
@@ -124,9 +137,10 @@ impl OutputSink {
         &self,
         diff: &impl Serialize,
         dest: Option<PathBuf>,
+        overwrite: bool,
     ) -> Result<(), CliError> {
         if let Some(dest) = dest {
-            self.emit_json(diff, OutputDest::Path(dest))
+            self.emit_json_overwrite(diff, OutputDest::Path(dest), overwrite)
         } else {
             Ok(())
         }
@@ -202,6 +216,144 @@ impl OutputSink {
             (true, LogLevel::Debug) => "\x1b[90mdebug\x1b[0m",
         }
     }
+}
+
+pub(crate) fn write_bytes_atomic(
+    path: &Path,
+    bytes: &[u8],
+    overwrite: bool,
+) -> Result<(), CliError> {
+    write_atomic(path, overwrite, |writer| {
+        writer
+            .write_all(bytes)
+            .map_err(|source| CliError::write_with_source("Could not write output bytes.", source))
+    })
+}
+
+fn create_file_atomic(path: &Path, overwrite: bool) -> Result<File, CliError> {
+    let mut options = OpenOptions::new();
+    options.write(true);
+    if overwrite {
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    options.open(path).map_err(|source| {
+        if source.kind() == io::ErrorKind::AlreadyExists && !overwrite {
+            output_exists_error(path)
+        } else {
+            CliError::write_with_source(
+                format!("Could not open output path {}.", path.display()),
+                source,
+            )
+        }
+    })
+}
+
+fn write_atomic(
+    path: &Path,
+    overwrite: bool,
+    write: impl FnOnce(&mut File) -> Result<(), CliError>,
+) -> Result<(), CliError> {
+    if path.exists() && !overwrite {
+        return Err(output_exists_error(path));
+    }
+    let parent = path.parent().ok_or_else(|| {
+        CliError::new(
+            pptx_compose::core::error::ErrorCode::WriteFailed,
+            format!("Output path {} has no parent directory.", path.display()),
+        )
+    })?;
+    let temp_path = temp_sibling_path(path);
+    let result = (|| {
+        let mut temp = create_file_atomic(&temp_path, false)?;
+        write(&mut temp)?;
+        temp.sync_all().map_err(|source| {
+            CliError::write_with_source(
+                format!("Could not fsync temporary output {}.", temp_path.display()),
+                source,
+            )
+        })?;
+        if overwrite {
+            fs::rename(&temp_path, path).map_err(|source| {
+                CliError::write_with_source(
+                    format!(
+                        "Could not atomically rename {} to {}.",
+                        temp_path.display(),
+                        path.display()
+                    ),
+                    source,
+                )
+            })?;
+        } else {
+            fs::hard_link(&temp_path, path).map_err(|source| {
+                if source.kind() == io::ErrorKind::AlreadyExists {
+                    output_exists_error(path)
+                } else {
+                    CliError::write_with_source(
+                        format!(
+                            "Could not atomically publish {} to {} without replacing an existing file.",
+                            temp_path.display(),
+                            path.display()
+                        ),
+                        source,
+                    )
+                }
+            })?;
+            fs::remove_file(&temp_path).map_err(|source| {
+                CliError::write_with_source(
+                    format!("Could not remove temporary output {}.", temp_path.display()),
+                    source,
+                )
+            })?;
+        }
+        fsync_dir(parent)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
+}
+
+fn output_exists_error(path: &Path) -> CliError {
+    CliError::new(
+        pptx_compose::core::error::ErrorCode::WriteFailed,
+        format!(
+            "Output path {} already exists; pass --overwrite to replace it.",
+            path.display()
+        ),
+    )
+}
+
+fn temp_sibling_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("output");
+    path.with_file_name(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        unique_counter()
+    ))
+}
+
+fn unique_counter() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+fn fsync_dir(path: &Path) -> Result<(), CliError> {
+    File::open(path)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|source| {
+            CliError::write_with_source(
+                format!("Could not fsync output directory {}.", path.display()),
+                source,
+            )
+        })
 }
 
 impl From<Option<PathBuf>> for OutputDest {

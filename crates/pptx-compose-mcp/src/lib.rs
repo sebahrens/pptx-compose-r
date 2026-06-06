@@ -574,6 +574,7 @@ impl PptxServer {
                     ViewMode::SlidePage
                 },
                 slide_id: input.slide_id,
+                slide_ids: Vec::new(),
                 element_id: None,
                 cursor: input.cursor,
                 limit: input.limit,

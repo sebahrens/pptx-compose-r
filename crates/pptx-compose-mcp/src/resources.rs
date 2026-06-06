@@ -373,6 +373,7 @@ fn session_view(
         .to_agent_json_with_options(AgentViewOptions {
             mode,
             slide_id,
+            slide_ids: Vec::new(),
             element_id,
             cursor,
             limit,

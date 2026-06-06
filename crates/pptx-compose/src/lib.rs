@@ -216,6 +216,7 @@ impl PresentationDocument {
             ViewRequest {
                 mode: options.mode,
                 slide_id: options.slide_id,
+                slide_ids: options.slide_ids,
                 element_id: options.element_id,
                 cursor: options.cursor,
                 limit: options.limit,

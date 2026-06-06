@@ -70,6 +70,8 @@ pub struct InspectArgs {
     pub slides: Option<String>,
     #[arg(long, value_enum)]
     pub detail: Option<InspectDetail>,
+    #[arg(long)]
+    pub overwrite: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -102,6 +104,8 @@ pub struct ValidateArgs {
     pub input: PathBuf,
     #[arg(long)]
     pub report: Option<PathBuf>,
+    #[arg(long)]
+    pub overwrite: bool,
 }
 
 #[derive(Args, Debug, Eq, PartialEq)]
@@ -175,6 +179,8 @@ pub struct MediaGetArgs {
     pub output: PathBuf,
     #[arg(long)]
     pub report: Option<PathBuf>,
+    #[arg(long)]
+    pub overwrite: bool,
 }
 
 #[derive(Args, Debug, Eq, PartialEq)]

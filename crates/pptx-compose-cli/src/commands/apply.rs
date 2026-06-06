@@ -55,8 +55,8 @@ pub(crate) fn apply(
             )
             .map_err(apply_error)?;
         let sink = OutputSink::default();
-        sink.emit_patch_report(&output.report, args.report)?;
-        sink.emit_diff(&output.diff, args.diff)?;
+        sink.emit_patch_report(&output.report, args.report, args.overwrite)?;
+        sink.emit_diff(&output.diff, args.diff, args.overwrite)?;
         return Ok(());
     }
 
@@ -99,8 +99,8 @@ pub(crate) fn apply(
         return Err(CliError::from_error(error));
     }
     let sink = OutputSink::default();
-    sink.emit_optional_patch_report(&apply_output.report, args.report)?;
-    sink.emit_diff(&apply_output.diff, args.diff)?;
+    sink.emit_optional_patch_report(&apply_output.report, args.report, args.overwrite)?;
+    sink.emit_diff(&apply_output.diff, args.diff, args.overwrite)?;
 
     Ok(())
 }
