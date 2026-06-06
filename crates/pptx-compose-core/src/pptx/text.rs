@@ -2,7 +2,15 @@ use crate::provenance::text_hash::{self, TextSegment};
 use crate::xml::document::{XmlElement, XmlNode};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RunStyleSummary {}
+pub struct RunStyleSummary {
+    pub font_size_pt: Option<u32>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underline: Option<String>,
+    pub font_color_rgb: Option<String>,
+    pub latin_typeface: Option<String>,
+    pub language: Option<String>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Run {
@@ -51,7 +59,7 @@ pub fn read_text_body(txbody: &XmlElement) -> TextBody {
                     runs.push(Run {
                         index: runs.len() as u32,
                         text,
-                        style_summary: RunStyleSummary::default(),
+                        style_summary: run_style_summary(child),
                     });
                 }
                 "br" => projection.push(ProjectionSegment::SoftBreak),
@@ -87,6 +95,65 @@ fn run_text(run: &XmlElement) -> String {
     let mut text = String::new();
     collect_text_children(run, &mut text);
     text
+}
+
+fn run_style_summary(run: &XmlElement) -> RunStyleSummary {
+    let Some(run_properties) = child_element(run, "rPr") else {
+        return RunStyleSummary::default();
+    };
+
+    RunStyleSummary {
+        font_size_pt: attribute(run_properties, "sz").and_then(font_size_pt),
+        bold: attribute(run_properties, "b").and_then(boolean),
+        italic: attribute(run_properties, "i").and_then(boolean),
+        underline: attribute(run_properties, "u")
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+        font_color_rgb: srgb_color(run_properties),
+        latin_typeface: child_element(run_properties, "latin")
+            .and_then(|latin| attribute(latin, "typeface"))
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+        language: attribute(run_properties, "lang")
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+    }
+}
+
+fn child_element<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a XmlElement> {
+    element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .find(|child| child.name.local_name == local_name)
+}
+
+fn attribute<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.local_name == local_name)
+        .map(|attribute| attribute.value.as_str())
+}
+
+fn font_size_pt(value: &str) -> Option<u32> {
+    value.parse::<u32>().ok().map(|hundredths| hundredths / 100)
+}
+
+fn boolean(value: &str) -> Option<bool> {
+    match value {
+        "1" | "true" | "True" | "TRUE" => Some(true),
+        "0" | "false" | "False" | "FALSE" => Some(false),
+        _ => None,
+    }
+}
+
+fn srgb_color(run_properties: &XmlElement) -> Option<String> {
+    let solid_fill = child_element(run_properties, "solidFill")?;
+    let srgb = child_element(solid_fill, "srgbClr")?;
+    attribute(srgb, "val")
+        .filter(|value| value.len() == 6 && value.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .map(|value| value.to_ascii_uppercase())
 }
 
 fn collect_text_children(element: &XmlElement, text: &mut String) {
@@ -149,7 +216,10 @@ fn normalized_projection() {
 <a:txBody xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <a:p>
     <a:r>
-      <a:rPr b="1"/>
+      <a:rPr lang="en-US" dirty="0" sz="3200" b="1" i="0" u="sng">
+        <a:solidFill><a:srgbClr val="112233"/></a:solidFill>
+        <a:latin typeface="Aptos"/>
+      </a:rPr>
       <a:t>  Cafe{}	 results  </a:t>
     </a:r>
     <a:br/>
@@ -185,7 +255,15 @@ Q1
     assert_eq!(text_body.paragraphs[1].runs[0].index, 0);
     assert_eq!(
         text_body.paragraphs[0].runs[0].style_summary,
-        RunStyleSummary {}
+        RunStyleSummary {
+            font_size_pt: Some(32),
+            bold: Some(true),
+            italic: Some(false),
+            underline: Some("sng".to_owned()),
+            font_color_rgb: Some("112233".to_owned()),
+            latin_typeface: Some("Aptos".to_owned()),
+            language: Some("en-US".to_owned()),
+        }
     );
     assert_eq!(
         text_body.paragraphs[0].runs[0].text,

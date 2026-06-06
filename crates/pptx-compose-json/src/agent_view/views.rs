@@ -666,8 +666,13 @@ fn project_text(tx_body: &XmlElement) -> TextView {
                 .map(|run| Run {
                     text: run.text,
                     style_summary: StyleSummary {
-                        font_size_pt: None,
-                        bold: None,
+                        font_size_pt: run.style_summary.font_size_pt,
+                        bold: run.style_summary.bold,
+                        italic: run.style_summary.italic,
+                        underline: run.style_summary.underline,
+                        font_color_rgb: run.style_summary.font_color_rgb,
+                        latin_typeface: run.style_summary.latin_typeface,
+                        language: run.style_summary.language,
                     },
                 })
                 .collect(),

@@ -146,6 +146,16 @@ pub struct StyleSummary {
     pub font_size_pt: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub underline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_color_rgb: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latin_typeface: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
