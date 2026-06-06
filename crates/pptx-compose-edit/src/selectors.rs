@@ -77,7 +77,7 @@ fn resolve_slide(
         .iter()
         .filter(|slide| slide.agent_id() == id)
         .collect::<Vec<_>>();
-    let slide = exactly_one(matches, "slide", id, None)?;
+    let slide = exactly_one(matches, "slide", id, None, |slide| slide.agent_id())?;
     let target = ResolvedSlide {
         slide_id: slide.agent_id(),
         part: slide.part_name.clone(),
@@ -151,7 +151,9 @@ fn resolve_element(
         }
     }
 
-    let target = exactly_one(matches, "element", id, Some(id))?;
+    let target = exactly_one(matches, "element", id, Some(id), |target| {
+        target.element_id.clone()
+    })?;
     if let Some(guards) = guards {
         guard_eq(
             "slide_id",
@@ -206,7 +208,13 @@ fn resolve_media_part(
         })
         .collect::<Vec<_>>();
 
-    let target = exactly_one(matches, "media part", part.unwrap_or("<any>"), None)?;
+    let target = exactly_one(
+        matches,
+        "media part",
+        part.unwrap_or("<any>"),
+        None,
+        |target| target.part.zip_entry_name().to_owned(),
+    )?;
     if let Some(guards) = guards {
         guard_eq(
             "part",
@@ -275,6 +283,7 @@ fn exactly_one<T>(
     target_type: &str,
     selector: &str,
     element_id: Option<&str>,
+    candidate_id: impl Fn(&T) -> String,
 ) -> Result<T> {
     let count = matches.len();
     if count == 1 {
@@ -292,11 +301,14 @@ fn exactly_one<T>(
             element_id,
         ))
     } else {
+        let candidates = matches.iter().map(candidate_id).collect::<Vec<_>>();
         Err(selector_ambiguous(
             format!(
-                "Selector for {target_type} {selector} resolved to {count} targets; expected exactly one."
+                "Selector for {target_type} {selector} resolved to {count} targets; expected exactly one. Candidates: {}.",
+                candidates.join(", ")
             ),
             element_id,
+            candidates,
         ))
     }
 }
@@ -307,10 +319,16 @@ fn guard_eq(
     actual: &str,
     element_id: Option<&str>,
 ) -> Result<()> {
-    if expected.is_some_and(|expected| expected != actual) {
+    if let Some(expected) = expected
+        && expected != actual
+    {
         return Err(selector_guard_failed(
-            format!("Selector guard {guard_name} did not match the current target."),
+            format!(
+                "Selector guard {guard_name} did not match the current target: expected {expected}, actual {actual}."
+            ),
             element_id,
+            Some(expected),
+            Some(actual),
         ));
     }
     Ok(())
@@ -325,9 +343,14 @@ fn guard_optional_eq(
     if let Some(expected) = expected
         && actual != Some(expected)
     {
+        let actual = actual.unwrap_or("<none>");
         return Err(selector_guard_failed(
-            format!("Selector guard {guard_name} did not match the current target."),
+            format!(
+                "Selector guard {guard_name} did not match the current target: expected {expected}, actual {actual}."
+            ),
             element_id,
+            Some(expected),
+            Some(actual),
         ));
     }
     Ok(())
@@ -342,14 +365,23 @@ fn reject_inapplicable_guard(
         return Err(selector_guard_failed(
             format!("Selector guard {guard_name} is not applicable to this target type."),
             element_id,
+            Some("<not applicable>"),
+            value,
         ));
     }
     Ok(())
 }
 
-fn selector_guard_failed(message: String, element_id: Option<&str>) -> Error {
+fn selector_guard_failed(
+    message: String,
+    element_id: Option<&str>,
+    expected: Option<&str>,
+    actual: Option<&str>,
+) -> Error {
     Error::new(ErrorCode::SelectorGuardFailed, message).with_location(ErrorLocation {
         element_id: element_id.map(str::to_owned),
+        expected: expected.map(str::to_owned),
+        actual: actual.map(str::to_owned),
         ..ErrorLocation::default()
     })
 }
@@ -361,9 +393,10 @@ fn selector_not_found(message: String, element_id: Option<&str>) -> Error {
     })
 }
 
-fn selector_ambiguous(message: String, element_id: Option<&str>) -> Error {
+fn selector_ambiguous(message: String, element_id: Option<&str>, candidates: Vec<String>) -> Error {
     Error::new(ErrorCode::SelectorAmbiguous, message).with_location(ErrorLocation {
         element_id: element_id.map(str::to_owned),
+        candidates,
         ..ErrorLocation::default()
     })
 }
@@ -436,6 +469,18 @@ fn resolve_and_guard() {
     )
     .expect_err("stale fingerprint fails");
     assert_eq!(stale.code(), ErrorCode::SelectorGuardFailed);
+    assert!(stale.message().contains(
+        "expected sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    ));
+    assert!(stale.message().contains("actual sha256:"));
+    assert_eq!(
+        stale.details().location.expected.as_deref(),
+        Some("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+    );
+    assert_eq!(
+        stale.details().location.actual.as_deref(),
+        Some(element.fingerprint.as_str())
+    );
 
     let ambiguous = resolve(
         &document,
@@ -446,6 +491,11 @@ fn resolve_and_guard() {
     )
     .expect_err("ambiguous media selector fails");
     assert_eq!(ambiguous.code(), ErrorCode::SelectorAmbiguous);
+    assert_eq!(
+        ambiguous.details().location.candidates,
+        vec!["ppt/media/image1.png", "ppt/media/image2.png"]
+    );
+    assert!(ambiguous.message().contains("ppt/media/image1.png"));
 }
 
 #[cfg(test)]
