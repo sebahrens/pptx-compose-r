@@ -250,7 +250,7 @@ fn element_snapshot(
 ) -> ElementSnapshot {
     let shape = read_shape(element, path.clone());
     let text_body = first_descendant(element, "txBody").map(read_text_body);
-    let element_id = agent_element_id(slide_id, kind, &path);
+    let element_id = agent_element_id(slide_id, kind, shape.cnvpr_id, &path);
     let text_hash = text_body
         .as_ref()
         .map(|text_body| text_hash(&text_body.normalized));

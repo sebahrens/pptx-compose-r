@@ -120,14 +120,14 @@ fn resolve_element(
             continue;
         };
         for (path, kind) in index_sp_tree(sp_tree) {
-            let element_id = agent_element_id(&slide_id, kind, &path);
-            if element_id != id {
-                continue;
-            }
             let Some(element) = element_at_path(sp_tree, &path.sp_tree_path) else {
                 continue;
             };
             let shape = read_shape(element, path.clone());
+            let element_id = agent_element_id(&slide_id, kind, shape.cnvpr_id, &path);
+            if element_id != id {
+                continue;
+            }
             let text_hash = element_text_hash(element);
             let fingerprint = fingerprint(&FingerprintInput {
                 kind,
@@ -396,7 +396,7 @@ fn resolve_and_guard() {
     let initial = resolve(
         &document,
         &Selector::ElementId {
-            id: "slide-1:shape-1".to_owned(),
+            id: "slide-1:shape-4".to_owned(),
             guards: None,
         },
     )

@@ -24,6 +24,9 @@ use crate::{
     patch::{AddImageOperation, Bounds, ImageDedupe, ImageFit, PatchEffects},
 };
 
+#[cfg(test)]
+use crate::selectors::{Selector, resolve};
+
 const P_NS: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -371,6 +374,7 @@ fn insert_picture_xml(
     Ok(agent_element_id(
         &operation.slide_id,
         ElementKind::Picture,
+        Some(id),
         &path,
     ))
 }
@@ -765,7 +769,37 @@ fn wires_part_rel_ctype() {
     assert!(rels_xml.contains(r#"Id="rId3""#));
     assert!(rels_xml.contains(r#"Target="../media/image1.png""#));
 
-    assert_eq!(effects.created_element_ids, vec!["slide-1:pic-4"]);
+    assert_eq!(effects.created_element_ids, vec!["slide-1:pic-6"]);
+    let presentation_part = test_part("ppt/presentation.xml");
+    package
+        .insert_zip_entry(
+            "ppt/presentation.xml",
+            br#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rSlide"/></p:sldIdLst></p:presentation>"#.to_vec(),
+        )
+        .expect("presentation inserted");
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlide",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
+        "slides/slide1.xml",
+    ));
+    let document =
+        pptx_compose_core::pptx::presentation::PresentationDocument::open(package.clone())
+            .expect("mutated package opens");
+    resolve(
+        &document,
+        &Selector::ElementId {
+            id: effects.created_element_ids[0].clone(),
+            guards: None,
+        },
+    )
+    .expect("created image element id resolves");
     assert_eq!(
         effects.changed_parts,
         vec![

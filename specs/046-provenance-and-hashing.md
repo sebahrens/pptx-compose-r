@@ -130,9 +130,9 @@ Agent IDs are stable string identifiers for the exported `(document_id, revision
 - An element's agent ID is `{slide_id}:{kind_prefix}-{key}` where:
   - `slide_id` is the containing slide's agent ID.
   - `kind_prefix` is a fixed token per kind: `shape` (autoshape/text box / placeholder shape), `pic` (picture), `group` (group shape), `graphic` (graphicFrame: chart/table/SmartArt), `cxn` (connector), `oth` (any other/unknown shape kind).
-  - `key` is the element's **top-level `p:spTree` child index** (`sp_tree_path[0]`). For nested elements inside a group, `key` is the dotted path of child indices from `spTree` root, e.g. `3.1` for the second child of the group at spTree index 3.
-- Rationale: the spTree child index is stable for a given exported revision and is independent of `cNvPr` id reassignment. After an edit that changes the tree, a new export produces a new `(document_id, revision)` and IDs are recomputed.
-- The illustrative examples in 040/042 (`slide-1:shape-4`, `slide-1:pic-7`) are hereby pinned to this rule: the numeric suffix is the spTree child index, not the `cNvPr` id. Earlier examples that implied the suffix equals `cnvpr_id` are non-normative and superseded by this section.
+  - `key` is the element's `p:cNvPr/@id` value when present. For malformed or unknown `p:spTree` child elements that lack `cNvPr`, implementations may fall back to the dotted `sp_tree_path` so the element remains addressable within the exported revision.
+- Rationale: `cNvPr/@id` is the DrawingML non-visual drawing property ID and remains stable under reordering of siblings. After an edit that changes or allocates a drawing ID, a new export produces a new `(document_id, revision)` and IDs are recomputed.
+- The illustrative examples in 040/042 (`slide-1:shape-4`, `slide-1:pic-7`) are pinned to this rule: the numeric suffix is the `cNvPr/@id` value, not the `p:spTree` child index.
 
 ### Paragraph and Run IDs
 
@@ -145,7 +145,7 @@ Conformant implementations must satisfy, and 080 must test:
 
 - **No-edit stability:** `read(input).write(output)` preserves `document_id`, every `part_checksum`, every agent ID, and every `fingerprint`/`text_hash`. Re-opening `output` yields the same `document_id`.
 - **Cross-implementation determinism:** identical input bytes yield identical `document_id`, `part_checksum`, `text_hash`, `fingerprint`, and agent IDs across conformant implementations.
-- **Edit locality:** an edit changes exactly the `part_checksum` of dirty parts (031/020 dirty-tracking) and therefore `document_id`; it changes a given element's agent ID only if the edit changes that element's structural position.
+- **Edit locality:** an edit changes exactly the `part_checksum` of dirty parts (031/020 dirty-tracking) and therefore `document_id`; it changes a given element's agent ID only if the edit changes that element's `cNvPr/@id` or the fallback structural path for an element without `cNvPr`.
 - **Guard soundness:** a selector whose `fingerprint` and `text_hash` guards both match the current element is treated as resolving to the same element the agent saw; a mismatch yields `selector_guard_failed` (044) rather than a best-effort edit.
 
 See [agent JSON format](040-agent-json-format.md), [agent edit operations](041-agent-edit-operations.md), [agent protocol schemas](042-agent-protocol-schemas.md), and [round-trip invariants](050-roundtrip-invariants.md).

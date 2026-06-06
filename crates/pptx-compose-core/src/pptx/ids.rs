@@ -44,8 +44,13 @@ pub fn slide_agent_id(presentation_order_index: usize) -> String {
 }
 
 #[must_use]
-pub fn agent_element_id(slide_id: &str, kind: ElementKind, path: &SpTreePath) -> String {
-    let key = dotted_path(&path.sp_tree_path);
+pub fn agent_element_id(
+    slide_id: &str,
+    kind: ElementKind,
+    cnvpr_id: Option<i64>,
+    path: &SpTreePath,
+) -> String {
+    let key = cnvpr_id.map_or_else(|| dotted_path(&path.sp_tree_path), |id| id.to_string());
     format!("{}:{}-{}", slide_id, kind.agent_prefix(), key)
 }
 
@@ -192,14 +197,18 @@ fn sp_tree_indexing() {
 
     let group = &indexed[2];
     assert_eq!(
-        agent_element_id("slide-1", group.1, &group.0),
+        agent_element_id("slide-1", group.1, Some(7), &group.0),
+        "slide-1:group-7"
+    );
+    assert_eq!(
+        agent_element_id("slide-1", group.1, None, &group.0),
         "slide-1:group-3"
     );
 
     let nested_picture = &indexed[3];
     assert_eq!(
-        agent_element_id("slide-1", nested_picture.1, &nested_picture.0),
-        "slide-1:pic-3.1"
+        agent_element_id("slide-1", nested_picture.1, Some(9), &nested_picture.0),
+        "slide-1:pic-9"
     );
 }
 
@@ -213,7 +222,7 @@ fn agent_id_derivation() {
         sp_tree_path: vec![4],
         group_path: Vec::new(),
     };
-    let element_id = agent_element_id(&slide_id, ElementKind::Shape, &element_path);
+    let element_id = agent_element_id(&slide_id, ElementKind::Shape, Some(4), &element_path);
     assert_eq!(element_id, "slide-2:shape-4");
 
     let paragraph_id = paragraph_agent_id(&element_id, 0);

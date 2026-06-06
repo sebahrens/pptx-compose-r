@@ -173,6 +173,7 @@ fn insert_text_box(document: &mut XmlDocument, operation: &AddTextBox) -> Result
     Ok(agent_element_id(
         &operation.slide_id,
         ElementKind::TextBox,
+        Some(id),
         &path,
     ))
 }
@@ -507,7 +508,7 @@ fn builds_template() {
         .expect("text box is inserted");
 
     assert_eq!(effects.changed_parts, vec!["ppt/slides/slide1.xml"]);
-    assert_eq!(effects.created_element_ids, vec!["slide-1:shape-4"]);
+    assert_eq!(effects.created_element_ids, vec!["slide-1:shape-10"]);
     assert!(package.dirty_parts().contains(&slide_part));
     let slide_xml = String::from_utf8(
         package

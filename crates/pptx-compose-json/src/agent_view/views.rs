@@ -578,7 +578,7 @@ fn project_element(
 ) -> Result<ElementView, JsonError> {
     let shape = read_shape(element, path.clone());
     let text = first_descendant(element, "txBody")
-        .map(|tx_body| project_text(tx_body, slide_id, core_kind, &path));
+        .map(|tx_body| project_text(tx_body, slide_id, core_kind, shape.cnvpr_id, &path));
     let text_hash = text.as_ref().map(|text| text.text_hash.clone());
     let image = if core_kind == CoreElementKind::Picture {
         match read_picture(element, path.clone(), slide_rels, package) {
@@ -611,7 +611,7 @@ fn project_element(
     };
 
     Ok(ElementView {
-        id: agent_element_id(slide_id, core_kind, &path),
+        id: agent_element_id(slide_id, core_kind, shape.cnvpr_id, &path),
         kind: json_element_kind(core_kind),
         slide_id: slide_id.to_owned(),
         part: trim_part(slide_part.as_str()),
@@ -649,10 +649,11 @@ fn project_text(
     tx_body: &XmlElement,
     slide_id: &str,
     kind: CoreElementKind,
+    cnvpr_id: Option<i64>,
     path: &SpTreePath,
 ) -> TextView {
     let body = read_text_body(tx_body);
-    let element_id = agent_element_id(slide_id, kind, path);
+    let element_id = agent_element_id(slide_id, kind, cnvpr_id, path);
     let paragraphs = body
         .paragraphs
         .into_iter()

@@ -105,7 +105,7 @@ mod negative {
             patch_with_operation(json!({
                 "operation_id": "linked-image",
                 "op": "replace_image",
-                "element_id": "slide-1:pic-3",
+                "element_id": "slide-1:pic-2",
                 "media_ref": "image",
                 "content_type": "image/png"
             })),
