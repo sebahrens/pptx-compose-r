@@ -1,4 +1,5 @@
 pub mod manifest;
+pub mod sniff;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -97,6 +98,7 @@ impl MediaInputs {
             MediaSource::Bytes(bytes) => bytes.clone(),
             MediaSource::InlineBase64(encoded) => decode_base64(encoded)?,
         };
+        sniff::verify_declared(&binding.content_type, &bytes)?;
 
         Ok(ResolvedMedia {
             content_type: binding.content_type.clone(),
@@ -301,9 +303,12 @@ pub mod resolve {
     fn binds_and_reports_missing() {
         let media_root = temp_media_root();
         fs::create_dir_all(&media_root).expect("media root can be created");
-        fs::write(media_root.join("image-one.png"), b"png bytes")
-            .expect("media one can be written");
-        fs::write(media_root.join("image-two.jpg"), b"jpg bytes")
+        fs::write(
+            media_root.join("image-one.png"),
+            b"\x89PNG\r\n\x1a\npng bytes",
+        )
+        .expect("media one can be written");
+        fs::write(media_root.join("image-two.jpg"), b"\xff\xd8\xffjpg bytes")
             .expect("media two can be written");
 
         let manifest = MediaManifest {
@@ -339,13 +344,13 @@ pub mod resolve {
             .resolve("input-image-1")
             .expect("first media resolves");
         assert_eq!(first.content_type, "image/png");
-        assert_eq!(first.bytes, b"png bytes");
+        assert_eq!(first.bytes, b"\x89PNG\r\n\x1a\npng bytes");
 
         let second = inputs
             .resolve("input-image-2")
             .expect("second media resolves");
         assert_eq!(second.content_type, "image/jpeg");
-        assert_eq!(second.bytes, b"jpg bytes");
+        assert_eq!(second.bytes, b"\xff\xd8\xffjpg bytes");
 
         let missing = inputs
             .resolve("unknown-image")
@@ -420,7 +425,7 @@ pub mod resolve {
                     inline: Some(InlineMedia {
                         encoding: "base64".to_owned(),
                         content_type: "image/png".to_owned(),
-                        data: "aW5saW5lIGJ5dGVz".to_owned(),
+                        data: "iVBORw0KGgppbmxpbmUgYnl0ZXM=".to_owned(),
                     }),
                     sha256: None,
                     byte_length: Some(12),
@@ -432,7 +437,7 @@ pub mod resolve {
             .expect("inline manifest binds");
         let resolved = inputs.resolve("inline").expect("inline media resolves");
         assert_eq!(resolved.content_type, "image/png");
-        assert_eq!(resolved.bytes, b"inline bytes");
+        assert_eq!(resolved.bytes, b"\x89PNG\r\n\x1a\ninline bytes");
     }
 
     fn temp_media_root() -> PathBuf {
