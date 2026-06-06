@@ -684,6 +684,7 @@ where
             new_revision: context.new_revision,
             operation_reports: Vec::new(),
             changed_parts: effects.changed_parts,
+            warnings: Vec::new(),
             validation: patch_validation_summary(&validation),
         },
     })
@@ -772,6 +773,7 @@ where
             new_revision: report_revision,
             operation_reports,
             changed_parts,
+            warnings: Vec::new(),
             validation: patch_validation_summary(&validation),
         },
     })

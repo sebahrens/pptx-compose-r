@@ -44,6 +44,7 @@ use core::{
 };
 use pptx_compose_edit::{
     diffs::{ChangedPart, DiffChange, PartChangeKind, SemanticDiff},
+    media_inputs::MediaInputReport,
     operations::{
         ResolvedTarget, add_image::AddImage, add_text_box::AddTextBox, move_resize::MoveResize,
         replace_image::ReplaceImage, replace_text::ReplaceText, set_alt_text::SetAltText,
@@ -310,7 +311,7 @@ impl PresentationDocument {
         validate_envelope(&patch, &DocumentState::new(document_id.clone(), revision))?;
         let original_package =
             package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
-        validate_patch_operations(&original_package, &patch.operations, &media)?;
+        let media_report = validate_patch_operations(&original_package, &patch.operations, &media)?;
 
         let package = original_package.clone();
         let mut executor = RealOperationExecutor {
@@ -332,6 +333,7 @@ impl PresentationDocument {
         let staged_package = staged.package;
         let staged_package = staged_package.package();
         let mut report = staged.report;
+        append_media_input_warnings(&mut report, media_report);
         report.new_document_id = if report.changed_parts.is_empty() {
             document_id
         } else {
@@ -1270,8 +1272,8 @@ fn validate_patch_operations(
     package: &Package,
     operations: &[Operation],
     media_inputs: &MediaInputs,
-) -> Result<()> {
-    media_inputs.check_references(
+) -> Result<MediaInputReport> {
+    let media_report = media_inputs.check_references(
         operations.iter().filter_map(operation_media_ref),
         pptx_compose_edit::media_inputs::ExtraBindingPolicy::Warn,
     )?;
@@ -1280,7 +1282,20 @@ fn validate_patch_operations(
     for operation in operations {
         validate_operation(package, &model, operation, media_inputs)?;
     }
-    Ok(())
+    Ok(media_report)
+}
+
+fn append_media_input_warnings(report: &mut PatchReport, media_report: MediaInputReport) {
+    report
+        .warnings
+        .extend(media_report.warnings.into_iter().map(|warning| {
+            serde_json::json!({
+                "category": "media_input",
+                "code": "unused_media_ref",
+                "media_ref": warning.media_ref,
+                "message": warning.message,
+            })
+        }));
 }
 
 fn operation_media_ref(operation: &Operation) -> Option<&str> {

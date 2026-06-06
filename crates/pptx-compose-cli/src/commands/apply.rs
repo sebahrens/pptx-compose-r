@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -8,7 +9,7 @@ use pptx_compose::{
     ApplyPatchOptions, OpenOptions, PresentationDocument, WriteMode, WriteOptions,
     core::error::{Error, ErrorCode, ErrorLocation},
     edit::{
-        media_inputs::{MediaInputs, MediaManifest},
+        media_inputs::{MediaInputs, MediaLimits, MediaManifest},
         patch::{Patch, parse_patch},
     },
 };
@@ -40,7 +41,15 @@ pub(crate) fn apply(
     }
 
     let patch = read_patch(&patch)?;
-    let media_inputs = read_media_inputs(media_manifest.as_deref(), permissions)?;
+    let media_inputs = read_media_inputs(
+        media_manifest.as_deref(),
+        args.media_root.as_deref(),
+        &args.media,
+        permissions,
+        MediaLimits {
+            max_media_bytes: open_options.resource_limits.max_media_part_bytes,
+        },
+    )?;
     let mut document = PresentationDocument::open_path_with_options(&input, open_options)
         .map_err(CliError::from_error)?;
     if args.dry_run {
@@ -126,36 +135,104 @@ fn read_patch(path: &Path) -> Result<Patch, CliError> {
 
 fn read_media_inputs(
     path: Option<&Path>,
+    media_root: Option<&Path>,
+    explicit_media: &[String],
     permissions: &PermissionContext,
+    limits: MediaLimits,
 ) -> Result<MediaInputs, CliError> {
-    let Some(path) = path else {
-        return Ok(MediaInputs::default());
+    let mut inputs = if let Some(path) = path {
+        let bytes = fs::read(path).map_err(|source| {
+            CliError::invalid_input_with_source(
+                InvalidInputCause::CliArgument,
+                "Could not read media manifest JSON input.",
+                source,
+            )
+        })?;
+        let manifest = serde_json::from_slice::<MediaManifest>(&bytes).map_err(|source| {
+            CliError::invalid_input_with_source(
+                InvalidInputCause::CliArgument,
+                "Media manifest input is not valid JSON.",
+                source,
+            )
+        })?;
+        let root = resolve_media_root(path, media_root, permissions)?;
+        MediaInputs::from_manifest_with_limits_and_path_resolver(
+            &manifest,
+            &root,
+            limits,
+            |root, manifest_path| {
+                resolve_cli_manifest_media_path(root, manifest_path, permissions)
+                    .map_err(CliError::into_error)
+            },
+        )
+        .map_err(CliError::from_error)?
+    } else {
+        if media_root.is_some() {
+            return Err(CliError::invalid_input(
+                InvalidInputCause::CliArgument,
+                "--media-root requires --media-manifest.",
+            ));
+        }
+        MediaInputs::with_limits(Default::default(), limits)
     };
-    let bytes = fs::read(path).map_err(|source| {
-        CliError::invalid_input_with_source(
+
+    apply_explicit_media_bindings(&mut inputs, explicit_media, permissions, limits)?;
+    Ok(inputs)
+}
+
+fn resolve_media_root(
+    manifest_path: &Path,
+    media_root: Option<&Path>,
+    permissions: &PermissionContext,
+) -> Result<PathBuf, CliError> {
+    match media_root {
+        Some(root) => permissions.authorize_read(root, PathIntent::MediaInput),
+        None => Ok(manifest_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()),
+    }
+}
+
+fn apply_explicit_media_bindings(
+    inputs: &mut MediaInputs,
+    explicit_media: &[String],
+    permissions: &PermissionContext,
+    limits: MediaLimits,
+) -> Result<(), CliError> {
+    let mut seen = HashSet::new();
+    for binding in explicit_media {
+        let (media_ref, path) = parse_explicit_media_binding(binding)?;
+        if !seen.insert(media_ref.to_owned()) {
+            return Err(CliError::invalid_input(
+                InvalidInputCause::CliArgument,
+                format!("Duplicate explicit --media binding for media_ref `{media_ref}`."),
+            ));
+        }
+
+        let resolved = permissions.authorize_read(Path::new(path), PathIntent::MediaInput)?;
+        let media_binding = MediaInputs::sniffed_path_binding(media_ref, &resolved, limits)
+            .map_err(CliError::from_error)?;
+        inputs.insert_or_replace(media_ref.to_owned(), media_binding);
+    }
+
+    Ok(())
+}
+
+fn parse_explicit_media_binding(binding: &str) -> Result<(&str, &str), CliError> {
+    let Some((media_ref, path)) = binding.split_once('=') else {
+        return Err(CliError::invalid_input(
             InvalidInputCause::CliArgument,
-            "Could not read media manifest JSON input.",
-            source,
-        )
-    })?;
-    let manifest = serde_json::from_slice::<MediaManifest>(&bytes).map_err(|source| {
-        CliError::invalid_input_with_source(
+            "--media must use MEDIA_REF=PATH.",
+        ));
+    };
+    if media_ref.is_empty() || path.is_empty() {
+        return Err(CliError::invalid_input(
             InvalidInputCause::CliArgument,
-            "Media manifest input is not valid JSON.",
-            source,
-        )
-    })?;
-    let media_root = path.parent().unwrap_or_else(|| Path::new("."));
-    MediaInputs::from_manifest_with_limits_and_path_resolver(
-        &manifest,
-        media_root,
-        Default::default(),
-        |root, manifest_path| {
-            resolve_cli_manifest_media_path(root, manifest_path, permissions)
-                .map_err(CliError::into_error)
-        },
-    )
-    .map_err(CliError::from_error)
+            "--media requires both MEDIA_REF and PATH.",
+        ));
+    }
+    Ok((media_ref, path))
 }
 
 fn resolve_cli_manifest_media_path(
@@ -382,6 +459,24 @@ fn media_manifest_mismatches_return_structured_errors() {
 #[test]
 fn media_manifest_symlink_escape_is_rejected() {
     test_support::media_manifest_symlink_escape_is_rejected();
+}
+
+#[cfg(test)]
+#[test]
+fn unused_manifest_media_refs_are_reported() {
+    test_support::unused_manifest_media_refs_are_reported();
+}
+
+#[cfg(test)]
+#[test]
+fn media_root_resolves_manifest_paths() {
+    test_support::media_root_resolves_manifest_paths();
+}
+
+#[cfg(test)]
+#[test]
+fn explicit_media_binding_overrides_manifest_binding() {
+    test_support::explicit_media_binding_overrides_manifest_binding();
 }
 
 #[cfg(test)]
@@ -835,6 +930,130 @@ mod test_support {
         fs::remove_dir_all(root).expect("test dir removes");
     }
 
+    pub(super) fn unused_manifest_media_refs_are_reported() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let manifest = root.join("media.json");
+        let assets = root.join("assets");
+        let image = assets.join("hero.png");
+        let unused = assets.join("unused.png");
+        let output = root.join("output.pptx");
+        let report = root.join("report.json");
+        fs::create_dir_all(&assets).expect("asset dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&image, png_bytes()).expect("image writes");
+        fs::write(&unused, png_bytes()).expect("unused image writes");
+        fs::write(&patch, add_image_patch(&input_bytes)).expect("patch fixture writes");
+        fs::write(
+            &manifest,
+            media_manifest_with_entries(&[
+                ("hero", "assets/hero.png", "image/png"),
+                ("unused", "assets/unused.png", "image/png"),
+            ]),
+        )
+        .expect("manifest writes");
+
+        let mut args = args(&input, &patch, &output, false, false);
+        args.dry_run = true;
+        args.output = None;
+        args.report = Some(report.clone());
+        args.media_manifest = Some(manifest);
+
+        apply(args, &permissions(&root), OpenOptions::default())
+            .expect("dry-run with unused manifest binding succeeds");
+
+        let report_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report).expect("report reads"))
+                .expect("report is JSON");
+        assert_eq!(
+            report_json["warnings"],
+            serde_json::json!([{
+                "category": "media_input",
+                "code": "unused_media_ref",
+                "media_ref": "unused",
+                "message": "Media input `unused` is bound but not referenced."
+            }])
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn media_root_resolves_manifest_paths() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let manifest_dir = root.join("manifests");
+        let manifest = manifest_dir.join("media.json");
+        let assets = root.join("assets");
+        let image = assets.join("hero.png");
+        let output = root.join("output.pptx");
+        let report = root.join("report.json");
+        fs::create_dir_all(&manifest_dir).expect("manifest dir creates");
+        fs::create_dir_all(&assets).expect("asset dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&image, png_bytes()).expect("image writes");
+        fs::write(&patch, add_image_patch(&input_bytes)).expect("patch fixture writes");
+        fs::write(
+            &manifest,
+            media_manifest("hero.png", "image/png", None, None),
+        )
+        .expect("manifest writes");
+
+        let mut args = args(&input, &patch, &output, false, false);
+        args.dry_run = true;
+        args.output = None;
+        args.report = Some(report.clone());
+        args.media_manifest = Some(manifest);
+        args.media_root = Some(assets);
+
+        apply(args, &permissions(&root), OpenOptions::default())
+            .expect("media-root resolves manifest path");
+
+        let report_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report).expect("report reads"))
+                .expect("report is JSON");
+        assert_eq!(report_json["status"], "dry_run_success");
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn explicit_media_binding_overrides_manifest_binding() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let manifest = root.join("media.json");
+        let assets = root.join("assets");
+        let manifest_image = assets.join("hero.jpg");
+        let explicit_image = assets.join("hero.png");
+        let output = root.join("output.pptx");
+        fs::create_dir_all(&assets).expect("asset dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&manifest_image, jpeg_bytes()).expect("manifest image writes");
+        fs::write(&explicit_image, png_bytes()).expect("explicit image writes");
+        fs::write(&patch, add_image_patch(&input_bytes)).expect("patch fixture writes");
+        fs::write(
+            &manifest,
+            media_manifest("assets/hero.jpg", "image/jpeg", None, None),
+        )
+        .expect("manifest writes");
+
+        let mut args = args(&input, &patch, &output, false, false);
+        args.dry_run = true;
+        args.output = None;
+        args.media_manifest = Some(manifest);
+        args.media
+            .push(format!("hero={}", explicit_image.display()));
+
+        apply(args, &permissions(&root), OpenOptions::default())
+            .expect("explicit --media binding overrides manifest binding");
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
     fn args(
         input: &Path,
         patch: &Path,
@@ -847,6 +1066,8 @@ mod test_support {
             patch: patch.to_path_buf(),
             dry_run: false,
             media_manifest: None,
+            media_root: None,
+            media: Vec::new(),
             output: Some(output.to_path_buf()),
             report: None,
             diff: None,
@@ -964,6 +1185,30 @@ mod test_support {
 
     fn png_bytes() -> &'static [u8] {
         b"\x89PNG\r\n\x1a\npptx-compose-test-image"
+    }
+
+    fn jpeg_bytes() -> &'static [u8] {
+        b"\xff\xd8\xffpptx-compose-test-image"
+    }
+
+    fn media_manifest_with_entries(entries: &[(&str, &str, &str)]) -> Vec<u8> {
+        let entries = entries
+            .iter()
+            .map(|(media_ref, path, content_type)| {
+                format!(
+                    r#""{media_ref}": {{ "path": "{path}", "content_type": "{content_type}" }}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            r#"{{
+            "schema": "pptx-compose.media_manifest.v1",
+            "version": 1,
+            "media": {{ {entries} }}
+        }}"#
+        )
+        .into_bytes()
     }
 
     #[cfg(unix)]

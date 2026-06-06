@@ -251,6 +251,7 @@ fn patch_report() -> PatchReport {
             warnings: Vec::new(),
         }],
         changed_parts: vec!["ppt/slides/slide1.xml".to_owned()],
+        warnings: Vec::new(),
         validation: PatchValidationSummary {
             status: ValidationStatus::Valid,
             errors: 0,

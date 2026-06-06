@@ -80,6 +80,35 @@ impl MediaInputs {
         Self { bindings, limits }
     }
 
+    pub fn insert_or_replace(&mut self, media_ref: String, binding: MediaBinding) {
+        self.bindings.insert(media_ref, binding);
+    }
+
+    pub fn sniffed_path_binding(
+        media_ref: &str,
+        path: &Path,
+        limits: MediaLimits,
+    ) -> Result<MediaBinding> {
+        let bytes = read_path_media(media_ref, path, &limits)?;
+        let content_type = sniff::sniff_content_type(&bytes)
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorCode::UnsupportedMediaType,
+                    format!(
+                        "Media input `{media_ref}` bytes are not a supported V1 raster image type."
+                    ),
+                )
+            })?
+            .to_owned();
+
+        Ok(MediaBinding {
+            content_type,
+            declared_sha256: None,
+            declared_byte_length: None,
+            source: MediaSource::Bytes(bytes),
+        })
+    }
+
     pub fn from_manifest(manifest: &MediaManifest, media_root: &Path) -> Result<Self> {
         Self::from_manifest_with_limits(manifest, media_root, MediaLimits::default())
     }

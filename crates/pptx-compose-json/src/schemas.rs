@@ -48,6 +48,8 @@ pub struct PatchReport {
     pub new_revision: u32,
     pub operation_reports: Vec<OperationReport>,
     pub changed_parts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<Value>,
     pub validation: PatchValidationSummary,
 }
 

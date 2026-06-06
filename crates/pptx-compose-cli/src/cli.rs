@@ -116,6 +116,10 @@ pub struct ApplyArgs {
     pub dry_run: bool,
     #[arg(long)]
     pub media_manifest: Option<PathBuf>,
+    #[arg(long, value_name = "DIR")]
+    pub media_root: Option<PathBuf>,
+    #[arg(long = "media", value_name = "MEDIA_REF=PATH")]
+    pub media: Vec<String>,
     #[arg(long)]
     pub output: Option<PathBuf>,
     #[arg(long)]
@@ -226,10 +230,46 @@ fn parses_apply_dry_run() {
     assert!(args.dry_run);
     assert_eq!(args.report, Some(PathBuf::from("r.json")));
     assert_eq!(args.media_manifest, None);
+    assert_eq!(args.media_root, None);
+    assert_eq!(args.media, Vec::<String>::new());
     assert_eq!(args.output, None);
     assert_eq!(args.diff, None);
     assert!(!args.overwrite);
     assert!(!args.in_place);
     assert!(!args.no_backup);
     assert!(!args.deterministic);
+}
+
+#[cfg(test)]
+#[test]
+fn parses_apply_media_bindings() {
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    let cli = Cli::try_parse_from([
+        "pptx-compose",
+        "apply",
+        "in.pptx",
+        "p.json",
+        "--media-manifest",
+        "media.json",
+        "--media-root",
+        "assets",
+        "--media",
+        "hero=override.png",
+        "--media",
+        "logo=logo.gif",
+    ])
+    .expect("apply media arguments should parse");
+
+    let Commands::Apply(args) = cli.command else {
+        unreachable!("expected apply command");
+    };
+
+    assert_eq!(args.media_manifest, Some(PathBuf::from("media.json")));
+    assert_eq!(args.media_root, Some(PathBuf::from("assets")));
+    assert_eq!(
+        args.media,
+        vec!["hero=override.png".to_owned(), "logo=logo.gif".to_owned()]
+    );
 }
