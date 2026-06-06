@@ -2,7 +2,13 @@ use std::collections::HashMap;
 
 use pptx_compose_core::{
     error::{Error, Result},
-    opc::{package::Package, part::Part, part_name::PartName},
+    opc::{
+        package::Package,
+        part::Part,
+        part_name::PartName,
+        relationships::{Relationship, RelationshipSource},
+    },
+    pptx::{ids::ElementKind, media::IMAGE_REL_TYPE},
     xml::{
         document::{XmlDocument, XmlElement, XmlNode},
         parser::parse_document,
@@ -12,8 +18,12 @@ use pptx_compose_core::{
 };
 use pptx_compose_edit::{
     media_inputs::{MediaBinding, MediaInputs, MediaSource},
-    operations::{ResolvedSlide, add_image::AddImage, add_text_box::AddTextBox},
-    patch::{Bounds, ImageDedupe, ImageFit},
+    operations::{
+        ResolvedElement, ResolvedSlide, add_image::AddImage, add_text_box::AddTextBox,
+        move_resize::MoveResize, replace_image::ReplaceImage, replace_text::ReplaceText,
+        set_alt_text::SetAltText,
+    },
+    patch::{Bounds, FormatPolicy, ImageDedupe, ImageFit, OverflowPolicy, ReplaceTextMode},
 };
 
 mod construction {
@@ -21,7 +31,17 @@ mod construction {
 
     const MINIMAL_PPTX: &[u8] = include_bytes!("../../../fixtures/minimal.pptx");
     const PIC_EXPECTED: &str = include_str!("../../../fixtures/construction/pic.expected.xml");
+    const PIC_RELS_EXPECTED: &str =
+        include_str!("../../../fixtures/construction/pic.rels.expected.xml");
     const SP_EXPECTED: &str = include_str!("../../../fixtures/construction/sp.expected.xml");
+    const REPLACE_TEXT_EXPECTED: &str =
+        include_str!("../../../fixtures/construction/replace_text.sp.expected.xml");
+    const REPLACE_IMAGE_RELS_EXPECTED: &str =
+        include_str!("../../../fixtures/construction/replace_image.rels.expected.xml");
+    const MOVE_RESIZE_EXPECTED: &str =
+        include_str!("../../../fixtures/construction/move_resize.sp.expected.xml");
+    const SET_ALT_TEXT_EXPECTED: &str =
+        include_str!("../../../fixtures/construction/set_alt_text.pic.expected.xml");
 
     #[test]
     fn pic_and_sp_match_golden() -> Result<()> {
@@ -43,6 +63,19 @@ mod construction {
             inserted_element_xml(&picture_package, &slide.part, "pic")?,
             PIC_EXPECTED
         );
+        assert_eq!(
+            part_xml(
+                &picture_package,
+                &PartName::from_zip_entry("ppt/slides/_rels/slide1.xml.rels")?
+            )?,
+            golden(PIC_RELS_EXPECTED)
+        );
+        assert_eq!(
+            picture_package
+                .content_types()
+                .resolve(&PartName::from_zip_entry("ppt/media/image1.png")?),
+            Some("image/png")
+        );
 
         let mut text_package = minimal_package()?;
         let text_box = AddTextBox {
@@ -63,6 +96,119 @@ mod construction {
 
         Ok(())
     }
+
+    #[test]
+    fn replace_text_matches_golden() -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(TARGET_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated\nCopy".to_owned(),
+            current_text_match: Some("Old copy".to_owned()),
+            mode: ReplaceTextMode::WholeElement,
+            format_policy: FormatPolicy::PreserveFirstRun,
+            overflow_policy: OverflowPolicy::Allow,
+        };
+
+        operation.apply(&mut package, &target)?;
+
+        assert_eq!(
+            element_xml_at_path(&package, &slide_part, &[3])?,
+            golden(REPLACE_TEXT_EXPECTED)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn replace_image_retargets_relationship_matches_golden() -> Result<()> {
+        let slide_part = slide_part()?;
+        let rels_part = PartName::from_zip_entry("ppt/slides/_rels/slide1.xml.rels")?;
+        let mut package = package_with_picture_rels()?;
+        let target = target(ElementKind::Picture);
+        let operation = ReplaceImage {
+            operation_id: "op-replace-image".to_owned(),
+            element_id: target.element_id.clone(),
+            media_ref: "media-1".to_owned(),
+            content_type: "image/png".to_owned(),
+            allow_shared_mutation: false,
+        };
+
+        operation.apply(&mut package, &target, &media_inputs())?;
+
+        assert_eq!(
+            part_xml(&package, &rels_part)?,
+            golden(REPLACE_IMAGE_RELS_EXPECTED)
+        );
+        assert!(
+            package
+                .parts()
+                .get(&PartName::from_zip_entry("ppt/media/image1.png")?)
+                .is_none()
+        );
+        assert!(
+            package
+                .parts()
+                .get(&PartName::from_zip_entry("ppt/media/image2.png")?)
+                .is_some()
+        );
+        assert!(package.dirty_parts().contains(&rels_part));
+        assert!(!package.dirty_parts().contains(&slide_part));
+        Ok(())
+    }
+
+    #[test]
+    fn move_resize_matches_golden() -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(TARGET_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = MoveResize {
+            element_id: target.element_id.clone(),
+            bounds: Bounds {
+                x: 10,
+                y: 20,
+                cx: 300,
+                cy: 400,
+            },
+        };
+
+        operation.apply(&mut package, &target)?;
+
+        assert_eq!(
+            element_xml_at_path(&package, &slide_part, &[3])?,
+            golden(MOVE_RESIZE_EXPECTED)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn set_alt_text_matches_golden() -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(PICTURE_SLIDE_XML)?;
+        let target = target(ElementKind::Picture);
+        let operation = SetAltText {
+            operation_id: "op-set-alt-text".to_owned(),
+            element_id: target.element_id.clone(),
+            title: Some("Accessible title".to_owned()),
+            description: Some("Readable description".to_owned()),
+            alt_text: None,
+        };
+
+        operation.apply(&mut package, &target)?;
+
+        assert_eq!(
+            element_xml_at_path(&package, &slide_part, &[3])?,
+            golden(SET_ALT_TEXT_EXPECTED)
+        );
+        Ok(())
+    }
+
+    const TARGET_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body" descr="Original alt"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm rot="5400000" flipH="1"><a:off x="1" y="2"/><a:ext cx="3" cy="4"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" dirty="0" sz="1800" b="1"><a:solidFill><a:srgbClr val="112233"/></a:solidFill><a:latin typeface="Aptos"/></a:rPr><a:t>Old copy</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
+
+    const PICTURE_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:pic><p:nvPicPr><p:cNvPr id="9" name="Picture" hidden="0"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId5"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="1" y="2"/><a:ext cx="3" cy="4"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic></p:spTree></p:cSld></p:sld>"#;
+
+    const PICTURE_RELS_XML: &str = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/></Relationships>"#;
 
     fn minimal_package() -> Result<Package> {
         package_from_entries(&from_bytes(MINIMAL_PPTX)?)
@@ -109,6 +255,51 @@ mod construction {
         MediaInputs::new(bindings)
     }
 
+    fn slide_part() -> Result<PartName> {
+        PartName::from_zip_entry("ppt/slides/slide1.xml")
+    }
+
+    fn package_with_slide(slide_xml: &str) -> Result<Package> {
+        let mut package = Package::new();
+        package.insert_zip_entry("ppt/slides/slide1.xml", slide_xml.as_bytes().to_vec())?;
+        Ok(package)
+    }
+
+    fn package_with_picture_rels() -> Result<Package> {
+        let slide_part = slide_part()?;
+        let old_media_part = PartName::from_zip_entry("ppt/media/image1.png")?;
+        let mut package = package_with_slide(PICTURE_SLIDE_XML)?;
+        package.insert_zip_entry(
+            "ppt/slides/_rels/slide1.xml.rels",
+            PICTURE_RELS_XML.as_bytes().to_vec(),
+        )?;
+        package.insert_zip_entry(old_media_part.zip_entry_name(), b"old image".to_vec())?;
+        package
+            .content_types_mut()
+            .insert_default("png", "image/png");
+        package.push_relationship(Relationship::internal(
+            RelationshipSource::Part(slide_part),
+            "rId5",
+            IMAGE_REL_TYPE,
+            "../media/image1.png",
+        ));
+        Ok(package)
+    }
+
+    fn target(kind: ElementKind) -> ResolvedElement {
+        ResolvedElement {
+            slide_id: "slide-1".to_owned(),
+            element_id: "slide-1:target-9".to_owned(),
+            kind,
+            part: slide_part().expect("slide part is valid"),
+            sp_tree_path: vec![3],
+            group_path: Vec::new(),
+            cnvpr_id: Some(9),
+            text_hash: None,
+            fingerprint: "fp".to_owned(),
+        }
+    }
+
     fn inserted_element_xml(
         package: &Package,
         slide_part: &PartName,
@@ -138,6 +329,35 @@ mod construction {
         serialize_element(element)
     }
 
+    fn element_xml_at_path(
+        package: &Package,
+        slide_part: &PartName,
+        path: &[u32],
+    ) -> Result<String> {
+        let part = package.parts().get(slide_part).ok_or_else(|| {
+            Error::unsupported_package(format!("Slide part {slide_part} was not found."))
+        })?;
+        let document = parse_document(part.bytes())?;
+        let root = document
+            .root_element()
+            .ok_or_else(|| Error::malformed_xml("Slide XML does not contain a root element."))?;
+        let sp_tree = first_descendant(root, "spTree").ok_or_else(|| {
+            Error::unsupported_package("Slide fixture does not contain p:spTree.")
+        })?;
+        let element = element_at_path(sp_tree, path).ok_or_else(|| {
+            Error::unsupported_package("Target element path did not resolve in p:spTree.")
+        })?;
+        serialize_element(element)
+    }
+
+    fn part_xml(package: &Package, part_name: &PartName) -> Result<String> {
+        let part = package.parts().get(part_name).ok_or_else(|| {
+            Error::unsupported_package(format!("Package part {part_name} was not found."))
+        })?;
+        String::from_utf8(part.bytes().to_vec())
+            .map_err(|source| Error::parse_error("Package part XML was not UTF-8.", source))
+    }
+
     fn serialize_element(element: &XmlElement) -> Result<String> {
         let document = XmlDocument {
             declaration: None,
@@ -154,6 +374,10 @@ mod construction {
         })
     }
 
+    fn golden(expected: &str) -> &str {
+        expected.strip_suffix('\n').unwrap_or(expected)
+    }
+
     fn first_descendant<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a XmlElement> {
         for child in element.children.iter().filter_map(XmlNode::as_element) {
             if child.name.local_name == local_name {
@@ -164,5 +388,18 @@ mod construction {
             }
         }
         None
+    }
+
+    fn element_at_path<'a>(sp_tree: &'a XmlElement, path: &[u32]) -> Option<&'a XmlElement> {
+        let mut current = sp_tree;
+        for component in path {
+            let index = usize::try_from(component.checked_sub(1)?).ok()?;
+            current = current
+                .children
+                .iter()
+                .filter_map(XmlNode::as_element)
+                .nth(index)?;
+        }
+        Some(current)
     }
 }
