@@ -17,10 +17,12 @@ pub struct FixtureEntry {
     pub consuming_test: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 #[serde(rename_all = "kebab-case")]
 pub enum SourceApp {
+    #[serde(rename = "powerpoint")]
     PowerPoint,
+    #[serde(rename = "libreoffice")]
     LibreOffice,
     GoogleSlides,
     Legacy,

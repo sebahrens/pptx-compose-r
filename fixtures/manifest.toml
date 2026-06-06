@@ -13,3 +13,67 @@ features = ["minimal-package", "mc-alternate-content", "unknown-part"]
 expected_warnings = []
 invariants = ["contains-presentation-part", "roundtrip"]
 consuming_test = "roundtrip_golden::roundtrip::no_edit_byte_identity"
+
+[[entries]]
+path = "powerpoint/source-family.pptx"
+source_app = "powerpoint"
+features = ["source-family", "text"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::corpus::manifest_covers_required_fixture_families"
+
+[[entries]]
+path = "libreoffice/source-family.pptx"
+source_app = "libreoffice"
+features = ["source-family", "text"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::corpus::manifest_covers_required_fixture_families"
+
+[[entries]]
+path = "google-slides/source-family.pptx"
+source_app = "google-slides"
+features = ["source-family", "text", "mc-alternate-content"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::corpus::manifest_covers_required_fixture_families"
+
+[[entries]]
+path = "media/image.pptx"
+source_app = "synthetic"
+features = ["media", "image"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip", "edit-add-image"]
+consuming_test = "roundtrip_golden::edits::add_image_runs_against_corpus_media_fixture"
+
+[[entries]]
+path = "charts/bar-chart.pptx"
+source_app = "synthetic"
+features = ["chart", "bar-chart"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::corpus::manifest_covers_required_fixture_families"
+
+[[entries]]
+path = "embedded/ole-object.pptx"
+source_app = "synthetic"
+features = ["embedding", "ole-object"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::corpus::manifest_covers_required_fixture_families"
+
+[[entries]]
+path = "powerpoint/media-chart-embedded.pptx"
+source_app = "powerpoint"
+features = ["source-family", "media", "image", "chart", "embedding", "ole-object"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip", "edit-add-image"]
+consuming_test = "roundtrip_golden::edits::add_image_runs_against_corpus_media_fixture"
+
+[[entries]]
+path = "malformed/broken-slide-xml.pptx"
+source_app = "synthetic"
+features = ["malformed", "malformed-xml"]
+expected_warnings = ["unsupported_package"]
+invariants = ["malformed"]
+consuming_test = "fixture_manifest::corpus::malformed_fixture_is_rejected_when_slide_xml_is_parsed"

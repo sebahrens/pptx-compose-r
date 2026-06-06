@@ -23,6 +23,69 @@ mod manifest {
     }
 }
 
+mod corpus {
+    use std::collections::BTreeSet;
+
+    use pptx_compose_core::{xml::parser::parse_document, zip::reader::from_bytes};
+
+    use super::fixtures::{SourceApp, fixture_path, load_manifest};
+
+    #[test]
+    fn manifest_covers_required_fixture_families() {
+        let manifest = load_manifest();
+
+        let source_apps = manifest
+            .entries
+            .iter()
+            .map(|entry| entry.source_app.clone())
+            .collect::<BTreeSet<_>>();
+        assert!(source_apps.contains(&SourceApp::PowerPoint));
+        assert!(source_apps.contains(&SourceApp::LibreOffice));
+        assert!(source_apps.contains(&SourceApp::GoogleSlides));
+
+        for required_feature in ["media", "chart", "embedding", "malformed"] {
+            assert!(
+                manifest.entries.iter().any(|entry| entry
+                    .features
+                    .iter()
+                    .any(|feature| feature == required_feature)),
+                "fixture manifest must include feature `{required_feature}`"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_fixture_is_rejected_when_slide_xml_is_parsed() {
+        let manifest = load_manifest();
+        let malformed = manifest
+            .entries
+            .iter()
+            .find(|entry| entry.invariants.iter().any(|item| item == "malformed"))
+            .expect("manifest includes a malformed fixture");
+        let package =
+            std::fs::read(fixture_path(&malformed.path)).expect("malformed fixture reads");
+        let entries = from_bytes(&package).expect("malformed fixture is still a ZIP package");
+        let slide = entries
+            .iter()
+            .find(|entry| {
+                let name = entry.name.zip_entry_name();
+                name.starts_with("ppt/slides/") && name.ends_with(".xml")
+            })
+            .expect("malformed fixture contains a slide XML part");
+
+        let error = parse_document(&slide.bytes).expect_err("malformed slide XML is rejected");
+        assert!(
+            malformed
+                .expected_warnings
+                .iter()
+                .any(|warning| warning == error.code().as_str()),
+            "malformed fixture expected one of {:?}, got {}",
+            malformed.expected_warnings,
+            error.code().as_str()
+        );
+    }
+}
+
 mod persistence {
     use std::io::Cursor;
 
@@ -40,6 +103,9 @@ mod persistence {
 
         for entry in manifest.entries {
             if !entry.path.ends_with(".pptx") {
+                continue;
+            }
+            if entry.invariants.iter().any(|item| item == "malformed") {
                 continue;
             }
 
