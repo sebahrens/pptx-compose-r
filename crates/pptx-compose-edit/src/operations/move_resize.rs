@@ -11,7 +11,7 @@ use pptx_compose_core::{
 use pptx_compose_json::schemas::OperationTarget;
 
 use crate::{
-    operations::ResolvedElement,
+    operations::{ResolvedElement, bounds::validate_bounds},
     patch::{Bounds, MoveResizeElementOperation, PatchEffects},
 };
 
@@ -83,16 +83,6 @@ impl MoveResize {
             warnings: Vec::new(),
         })
     }
-}
-
-fn validate_bounds(bounds: &Bounds) -> Result<()> {
-    if bounds.x < 0 || bounds.y < 0 || bounds.cx <= 0 || bounds.cy <= 0 {
-        return Err(Error::new(
-            ErrorCode::InvalidBounds,
-            "Bounds require x/y >= 0 and cx/cy > 0.",
-        ));
-    }
-    Ok(())
 }
 
 fn ensure_movable(target: &ResolvedElement) -> Result<()> {
@@ -293,6 +283,55 @@ fn location(target: &ResolvedElement) -> ErrorLocation {
         operation: Some("move_resize_element".to_owned()),
         ..ErrorLocation::default()
     }
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_bounds_above_emu_max_without_writing() {
+    let slide_part =
+        pptx_compose_core::opc::part_name::PartName::from_zip_entry("ppt/slides/slide1.xml")
+            .expect("valid slide part");
+    let slide_bytes =
+        br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:spPr><a:xfrm><a:off x="1" y="2"/><a:ext cx="3" cy="4"/></a:xfrm></p:spPr></p:sp></p:spTree></p:cSld></p:sld>"#.to_vec();
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", slide_bytes.clone())
+        .expect("slide inserted");
+    let target = ResolvedElement {
+        slide_id: "slide-1".to_owned(),
+        element_id: "slide-1:shape-3".to_owned(),
+        kind: ElementKind::Shape,
+        part: slide_part.clone(),
+        sp_tree_path: vec![3],
+        group_path: Vec::new(),
+        cnvpr_id: None,
+        text_hash: None,
+        fingerprint: "fp".to_owned(),
+    };
+    let operation = MoveResize {
+        element_id: target.element_id.clone(),
+        bounds: Bounds {
+            x: 0,
+            y: 0,
+            cx: crate::operations::bounds::MAX_EMU_COORDINATE + 1,
+            cy: 1,
+        },
+    };
+
+    let error = operation
+        .apply(&mut package, &target)
+        .expect_err("out-of-range width is invalid");
+
+    assert_eq!(error.code(), ErrorCode::InvalidBounds);
+    assert!(!package.dirty_parts().contains(&slide_part));
+    assert_eq!(
+        package
+            .parts()
+            .get(&slide_part)
+            .expect("slide still exists")
+            .bytes(),
+        slide_bytes.as_slice()
+    );
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use pptx_compose_core::{
 use pptx_compose_json::schemas::OperationTarget;
 
 use crate::{
-    operations::ResolvedSlide,
+    operations::{ResolvedSlide, bounds::validate_bounds},
     patch::{AddTextBoxOperation, Bounds, InsertOptions, PatchEffects, TextAlign, TextBoxStyle},
 };
 
@@ -107,16 +107,6 @@ impl AddTextBox {
             ..ErrorLocation::default()
         }
     }
-}
-
-fn validate_bounds(bounds: &Bounds) -> Result<()> {
-    if bounds.x < 0 || bounds.y < 0 || bounds.cx <= 0 || bounds.cy <= 0 {
-        return Err(Error::new(
-            ErrorCode::InvalidBounds,
-            "Bounds require x/y >= 0 and cx/cy > 0.",
-        ));
-    }
-    Ok(())
 }
 
 fn validate_style(style: Option<&TextBoxStyle>) -> Result<()> {
@@ -426,6 +416,52 @@ fn element(raw_name: &str, attrs: &[(&str, &str)], children: Vec<XmlNode>) -> Xm
 
 #[cfg(test)]
 use pptx_compose_core::opc::part_name::PartName;
+
+#[cfg(test)]
+#[test]
+fn rejects_bounds_above_emu_max_without_writing() {
+    let slide_part = PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid slide part");
+    let slide_bytes =
+        br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/></p:spTree></p:cSld></p:sld>"#.to_vec();
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", slide_bytes.clone())
+        .expect("slide inserted");
+    let target = ResolvedSlide {
+        slide_id: "slide-1".to_owned(),
+        part: slide_part.clone(),
+    };
+    let operation = AddTextBox {
+        operation_id: "op-bounds".to_owned(),
+        slide_id: "slide-1".to_owned(),
+        text: "Hello".to_owned(),
+        bounds: Bounds {
+            x: 0,
+            y: 0,
+            cx: crate::operations::bounds::MAX_EMU_COORDINATE + 1,
+            cy: 1,
+        },
+        name: None,
+        alt_text: None,
+        style: None,
+        insert: None,
+    };
+
+    let error = operation
+        .apply(&mut package, &target)
+        .expect_err("out-of-range width is invalid");
+
+    assert_eq!(error.code(), ErrorCode::InvalidBounds);
+    assert!(!package.dirty_parts().contains(&slide_part));
+    assert_eq!(
+        package
+            .parts()
+            .get(&slide_part)
+            .expect("slide still exists")
+            .bytes(),
+        slide_bytes.as_slice()
+    );
+}
 
 #[cfg(test)]
 #[test]

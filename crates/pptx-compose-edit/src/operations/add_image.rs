@@ -20,7 +20,7 @@ use pptx_compose_json::schemas::OperationTarget;
 
 use crate::{
     media_inputs::MediaInputs,
-    operations::ResolvedSlide,
+    operations::{ResolvedSlide, bounds::validate_bounds},
     patch::{AddImageOperation, Bounds, ImageDedupe, ImageFit, PatchEffects},
 };
 
@@ -175,16 +175,6 @@ impl AddImage {
             ..ErrorLocation::default()
         }
     }
-}
-
-fn validate_bounds(bounds: &Bounds) -> Result<()> {
-    if bounds.x < 0 || bounds.y < 0 || bounds.cx <= 0 || bounds.cy <= 0 {
-        return Err(Error::new(
-            ErrorCode::InvalidBounds,
-            "Bounds require x/y >= 0 and cx/cy > 0.",
-        ));
-    }
-    Ok(())
 }
 
 fn ensure_content_type(
@@ -624,6 +614,57 @@ use pptx_compose_core::opc::relationships::resolve_internal_target;
 
 #[cfg(test)]
 use crate::media_inputs::{MediaBinding, MediaSource};
+
+#[cfg(test)]
+#[test]
+fn rejects_bounds_above_emu_max_without_writing() {
+    let slide_part = test_part("ppt/slides/slide1.xml");
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", slide_xml().as_bytes().to_vec())
+        .expect("slide inserted");
+    let operation = AddImage {
+        operation_id: "op-bounds".to_owned(),
+        slide_id: "slide-1".to_owned(),
+        media_ref: "hero".to_owned(),
+        content_type: "image/png".to_owned(),
+        bounds: Bounds {
+            x: 0,
+            y: 0,
+            cx: crate::operations::bounds::MAX_EMU_COORDINATE + 1,
+            cy: 1,
+        },
+        name: None,
+        alt_text: None,
+        fit: ImageFit::Stretch,
+        dedupe: ImageDedupe::Never,
+    };
+    let target = ResolvedSlide {
+        slide_id: "slide-1".to_owned(),
+        part: slide_part.clone(),
+    };
+
+    let error = operation
+        .apply(&mut package, &target, &media_inputs())
+        .expect_err("out-of-range width is invalid");
+
+    assert_eq!(error.code(), ErrorCode::InvalidBounds);
+    assert!(!package.dirty_parts().contains(&slide_part));
+    assert!(
+        package
+            .parts()
+            .get(&test_part("ppt/media/image1.png"))
+            .is_none()
+    );
+    assert_eq!(
+        package
+            .parts()
+            .get(&slide_part)
+            .expect("slide still exists")
+            .bytes(),
+        slide_xml().as_bytes()
+    );
+}
 
 #[cfg(test)]
 #[test]
