@@ -130,6 +130,8 @@ pub struct TextView {
     pub normalized: String,
     pub paragraphs: Vec<Paragraph>,
     pub text_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<TruncationMarker>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -137,6 +139,8 @@ pub struct TextView {
 pub struct Paragraph {
     pub text: String,
     pub runs: Vec<Run>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<TruncationMarker>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -144,6 +148,16 @@ pub struct Paragraph {
 pub struct Run {
     pub text: String,
     pub style_summary: StyleSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<TruncationMarker>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TruncationMarker {
+    pub original_chars: u32,
+    pub shown_chars: u32,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

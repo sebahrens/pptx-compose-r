@@ -13,6 +13,7 @@ use pptx_compose_core::{
         picture::read_picture,
         presentation::PresentationDocument,
         shape::{Shape, ShapeKind, read_shape},
+        slide::Slide,
         text::read_text_body,
     },
     provenance::{
@@ -40,7 +41,7 @@ use super::{
     AgentView, Bounds, Capabilities, Editable, EditableSupport, ElementKind, ElementSelector,
     ElementView, FindTextResult, FindTextScope, ImageView, IntrinsicSizePx, Paragraph,
     PresentationView, Run, SelectorGuards, SlideView, StyleSummary, TextMatch, TextSpan, TextView,
-    XmlLocation,
+    TruncationMarker, XmlLocation,
     pagination::{CursorScope, ViewMeta, bounded_limit, cursor_offset, paginate},
 };
 use crate::{
@@ -52,6 +53,10 @@ use crate::{
 };
 
 pub type PptxPackage = PresentationDocument;
+
+const TEXT_PREVIEW_CHARS: usize = 4_096;
+const PARAGRAPH_PREVIEW_CHARS: usize = 1_024;
+const RUN_PREVIEW_CHARS: usize = 1_024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -125,13 +130,13 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
             ViewPayload::default(),
         ))?),
         ViewMode::SlidePage => {
-            let slides = scoped_slides(&context, &req.slide_ids)?;
-            let (page, meta, omitted_count) =
-                paginate(&slides, limit, req.cursor.as_deref(), scope)?;
-            let slides = page
-                .into_iter()
-                .map(|slide| slide.summary.clone())
-                .collect::<Vec<_>>();
+            let (slides, meta, omitted_count) = page_slide_summaries(
+                &context,
+                &req.slide_ids,
+                limit,
+                req.cursor.as_deref(),
+                scope,
+            )?;
             Ok(to_value(context.agent_view(
                 meta,
                 omitted_count,
@@ -144,12 +149,16 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
             let slide_id = req.slide_id.as_deref().ok_or_else(|| {
                 JsonError::Projection("slide_detail requires slide_id.".to_owned())
             })?;
-            let slide = context.slide(slide_id).ok_or_else(|| JsonError::NotFound {
-                kind: "slide",
-                id: slide_id.to_owned(),
-            })?;
+            let slide_ref = context
+                .slide_ref(slide_id)
+                .ok_or_else(|| JsonError::NotFound {
+                    kind: "slide",
+                    id: slide_id.to_owned(),
+                })?;
+            let mut media = BTreeMap::<String, ImageView>::new();
+            let slide = project_slide(context.pkg, slide_ref, &mut media)?;
             let (detail, meta, omitted_count) = paginate_slide_elements(
-                slide,
+                &slide,
                 &context.document_id,
                 context.revision,
                 mode,
@@ -169,26 +178,31 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
             let element_id = req.element_id.as_deref().ok_or_else(|| {
                 JsonError::Projection("element_detail requires element_id.".to_owned())
             })?;
-            let slide = context
-                .slides
-                .iter()
-                .find(|slide| {
-                    slide
-                        .detail
-                        .elements
-                        .iter()
-                        .any(|element| element.id == element_id)
-                })
-                .ok_or_else(|| JsonError::NotFound {
-                    kind: "element",
-                    id: element_id.to_owned(),
+            let slide_id = element_id
+                .split_once(':')
+                .map(|(slide_id, _)| slide_id)
+                .ok_or_else(|| {
+                    JsonError::Projection(
+                        "element_detail requires a slide-scoped element_id.".to_owned(),
+                    )
                 })?;
+            let slide_ref = context
+                .slide_ref(slide_id)
+                .ok_or_else(|| JsonError::NotFound {
+                    kind: "slide",
+                    id: slide_id.to_owned(),
+                })?;
+            let mut media = BTreeMap::<String, ImageView>::new();
+            let slide = project_slide(context.pkg, slide_ref, &mut media)?;
             let element = slide
                 .detail
                 .elements
                 .iter()
                 .find(|element| element.id == element_id)
-                .expect("slide lookup proved element exists")
+                .ok_or_else(|| JsonError::NotFound {
+                    kind: "element",
+                    id: element_id.to_owned(),
+                })?
                 .clone();
             let mut detail = slide.summary.clone();
             detail.elements = vec![element];
@@ -202,27 +216,29 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
         }
         ViewMode::MediaMetadata => {
             let (page, meta, omitted_count) =
-                paginate(&context.media, limit, req.cursor.as_deref(), scope)?;
+                project_media_page(&context, limit, req.cursor.as_deref(), scope)?;
             Ok(to_value(context.agent_view(
                 meta,
                 omitted_count,
                 Vec::new(),
                 scope_value(&req),
                 ViewPayload {
-                    media: page.into_iter().cloned().collect(),
+                    media: page,
                     ..ViewPayload::default()
                 },
             ))?)
         }
         ViewMode::ValidationReport => {
-            let (page, meta, omitted_count) = paginate(
-                &context.validation.findings,
-                limit,
-                req.cursor.as_deref(),
-                scope,
-            )?;
-            let mut validation = context.validation.clone();
-            validation.findings = page.into_iter().cloned().collect();
+            let validation = project_validation(
+                context.pkg.package(),
+                &context.document_id,
+                context.revision,
+            );
+            let (page, meta, omitted_count) =
+                paginate(&validation.findings, limit, req.cursor.as_deref(), scope)?;
+            let findings = page.into_iter().cloned().collect();
+            let mut validation = validation;
+            validation.findings = findings;
             Ok(to_value(context.agent_view(
                 meta,
                 omitted_count,
@@ -293,15 +309,13 @@ pub fn find_text(pkg: &PptxPackage, req: FindTextRequest) -> Result<FindTextResu
 }
 
 #[derive(Clone)]
-struct ViewContext {
+struct ViewContext<'a> {
+    pkg: &'a PptxPackage,
     document_id: String,
     revision: u32,
     presentation_part: String,
     slide_count: u32,
     capabilities: Capabilities,
-    slides: Vec<SlideProjection>,
-    media: Vec<ImageView>,
-    validation: ValidationReport,
 }
 
 #[derive(Clone)]
@@ -317,31 +331,29 @@ struct ViewPayload {
     validation: Option<ValidationReport>,
 }
 
-impl ViewContext {
-    fn new(pkg: &PptxPackage) -> Result<Self, JsonError> {
+impl<'a> ViewContext<'a> {
+    fn new(pkg: &'a PptxPackage) -> Result<Self, JsonError> {
         let document_id = package_document_id(pkg.package())?;
         let revision = u32::try_from(revision::on_open().value())
             .map_err(|err| JsonError::Projection(err.to_string()))?;
-        let mut media = BTreeMap::<String, ImageView>::new();
-        let slides = project_slides(pkg, &mut media)?;
         let slide_count = u32::try_from(pkg.slides().len())
             .map_err(|err| JsonError::Projection(err.to_string()))?;
-        let validation = project_validation(pkg.package(), &document_id, revision);
 
         Ok(Self {
+            pkg,
             document_id,
             revision,
             presentation_part: trim_part(pkg.presentation().part_name.as_str()),
             slide_count,
             capabilities: default_capabilities(),
-            slides,
-            media: media.into_values().collect(),
-            validation,
         })
     }
 
-    fn slide(&self, slide_id: &str) -> Option<&SlideProjection> {
-        self.slides.iter().find(|slide| slide.detail.id == slide_id)
+    fn slide_ref(&self, slide_id: &str) -> Option<&Slide> {
+        self.pkg
+            .slides()
+            .iter()
+            .find(|slide| slide.agent_id() == slide_id)
     }
 
     fn agent_view(
@@ -383,7 +395,9 @@ fn collect_text_matches(
     let mut matches = Vec::new();
     let mut seen = 0_u32;
     let stop_after = start.saturating_add(limit).saturating_add(1);
-    for slide in &context.slides {
+    for slide_ref in context.pkg.slides() {
+        let mut media = BTreeMap::<String, ImageView>::new();
+        let slide = project_slide(context.pkg, slide_ref, &mut media)?;
         if let FindTextScope::Slide { slide_id } = scope
             && slide.detail.id != *slide_id
         {
@@ -429,7 +443,7 @@ fn collect_text_matches(
     }
 
     if let FindTextScope::Slide { slide_id } = scope
-        && context.slide(slide_id).is_none()
+        && context.slide_ref(slide_id).is_none()
     {
         return Err(JsonError::NotFound {
             kind: "slide",
@@ -496,68 +510,136 @@ fn substring_by_char_span(text: &str, span: TextSpan) -> String {
         .collect()
 }
 
-fn project_slides(
+fn page_slide_summaries(
+    context: &ViewContext,
+    slide_ids: &[String],
+    limit: u32,
+    cursor: Option<&str>,
+    scope: CursorScope<'_>,
+) -> Result<(Vec<SlideView>, ViewMeta, u32), JsonError> {
+    let slide_refs = scoped_slide_refs(context, slide_ids)?;
+    let (page, meta, omitted_count) = paginate(&slide_refs, limit, cursor, scope)?;
+    let slides = page
+        .into_iter()
+        .map(|slide| project_slide_summary(context.pkg, slide))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((slides, meta, omitted_count))
+}
+
+fn project_media_page(
+    context: &ViewContext,
+    limit: u32,
+    cursor: Option<&str>,
+    scope: CursorScope<'_>,
+) -> Result<(Vec<ImageView>, ViewMeta, u32), JsonError> {
+    let start = cursor_offset(cursor, scope)?;
+    let stop_after = start.saturating_add(limit).saturating_add(1);
+    let mut media = BTreeMap::<String, ImageView>::new();
+
+    for slide in context.pkg.slides() {
+        if u32::try_from(media.len()).unwrap_or(u32::MAX) >= stop_after {
+            break;
+        }
+        project_slide(context.pkg, slide, &mut media)?;
+    }
+
+    let mut media = media.into_values().collect::<Vec<_>>();
+    let start_usize =
+        usize::try_from(start).map_err(|err| JsonError::InvalidCursor(err.to_string()))?;
+    if start_usize > media.len() {
+        return Err(JsonError::InvalidCursor(
+            "Cursor offset is outside the requested collection.".to_owned(),
+        ));
+    }
+    let limit_usize =
+        usize::try_from(limit).map_err(|err| JsonError::InvalidCursor(err.to_string()))?;
+    let truncated = media.len().saturating_sub(start_usize) > limit_usize;
+    if truncated {
+        media.truncate(start_usize.saturating_add(limit_usize));
+    }
+    let page = media[start_usize..].to_vec();
+    let next_cursor = if truncated {
+        Some(super::pagination::Cursor::encode(
+            start.saturating_add(limit),
+            scope,
+        )?)
+    } else {
+        None
+    };
+
+    Ok((
+        page,
+        ViewMeta {
+            mode: scope.mode.to_owned(),
+            limit,
+            next_cursor,
+            truncated,
+        },
+        u32::from(truncated),
+    ))
+}
+
+fn project_slide(
     pkg: &PptxPackage,
+    slide: &Slide,
     media: &mut BTreeMap<String, ImageView>,
-) -> Result<Vec<SlideProjection>, JsonError> {
-    let mut slides = Vec::new();
-    for slide in pkg.slides() {
-        let part = pkg.package().parts().get(&slide.part_name).ok_or_else(|| {
-            JsonError::Projection(format!("Slide part {} is missing.", slide.part_name))
-        })?;
-        let document = parse_document(part.bytes()).map_err(core_error)?;
-        let root = document.root_element().ok_or_else(|| {
-            JsonError::Projection(format!(
-                "Slide part {} has no root element.",
-                slide.part_name
-            ))
-        })?;
-        let sp_tree = first_descendant(root, "spTree").ok_or_else(|| {
-            JsonError::Projection(format!("Slide part {} has no p:spTree.", slide.part_name))
-        })?;
-        let rels = pkg
-            .package()
-            .relationships()
-            .set_for(&slide.part_name)
-            .cloned()
-            .unwrap_or_else(|| RelationshipSet {
-                source: slide.part_name.clone(),
-                rels: Vec::new(),
-            });
-        let mut elements = Vec::new();
-        collect_elements(
-            sp_tree,
-            &slide.agent_id(),
-            slide.part_name.clone(),
-            &rels,
-            pkg.package(),
-            &mut elements,
-            media,
-        )?;
-        let part_checksum = part_checksum(part.bytes());
-        let layout_part = slide
+) -> Result<SlideProjection, JsonError> {
+    let part = pkg.package().parts().get(&slide.part_name).ok_or_else(|| {
+        JsonError::Projection(format!("Slide part {} is missing.", slide.part_name))
+    })?;
+    let document = parse_document(part.bytes()).map_err(core_error)?;
+    let root = document.root_element().ok_or_else(|| {
+        JsonError::Projection(format!(
+            "Slide part {} has no root element.",
+            slide.part_name
+        ))
+    })?;
+    let sp_tree = first_descendant(root, "spTree").ok_or_else(|| {
+        JsonError::Projection(format!("Slide part {} has no p:spTree.", slide.part_name))
+    })?;
+    let rels = pkg
+        .package()
+        .relationships()
+        .set_for(&slide.part_name)
+        .cloned()
+        .unwrap_or_else(|| RelationshipSet {
+            source: slide.part_name.clone(),
+            rels: Vec::new(),
+        });
+    let mut elements = Vec::new();
+    collect_elements(
+        sp_tree,
+        &slide.agent_id(),
+        slide.part_name.clone(),
+        &rels,
+        pkg.package(),
+        &mut elements,
+        media,
+    )?;
+    let summary = project_slide_summary(pkg, slide)?;
+    let mut detail = summary.clone();
+    detail.elements = elements;
+    Ok(SlideProjection { summary, detail })
+}
+
+fn project_slide_summary(pkg: &PptxPackage, slide: &Slide) -> Result<SlideView, JsonError> {
+    let part = pkg.package().parts().get(&slide.part_name).ok_or_else(|| {
+        JsonError::Projection(format!("Slide part {} is missing.", slide.part_name))
+    })?;
+    Ok(SlideView {
+        id: slide.agent_id(),
+        index: slide.agent_index,
+        ppt_slide_id: Some(slide.id.value()),
+        part: trim_part(slide.part_name.as_str()),
+        relationship_id: presentation_relationship_id(pkg, &slide.part_name),
+        layout_part: slide
             .layout
             .as_ref()
             .map(|layout| trim_part(layout.part_name.as_str()))
-            .unwrap_or_default();
-        let base = SlideView {
-            id: slide.agent_id(),
-            index: slide.agent_index,
-            ppt_slide_id: Some(slide.id.value()),
-            part: trim_part(slide.part_name.as_str()),
-            relationship_id: presentation_relationship_id(pkg, &slide.part_name),
-            layout_part,
-            part_checksum,
-            elements: Vec::new(),
-        };
-        let mut detail = base.clone();
-        detail.elements = elements;
-        slides.push(SlideProjection {
-            summary: base,
-            detail,
-        });
-    }
-    Ok(slides)
+            .unwrap_or_default(),
+        part_checksum: part_checksum(part.bytes()),
+        elements: Vec::new(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -725,35 +807,92 @@ fn project_element(
 
 fn project_text(tx_body: &XmlElement) -> TextView {
     let body = read_text_body(tx_body);
+    let text_hash = text_hash::text_hash(&body.normalized);
+    let plain = truncate_text(
+        body.plain,
+        TEXT_PREVIEW_CHARS,
+        "Use element_detail for this element to inspect text context.",
+    );
+    let normalized = truncate_text(
+        body.normalized,
+        TEXT_PREVIEW_CHARS,
+        "Use element_detail for this element to inspect normalized text context.",
+    );
+    let truncation = merge_truncation(&plain.1, &normalized.1);
     let paragraphs = body
         .paragraphs
         .into_iter()
-        .map(|paragraph| Paragraph {
-            text: paragraph.runs.iter().map(|run| run.text.as_str()).collect(),
-            runs: paragraph
-                .runs
-                .into_iter()
-                .map(|run| Run {
-                    text: run.text,
-                    style_summary: StyleSummary {
-                        font_size_pt: run.style_summary.font_size_pt,
-                        bold: run.style_summary.bold,
-                        italic: run.style_summary.italic,
-                        underline: run.style_summary.underline,
-                        font_color_rgb: run.style_summary.font_color_rgb,
-                        latin_typeface: run.style_summary.latin_typeface,
-                        language: run.style_summary.language,
-                    },
-                })
-                .collect(),
+        .map(|paragraph| {
+            let paragraph_text = truncate_text(
+                paragraph.runs.iter().map(|run| run.text.as_str()).collect(),
+                PARAGRAPH_PREVIEW_CHARS,
+                "Use element_detail for this element to inspect the full paragraph text.",
+            );
+            Paragraph {
+                text: paragraph_text.0,
+                runs: paragraph
+                    .runs
+                    .into_iter()
+                    .map(|run| {
+                        let run_text = truncate_text(
+                            run.text,
+                            RUN_PREVIEW_CHARS,
+                            "Use element_detail for this element to inspect the full run text.",
+                        );
+                        Run {
+                            text: run_text.0,
+                            style_summary: StyleSummary {
+                                font_size_pt: run.style_summary.font_size_pt,
+                                bold: run.style_summary.bold,
+                                italic: run.style_summary.italic,
+                                underline: run.style_summary.underline,
+                                font_color_rgb: run.style_summary.font_color_rgb,
+                                latin_typeface: run.style_summary.latin_typeface,
+                                language: run.style_summary.language,
+                            },
+                            truncation: run_text.1,
+                        }
+                    })
+                    .collect(),
+                truncation: paragraph_text.1,
+            }
         })
         .collect();
     TextView {
-        plain: body.plain,
-        normalized: body.normalized.clone(),
+        plain: plain.0,
+        normalized: normalized.0,
         paragraphs,
-        text_hash: text_hash::text_hash(&body.normalized),
+        text_hash,
+        truncation,
     }
+}
+
+fn truncate_text(
+    text: String,
+    limit: usize,
+    detail: &'static str,
+) -> (String, Option<TruncationMarker>) {
+    let original_chars = text.chars().count();
+    if original_chars <= limit {
+        return (text, None);
+    }
+
+    let truncated = text.chars().take(limit).collect::<String>();
+    (
+        truncated,
+        Some(TruncationMarker {
+            original_chars: u32::try_from(original_chars).unwrap_or(u32::MAX),
+            shown_chars: u32::try_from(limit).unwrap_or(u32::MAX),
+            detail: detail.to_owned(),
+        }),
+    )
+}
+
+fn merge_truncation(
+    plain: &Option<TruncationMarker>,
+    normalized: &Option<TruncationMarker>,
+) -> Option<TruncationMarker> {
+    plain.clone().or_else(|| normalized.clone())
 }
 
 fn project_validation(package: &Package, document_id: &str, revision: u32) -> ValidationReport {
@@ -914,20 +1053,22 @@ fn scope_value(req: &ViewRequest) -> Cpj {
     Cpj::Object(scope)
 }
 
-fn scoped_slides<'a>(
-    context: &'a ViewContext,
+fn scoped_slide_refs<'a>(
+    context: &'a ViewContext<'a>,
     slide_ids: &[String],
-) -> Result<Vec<&'a SlideProjection>, JsonError> {
+) -> Result<Vec<&'a Slide>, JsonError> {
     if slide_ids.is_empty() {
-        return Ok(context.slides.iter().collect());
+        return Ok(context.pkg.slides().iter().collect());
     }
 
     let mut slides = Vec::with_capacity(slide_ids.len());
     for slide_id in slide_ids {
-        let slide = context.slide(slide_id).ok_or_else(|| JsonError::NotFound {
-            kind: "slide",
-            id: slide_id.clone(),
-        })?;
+        let slide = context
+            .slide_ref(slide_id)
+            .ok_or_else(|| JsonError::NotFound {
+                kind: "slide",
+                id: slide_id.clone(),
+            })?;
         slides.push(slide);
     }
     Ok(slides)
@@ -1266,6 +1407,82 @@ fn slide_detail_paginates_elements_with_working_cursor() {
     )
     .expect_err("element cursor is scoped to its slide");
     assert!(matches!(err, JsonError::InvalidCursor(_)));
+}
+
+#[cfg(test)]
+#[test]
+fn summary_views_do_not_parse_slide_xml() {
+    let mut entries = from_bytes(include_bytes!("../../../../fixtures/minimal.pptx"))
+        .expect("fixture zip parses");
+    let slide = entries
+        .iter_mut()
+        .find(|entry| entry.name.as_str() == "/ppt/slides/slide1.xml")
+        .expect("fixture has slide1");
+    slide.bytes = b"<not-xml".to_vec();
+    let package = package_from_entries(&entries).expect("package hydrates without slide parsing");
+    let pkg = PresentationDocument::open(package).expect("presentation opens");
+
+    let deck_summary = build_view(
+        &pkg,
+        ViewRequest {
+            mode: ViewMode::DeckSummary,
+            slide_id: None,
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        },
+    )
+    .expect("deck summary does not parse slide XML");
+    assert_eq!(deck_summary["presentation"]["slide_count"], 1);
+
+    let slide_page = build_view(
+        &pkg,
+        ViewRequest {
+            mode: ViewMode::SlidePage,
+            slide_id: None,
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: Some(1),
+        },
+    )
+    .expect("slide page summary does not parse slide XML");
+    assert_eq!(slide_page["slides"].as_array().expect("slides").len(), 1);
+
+    let err = build_view(&pkg, request_for(&pkg, ViewMode::SlideDetail, None))
+        .expect_err("slide detail still parses its target slide");
+    assert!(matches!(err, JsonError::Projection(_)));
+}
+
+#[cfg(test)]
+#[test]
+fn long_text_payloads_are_truncated_with_markers() {
+    let long = "x".repeat(TEXT_PREVIEW_CHARS + 50);
+    let xml = format!("<txBody><p><r><t>{long}</t></r></p></txBody>");
+    let document = parse_document(xml.as_bytes()).expect("text body XML parses");
+    let text = project_text(document.root_element().expect("txBody root"));
+
+    assert_eq!(text.plain.chars().count(), TEXT_PREVIEW_CHARS);
+    let truncation = text.truncation.expect("text truncation marker");
+    assert_eq!(truncation.original_chars, (TEXT_PREVIEW_CHARS + 50) as u32);
+    assert_eq!(truncation.shown_chars, TEXT_PREVIEW_CHARS as u32);
+    assert_eq!(
+        text.paragraphs[0]
+            .truncation
+            .as_ref()
+            .expect("paragraph truncation")
+            .shown_chars,
+        PARAGRAPH_PREVIEW_CHARS as u32
+    );
+    assert_eq!(
+        text.paragraphs[0].runs[0]
+            .truncation
+            .as_ref()
+            .expect("run truncation")
+            .shown_chars,
+        RUN_PREVIEW_CHARS as u32
+    );
 }
 
 #[cfg(test)]
