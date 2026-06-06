@@ -5,7 +5,7 @@ use pptx_compose::{
     core::error::{Error, ErrorCode, ErrorLocation},
     edit::{
         diffs::{SEMANTIC_DIFF_SCHEMA, SEMANTIC_DIFF_VERSION, SemanticDiff},
-        media_inputs::MediaInputs,
+        media_inputs::{MediaInputs, MediaManifest},
         patch::{Patch, parse_patch},
     },
 };
@@ -31,12 +31,13 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
     }
 
     let patch = read_patch(&patch)?;
+    let media_inputs = read_media_inputs(args.media_manifest.as_deref())?;
     let mut document = PresentationDocument::open_path(&input).map_err(CliError::from_error)?;
     if args.dry_run {
         let report = document
             .apply_patch_with_options(
                 patch,
-                MediaInputs::default(),
+                media_inputs,
                 ApplyPatchOptions {
                     dry_run: true,
                     validate: true,
@@ -64,7 +65,7 @@ pub(crate) fn apply(args: ApplyArgs, permissions: &PermissionContext) -> Result<
     let apply_report = document
         .apply_patch_with_options(
             patch,
-            MediaInputs::default(),
+            media_inputs,
             ApplyPatchOptions {
                 dry_run: false,
                 validate: true,
@@ -97,6 +98,28 @@ fn read_patch(path: &Path) -> Result<Patch, CliError> {
     })?;
     reject_known_unsupported_operations(&value).map_err(CliError::from_error)?;
     parse_patch(value).map_err(apply_error)
+}
+
+fn read_media_inputs(path: Option<&Path>) -> Result<MediaInputs, CliError> {
+    let Some(path) = path else {
+        return Ok(MediaInputs::default());
+    };
+    let bytes = fs::read(path).map_err(|source| {
+        CliError::invalid_input_with_source(
+            InvalidInputCause::CliArgument,
+            "Could not read media manifest JSON input.",
+            source,
+        )
+    })?;
+    let manifest = serde_json::from_slice::<MediaManifest>(&bytes).map_err(|source| {
+        CliError::invalid_input_with_source(
+            InvalidInputCause::CliArgument,
+            "Media manifest input is not valid JSON.",
+            source,
+        )
+    })?;
+    let media_root = path.parent().unwrap_or_else(|| Path::new("."));
+    MediaInputs::from_manifest(&manifest, media_root).map_err(CliError::from_error)
 }
 
 fn reject_known_unsupported_operations(patch: &serde_json::Value) -> Result<(), Error> {
@@ -229,10 +252,25 @@ fn replace_text_writes_mutated_output() {
 }
 
 #[cfg(test)]
+#[test]
+fn dry_run_add_image_uses_media_manifest() {
+    test_support::dry_run_add_image_uses_media_manifest();
+}
+
+#[cfg(test)]
+#[test]
+fn media_manifest_mismatches_return_structured_errors() {
+    test_support::media_manifest_mismatches_return_structured_errors();
+}
+
+#[cfg(test)]
 mod test_support {
     use std::{fs, io::Cursor, io::Write, path::Path};
 
-    use pptx_compose::{PresentationDocument, WriteMode, core::zip::reader::from_bytes};
+    use pptx_compose::{
+        PresentationDocument, WriteMode,
+        core::{error::ErrorCode, provenance::checksum::part_checksum, zip::reader::from_bytes},
+    };
     use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
     use super::{apply, write_options_from_args};
@@ -366,6 +404,110 @@ mod test_support {
         fs::remove_dir_all(root).expect("test dir removes");
     }
 
+    pub(super) fn dry_run_add_image_uses_media_manifest() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let manifest = root.join("media.json");
+        let assets = root.join("assets");
+        let image = assets.join("hero.png");
+        let output = root.join("output.pptx");
+        let report = root.join("report.json");
+        fs::create_dir_all(&assets).expect("asset dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&image, png_bytes()).expect("image writes");
+        fs::write(&patch, add_image_patch(&input_bytes)).expect("patch fixture writes");
+        fs::write(
+            &manifest,
+            media_manifest(
+                "assets/hero.png",
+                "image/png",
+                Some(part_checksum(png_bytes())),
+                None,
+            ),
+        )
+        .expect("manifest writes");
+
+        let mut args = args(&input, &patch, &output, false, false);
+        args.dry_run = true;
+        args.output = None;
+        args.report = Some(report.clone());
+        args.media_manifest = Some(manifest);
+
+        apply(args, &permissions(&root)).expect("dry-run add_image uses manifest media");
+
+        let report_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report).expect("report reads"))
+                .expect("report is JSON");
+        assert_eq!(report_json["status"], "dry_run_success");
+        assert!(!output.exists(), "dry-run must not create a PPTX output");
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn media_manifest_mismatches_return_structured_errors() {
+        let cases = [
+            (
+                "sha",
+                media_manifest(
+                    "assets/hero.png",
+                    "image/png",
+                    Some(
+                        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                            .to_owned(),
+                    ),
+                    None,
+                ),
+                ErrorCode::MediaChecksumMismatch,
+            ),
+            (
+                "content_type",
+                media_manifest("assets/hero.png", "image/jpeg", None, None),
+                ErrorCode::UnsupportedMediaType,
+            ),
+            (
+                "byte_length",
+                media_manifest("assets/hero.png", "image/png", None, Some(1)),
+                ErrorCode::InvalidInput,
+            ),
+        ];
+
+        for (name, manifest_json, expected_code) in cases {
+            let root = unique_dir();
+            let input = root.join("input.pptx");
+            let patch = root.join("patch.json");
+            let manifest = root.join("media.json");
+            let assets = root.join("assets");
+            let image = assets.join("hero.png");
+            let output = root.join("output.pptx");
+            fs::create_dir_all(&assets).expect("asset dir creates");
+            let input_bytes = text_deck();
+            fs::write(&input, &input_bytes).expect("input fixture writes");
+            fs::write(&image, png_bytes()).expect("image writes");
+            fs::write(&patch, add_image_patch(&input_bytes)).expect("patch fixture writes");
+            fs::write(&manifest, manifest_json).expect("manifest writes");
+
+            let mut args = args(&input, &patch, &output, false, false);
+            args.dry_run = true;
+            args.output = None;
+            args.media_manifest = Some(manifest);
+
+            let err = match apply(args, &permissions(&root)) {
+                Ok(()) => panic!("{name} mismatch must fail"),
+                Err(error) => error,
+            };
+            assert_eq!(err.code(), expected_code, "{name} mismatch");
+            assert_ne!(
+                err.code(),
+                ErrorCode::MissingMediaRef,
+                "{name} mismatch should prove manifest binding was used"
+            );
+
+            fs::remove_dir_all(root).expect("test dir removes");
+        }
+    }
+
     fn args(
         input: &Path,
         patch: &Path,
@@ -437,6 +579,63 @@ mod test_support {
         }}"#
         )
         .into_bytes()
+    }
+
+    fn add_image_patch(bytes: &[u8]) -> Vec<u8> {
+        let document_id = PresentationDocument::from_bytes(bytes)
+            .expect("fixture opens")
+            .validate()
+            .expect("fixture validates")
+            .document_id;
+        format!(
+            r#"{{
+            "schema": "pptx-compose.patch.v1",
+            "version": 1,
+            "document_id": "{document_id}",
+            "base_revision": 1,
+            "client_request_id": "apply-test-add-image",
+            "operations": [{{
+                "operation_id": "add-hero",
+                "op": "add_image",
+                "slide_id": "slide-1",
+                "media_ref": "hero",
+                "content_type": "image/png",
+                "bounds": {{ "x": 914400, "y": 914400, "cx": 1828800, "cy": 914400 }}
+            }}]
+        }}"#
+        )
+        .into_bytes()
+    }
+
+    fn media_manifest(
+        path: &str,
+        content_type: &str,
+        sha256: Option<String>,
+        byte_length: Option<u64>,
+    ) -> Vec<u8> {
+        let sha256 = sha256
+            .map(|value| format!(r#", "sha256": "{value}""#))
+            .unwrap_or_default();
+        let byte_length = byte_length
+            .map(|value| format!(r#", "byte_length": {value}"#))
+            .unwrap_or_default();
+        format!(
+            r#"{{
+            "schema": "pptx-compose.media_manifest.v1",
+            "version": 1,
+            "media": {{
+                "hero": {{
+                    "path": "{path}",
+                    "content_type": "{content_type}"{sha256}{byte_length}
+                }}
+            }}
+        }}"#
+        )
+        .into_bytes()
+    }
+
+    fn png_bytes() -> &'static [u8] {
+        b"\x89PNG\r\n\x1a\npptx-compose-test-image"
     }
 
     fn text_deck() -> Vec<u8> {
