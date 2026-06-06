@@ -211,10 +211,21 @@ fn add_slide_relationship(
     target_value: &str,
     media_part: &PartName,
 ) -> Result<String> {
-    let rel_id = package
-        .relationships()
-        .set_for(slide_part)
-        .map_or_else(|| "rId1".to_owned(), RelationshipSet::allocate_id);
+    let rels_part = rels_part_name_for(slide_part)?;
+    let mut existing_document = if let Some(part) = package.parts().get(&rels_part) {
+        Some(parse_document(part.bytes())?)
+    } else {
+        None
+    };
+    let rel_id = existing_document.as_ref().map_or_else(
+        || {
+            Ok(package
+                .relationships()
+                .set_for(slide_part)
+                .map_or_else(|| "rId1".to_owned(), RelationshipSet::allocate_id))
+        },
+        allocate_relationship_id,
+    )?;
     let relationship = Relationship {
         source: RelationshipSource::Part(slide_part.clone()),
         id: rel_id.clone(),
@@ -226,12 +237,13 @@ fn add_slide_relationship(
     };
     package.push_relationship(relationship);
 
-    let rels_part = rels_part_name_for(slide_part)?;
     if let Some(part) = package.parts_mut().get_mut(&rels_part) {
-        let mut document = parse_document(part.bytes())?;
-        append_relationship(&mut document, &rel_id, target_value)?;
+        let document = existing_document.as_mut().ok_or_else(|| {
+            Error::unsupported_package(format!("Relationship part {rels_part} disappeared."))
+        })?;
+        append_relationship(document, &rel_id, target_value)?;
         *part.bytes_mut() = write_document(
-            &document,
+            document,
             &WriteOptions {
                 mode: WriteMode::Preserve,
             },
@@ -250,6 +262,38 @@ fn add_slide_relationship(
     }
 
     Ok(rel_id)
+}
+
+fn allocate_relationship_id(document: &XmlDocument) -> Result<String> {
+    let root = document.root_element().ok_or_else(|| {
+        Error::malformed_xml("Relationship part does not contain a root element.")
+    })?;
+    if root.name.local_name != "Relationships" {
+        return Err(Error::unsupported_package(
+            "Relationship part root element is not Relationships.",
+        ));
+    }
+    let relationships = root
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .filter(|element| element.name.local_name == "Relationship")
+        .filter_map(|element| attr(element, "Id"))
+        .map(|id| Relationship {
+            source: RelationshipSource::Package,
+            id: id.to_owned(),
+            rel_type: String::new(),
+            target: String::new(),
+            mode: TargetMode::Internal,
+            target_mode: TargetMode::Internal,
+            resolved_target: None,
+        })
+        .collect();
+    Ok(RelationshipSet {
+        source: PartName::from_zip_entry("_rels/.rels")?,
+        rels: relationships,
+    }
+    .allocate_id())
 }
 
 fn append_relationship(document: &mut XmlDocument, rel_id: &str, target_value: &str) -> Result<()> {
@@ -821,6 +865,118 @@ fn wires_part_rel_ctype() {
         .validate(&media_inputs())
         .expect_err("missing media_ref is rejected");
     assert_eq!(error.code(), ErrorCode::MissingMediaRef);
+}
+
+#[cfg(test)]
+#[test]
+fn add_image_allocates_from_existing_rels_xml_without_graph_set() {
+    let slide_part = test_part("ppt/slides/slide1.xml");
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", slide_xml().as_bytes().to_vec())
+        .expect("slide inserted");
+    package
+        .insert_zip_entry(
+            "ppt/slides/_rels/slide1.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>"#
+                .as_bytes()
+                .to_vec(),
+        )
+        .expect("rels inserted");
+
+    let operation = AddImage {
+        operation_id: "op-existing-rels".to_owned(),
+        slide_id: "slide-1".to_owned(),
+        media_ref: "hero".to_owned(),
+        content_type: "image/png".to_owned(),
+        bounds: Bounds {
+            x: 10,
+            y: 20,
+            cx: 300,
+            cy: 400,
+        },
+        name: Some("Hero".to_owned()),
+        alt_text: Some("Hero image".to_owned()),
+        fit: ImageFit::Stretch,
+        dedupe: ImageDedupe::Never,
+    };
+    let target = ResolvedSlide {
+        slide_id: "slide-1".to_owned(),
+        part: slide_part.clone(),
+    };
+
+    let effects = operation
+        .apply(&mut package, &target, &media_inputs())
+        .expect("image is added without colliding with existing XML rel id");
+
+    let media_part = test_part("ppt/media/image1.png");
+    let relationship = package
+        .relationships()
+        .set_for(&slide_part)
+        .and_then(|set| set.get("rId2"))
+        .expect("new relationship uses the next XML relationship id");
+    assert_eq!(relationship.rel_type, IMAGE_REL_TYPE);
+    assert_eq!(
+        relationship
+            .resolved_target
+            .as_ref()
+            .expect("resolved target"),
+        &media_part
+    );
+
+    let rels_xml = String::from_utf8(
+        package
+            .parts()
+            .get(&test_part("ppt/slides/_rels/slide1.xml.rels"))
+            .expect("rels exists")
+            .bytes()
+            .to_vec(),
+    )
+    .expect("rels XML UTF-8");
+    assert_eq!(rels_xml.matches(r#"Id="rId1""#).count(), 1);
+    assert_eq!(rels_xml.matches(r#"Id="rId2""#).count(), 1);
+
+    let slide_xml = String::from_utf8(
+        package
+            .parts()
+            .get(&slide_part)
+            .expect("slide exists")
+            .bytes()
+            .to_vec(),
+    )
+    .expect("slide XML UTF-8");
+    assert!(slide_xml.contains(r#"<a:blip r:embed="rId2"/>"#));
+
+    let presentation_part = test_part("ppt/presentation.xml");
+    package
+        .insert_zip_entry(
+            "ppt/presentation.xml",
+            br#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rSlide"/></p:sldIdLst></p:presentation>"#.to_vec(),
+        )
+        .expect("presentation inserted");
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlide",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
+        "slides/slide1.xml",
+    ));
+    let document =
+        pptx_compose_core::pptx::presentation::PresentationDocument::open(package.clone())
+            .expect("mutated package opens");
+    resolve(
+        &document,
+        &Selector::ElementId {
+            id: effects.created_element_ids[0].clone(),
+            guards: None,
+        },
+    )
+    .expect("created image element id resolves");
 }
 
 #[cfg(test)]
