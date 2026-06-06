@@ -11,5 +11,5 @@ name = "pptx-compose"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
 pptx-compose = { path = "../pptx-compose" }
-
