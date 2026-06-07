@@ -226,6 +226,62 @@ fn media_list_and_get_extract_sanitized_package_media() {
     fs::remove_dir_all(root).expect("test dir removes");
 }
 
+#[test]
+fn binary_output_dash_is_rejected_without_creating_dash_file() {
+    let root = unique_dir();
+    let minimal = root.join("minimal.pptx");
+    let sample = root.join("sample.pptx");
+    let patch = root.join("noop.patch.json");
+    fs::write(
+        &minimal,
+        fs::read(repo_root().join("fixtures/minimal.pptx")).expect("fixture reads"),
+    )
+    .expect("minimal fixture writes");
+    fs::write(
+        &sample,
+        fs::read(repo_root().join("fixtures/legacy/sample.pptx")).expect("fixture reads"),
+    )
+    .expect("sample fixture writes");
+    fs::write(&patch, valid_noop_patch()).expect("patch fixture writes");
+
+    let apply = run_cli_raw_owned_in_dir(
+        vec![
+            "--json-errors".to_owned(),
+            "apply".to_owned(),
+            "minimal.pptx".to_owned(),
+            "noop.patch.json".to_owned(),
+            "--output".to_owned(),
+            "-".to_owned(),
+        ],
+        &root,
+    );
+    assert_invalid_input_error(&apply);
+    assert!(
+        !root.join("-").exists(),
+        "apply --output - must not create a literal '-' file"
+    );
+
+    let media = run_cli_raw_owned_in_dir(
+        vec![
+            "--json-errors".to_owned(),
+            "media".to_owned(),
+            "get".to_owned(),
+            "sample.pptx".to_owned(),
+            "ppt/media/image1.png".to_owned(),
+            "--output".to_owned(),
+            "-".to_owned(),
+        ],
+        &root,
+    );
+    assert_invalid_input_error(&media);
+    assert!(
+        !root.join("-").exists(),
+        "media get --output - must not create a literal '-' file"
+    );
+
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
 fn run_cli<const N: usize>(args: [&str; N]) -> std::process::Output {
     run_cli_owned(args.into_iter().map(str::to_owned).collect())
 }
@@ -241,8 +297,12 @@ fn run_cli_owned(args: Vec<String>) -> std::process::Output {
 }
 
 fn run_cli_raw_owned(args: Vec<String>) -> std::process::Output {
+    run_cli_raw_owned_in_dir(args, &repo_root())
+}
+
+fn run_cli_raw_owned_in_dir(args: Vec<String>, current_dir: &Path) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
-        .current_dir(repo_root())
+        .current_dir(current_dir)
         .args(args)
         .output()
         .expect("CLI process starts")
@@ -262,6 +322,18 @@ fn parse_stdout(output: &std::process::Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).expect("stdout parses as JSON")
 }
 
+fn assert_invalid_input_error(output: &std::process::Output) {
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr_text = String::from_utf8(output.stderr.clone()).expect("stderr is UTF-8");
+    assert_eq!(stderr_text.lines().count(), 1);
+    let envelope: serde_json::Value =
+        serde_json::from_str(&stderr_text).expect("stderr is one JSON document");
+    assert_eq!(envelope["schema"], "pptx-compose.error.v1");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "invalid_input");
+}
+
 fn assert_slide_ids(value: &serde_json::Value, expected: &[&str]) {
     let actual = value["slides"]
         .as_array()
@@ -279,6 +351,17 @@ fn media_bytes(path: &Path, package_path: &str) -> Vec<u8> {
     let mut bytes = Vec::new();
     std::io::Read::read_to_end(&mut entry, &mut bytes).expect("media bytes read");
     bytes
+}
+
+fn valid_noop_patch() -> &'static [u8] {
+    br#"{
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": "sha256:5aec353488af9781b58006c600039722d5f3a6bb1f0c4d8667f8f98a03e33e2e",
+        "base_revision": 1,
+        "client_request_id": "read-surface-noop",
+        "operations": []
+    }"#
 }
 
 fn fixture_str(path: &Path) -> &str {

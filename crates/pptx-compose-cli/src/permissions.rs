@@ -5,7 +5,7 @@ use std::{
 
 use pptx_compose::core::error::ErrorCode;
 
-use crate::{CliError, cli::GlobalArgs};
+use crate::{CliError, InvalidInputCause, cli::GlobalArgs};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PermissionContext {
@@ -80,8 +80,14 @@ impl PermissionContext {
         path: &Path,
         intent: PathIntent,
     ) -> Result<PathBuf, CliError> {
-        if intent.allows_stdio() && path == Path::new("-") {
-            return Ok(PathBuf::from("-"));
+        if path == Path::new("-") {
+            if intent.allows_stdio() {
+                return Ok(PathBuf::from("-"));
+            }
+            return Err(CliError::invalid_input(
+                InvalidInputCause::CliArgument,
+                format!("{} path does not support stdout/stdin '-'.", intent.label()),
+            ));
         }
 
         let candidate = self.anchor_path(path)?;
@@ -188,7 +194,7 @@ impl PathIntent {
     const fn allows_stdio(self) -> bool {
         matches!(
             self,
-            Self::ReportOutput | Self::DiffOutput | Self::OutputPptx | Self::LegacyJsonOutput
+            Self::ReportOutput | Self::DiffOutput | Self::LegacyJsonOutput
         )
     }
 }
@@ -304,6 +310,24 @@ fn rejects_escape_and_cleans_temp() {
         err.code(),
         ErrorCode::PermissionDenied | ErrorCode::UnsafePath
     ));
+
+    let err = ctx
+        .authorize_write(Path::new("-"), PathIntent::OutputPptx)
+        .expect_err("binary output must not authorize stdout");
+    assert_eq!(err.code(), ErrorCode::InvalidInput);
+    assert_eq!(
+        err.invalid_input_cause(),
+        Some(crate::InvalidInputCause::CliArgument)
+    );
+    assert!(
+        !workspace.join("-").exists(),
+        "rejecting stdout must not create a literal '-' file"
+    );
+    assert_eq!(
+        ctx.authorize_write(Path::new("-"), PathIntent::ReportOutput)
+            .expect("JSON report stdout remains authorized"),
+        PathBuf::from("-")
+    );
 
     let partial = temp_dir.join("partial.pptx.tmp");
     fs::write(&partial, b"partial").expect("partial temp fixture");
