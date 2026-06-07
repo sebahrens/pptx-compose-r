@@ -11,7 +11,7 @@ use std::{
 fn inspect_and_validate_emit_json_documents() {
     let fixture = repo_root().join("fixtures/legacy/sample.pptx");
 
-    let inspect = run_cli(["inspect", fixture_str(&fixture), "--format", "agent-json"]);
+    let inspect = run_cli(["inspect", fixture_str(&fixture)]);
     let inspect_json = parse_stdout(&inspect);
     assert_eq!(inspect_json["schema"], "pptx-compose.agent_view.v1");
     assert_eq!(inspect_json["version"], 1);
@@ -191,8 +191,6 @@ fn inspect_slides_accepts_single_range_and_list_scopes() {
     let single = parse_stdout(&run_cli_owned(vec![
         "inspect".to_owned(),
         deck.to_string_lossy().into_owned(),
-        "--format".to_owned(),
-        "agent-json".to_owned(),
         "--slides".to_owned(),
         "2".to_owned(),
     ]));
@@ -202,8 +200,6 @@ fn inspect_slides_accepts_single_range_and_list_scopes() {
     let canonical_single = parse_stdout(&run_cli_owned(vec![
         "inspect".to_owned(),
         deck.to_string_lossy().into_owned(),
-        "--format".to_owned(),
-        "agent-json".to_owned(),
         "--slides".to_owned(),
         "slide-2".to_owned(),
     ]));
@@ -214,8 +210,6 @@ fn inspect_slides_accepts_single_range_and_list_scopes() {
     let range = parse_stdout(&run_cli_owned(vec![
         "inspect".to_owned(),
         deck.to_string_lossy().into_owned(),
-        "--format".to_owned(),
-        "agent-json".to_owned(),
         "--slides".to_owned(),
         "1-2".to_owned(),
         "--detail".to_owned(),
@@ -227,8 +221,6 @@ fn inspect_slides_accepts_single_range_and_list_scopes() {
     let list = parse_stdout(&run_cli_owned(vec![
         "inspect".to_owned(),
         deck.to_string_lossy().into_owned(),
-        "--format".to_owned(),
-        "agent-json".to_owned(),
         "--slides".to_owned(),
         "1,3".to_owned(),
     ]));
@@ -247,8 +239,6 @@ fn inspect_full_whole_deck_matches_union_of_scoped_slides() {
     let whole = parse_stdout(&run_cli_owned(vec![
         "inspect".to_owned(),
         deck.to_string_lossy().into_owned(),
-        "--format".to_owned(),
-        "agent-json".to_owned(),
         "--detail".to_owned(),
         "full".to_owned(),
     ]));
@@ -262,8 +252,6 @@ fn inspect_full_whole_deck_matches_union_of_scoped_slides() {
         let scoped = parse_stdout(&run_cli_owned(vec![
             "inspect".to_owned(),
             deck.to_string_lossy().into_owned(),
-            "--format".to_owned(),
-            "agent-json".to_owned(),
             "--detail".to_owned(),
             "full".to_owned(),
             "--slides".to_owned(),
@@ -295,8 +283,6 @@ fn inspect_output_refuses_existing_file_without_overwrite() {
     let output = run_cli_raw_owned(vec![
         "inspect".to_owned(),
         fixture_str(&fixture).to_owned(),
-        "--format".to_owned(),
-        "agent-json".to_owned(),
         "--output".to_owned(),
         output_path.to_string_lossy().into_owned(),
     ]);

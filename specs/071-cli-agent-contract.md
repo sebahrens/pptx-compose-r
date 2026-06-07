@@ -105,7 +105,7 @@ The numeric limit values are implementation defaults. Each `schemas[].name` adve
 ### `inspect`
 
 ```bash
-pptx-compose inspect INPUT.pptx --format agent-json --output deck.view.json --report inspect.report.json
+pptx-compose inspect INPUT.pptx --output deck.view.json --report inspect.report.json
 pptx-compose inspect INPUT.pptx --slides 1-5 --detail summary --output - --json-errors
 ```
 

@@ -29,7 +29,6 @@ fn global_compressed_limit_changes_inspect_open_limit() {
             "inspect",
         ])
         .arg(&input)
-        .args(["--format", "agent-json"])
         .output()
         .expect("pptx-compose should run");
 
@@ -46,7 +45,6 @@ fn global_uncompressed_limit_changes_open_limit() {
     let output_result = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
         .args(["--json-errors", "--max-uncompressed-bytes", "10", "inspect"])
         .arg(&input)
-        .args(["--format", "agent-json"])
         .output()
         .expect("pptx-compose should run");
 
@@ -67,7 +65,6 @@ fn global_part_count_limit_changes_open_limit() {
     let output_result = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
         .args(["--json-errors", "--max-part-count", "1", "inspect"])
         .arg(&input)
-        .args(["--format", "agent-json"])
         .output()
         .expect("pptx-compose should run");
 
@@ -88,7 +85,6 @@ fn global_media_limit_changes_open_limit() {
     let output_result = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
         .args(["--json-errors", "--max-media-bytes", "5", "inspect"])
         .arg(&input)
-        .args(["--format", "agent-json"])
         .output()
         .expect("pptx-compose should run");
 

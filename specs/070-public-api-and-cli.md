@@ -76,7 +76,7 @@ This section is a **non-normative orientation only**. The normative, agent-facin
 The core agent commands (`inspect`, `validate`, `apply`/`apply --dry-run`, `media`, `schema`) are defined in 071.
 
 ```bash
-pptx-compose inspect input.pptx --format agent-json --output out.json
+pptx-compose inspect input.pptx --output out.json
 pptx-compose apply input.pptx patch.json --output output.pptx
 pptx-compose apply input.pptx patch.json --dry-run --report report.json
 pptx-compose validate input.pptx

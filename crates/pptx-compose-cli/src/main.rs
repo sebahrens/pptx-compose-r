@@ -382,13 +382,6 @@ fn schema_error(error: JsonError) -> CliError {
 }
 
 fn inspect_view_options(args: &cli::InspectArgs) -> Result<AgentViewOptions, CliError> {
-    if !matches!(args.format, None | Some(cli::InspectFormat::AgentJson)) {
-        return Err(CliError::invalid_input(
-            InvalidInputCause::CliArgument,
-            "inspect only supports --format agent-json.",
-        ));
-    }
-
     let mut options = AgentViewOptions::default();
     if matches!(args.detail, Some(cli::InspectDetail::Full)) {
         options.mode = ViewMode::SlidePage;

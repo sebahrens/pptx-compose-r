@@ -55,8 +55,6 @@ pub enum Commands {
 #[derive(Args, Debug, Eq, PartialEq)]
 pub struct InspectArgs {
     pub input: PathBuf,
-    #[arg(long, value_enum)]
-    pub format: Option<InspectFormat>,
     #[arg(long)]
     pub output: Option<PathBuf>,
     #[arg(long)]
@@ -75,11 +73,6 @@ pub struct InspectArgs {
     pub limit: Option<u32>,
     #[arg(long)]
     pub overwrite: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub enum InspectFormat {
-    AgentJson,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
