@@ -68,7 +68,7 @@ use pptx_compose_edit::{
     },
     patch::{
         ALL_OP_NAMES, DocumentState, Operation, OperationExecutor, PatchEffects,
-        ValidationFailedReport, validate_envelope,
+        ReplaceTextOperation, ValidationFailedReport, validate_envelope,
     },
     reports::has_blocking_findings,
     selectors::{self, Selector},
@@ -789,18 +789,6 @@ fn semantic_changes(operations: &[Operation], report: &PatchReport) -> Vec<DiffC
                     after: serde_json::json!({ "text": operation.text }),
                 })
             }
-            Operation::ReplaceNotesText(operation) => {
-                let operation_report = report
-                    .operation_reports
-                    .iter()
-                    .find(|report| report.operation_id == operation.operation_id)?;
-                Some(DiffChange::TextReplaced {
-                    operation_id: operation.operation_id.clone(),
-                    element_id: operation_report.target.element_id.clone(),
-                    before: serde_json::json!({ "text": operation.current_text_match }),
-                    after: serde_json::json!({ "text": operation.text }),
-                })
-            }
             _ => None,
         })
         .collect()
@@ -1320,32 +1308,7 @@ impl OperationExecutor for RealOperationExecutor<'_> {
     fn apply(&mut self, package: &mut Package, operation: &Operation) -> Result<PatchEffects> {
         let model = core_presentation::PresentationDocument::open(package.clone())?;
         match operation {
-            Operation::ReplaceText(operation) => {
-                let target = resolve_element(
-                    &model,
-                    operation.operation_id.as_str(),
-                    &operation.target_selector()?,
-                )?;
-                ReplaceText::from(operation).apply(package, &target)
-            }
-            Operation::ReplaceNotesText(operation) => {
-                let target = resolve_notes_slide(
-                    &model,
-                    operation.operation_id.as_str(),
-                    &operation.target_selector()?,
-                )?;
-                ReplaceNotesText::from(operation).apply(package, &target)
-            }
-            Operation::ReplaceTableCellText(operation) => {
-                let target = resolve_table_cell(
-                    &model,
-                    operation.operation_id.as_str(),
-                    &operation.target_selector()?,
-                    operation.cell.row,
-                    operation.cell.col,
-                )?;
-                ReplaceTableCellText::from(operation).apply(package, &target)
-            }
+            Operation::ReplaceText(operation) => apply_replace_text(package, &model, operation),
             Operation::AddTextBox(operation) => {
                 let target = resolve_slide(
                     &model,
@@ -1416,8 +1379,6 @@ fn operation_media_ref(operation: &Operation) -> Option<&str> {
         Operation::AddImage(operation) => Some(operation.media_ref.as_str()),
         Operation::ReplaceImage(operation) => Some(operation.media_ref.as_str()),
         Operation::ReplaceText(_)
-        | Operation::ReplaceNotesText(_)
-        | Operation::ReplaceTableCellText(_)
         | Operation::AddTextBox(_)
         | Operation::MoveResizeElement(_)
         | Operation::SetAltText(_)
@@ -1451,32 +1412,7 @@ fn validate_operation(
     media_inputs: &MediaInputs,
 ) -> Result<()> {
     match operation {
-        Operation::ReplaceText(operation) => {
-            let target = resolve_element(
-                model,
-                operation.operation_id.as_str(),
-                &operation.target_selector()?,
-            )?;
-            ReplaceText::from(operation).validate(package, &target)
-        }
-        Operation::ReplaceNotesText(operation) => {
-            let target = resolve_notes_slide(
-                model,
-                operation.operation_id.as_str(),
-                &operation.target_selector()?,
-            )?;
-            ReplaceNotesText::from(operation).validate(package, &target)
-        }
-        Operation::ReplaceTableCellText(operation) => {
-            let target = resolve_table_cell(
-                model,
-                operation.operation_id.as_str(),
-                &operation.target_selector()?,
-                operation.cell.row,
-                operation.cell.col,
-            )?;
-            ReplaceTableCellText::from(operation).validate(package, &target)
-        }
+        Operation::ReplaceText(operation) => validate_replace_text(package, model, operation),
         Operation::AddTextBox(operation) => {
             let _target = resolve_slide(
                 model,
@@ -1525,6 +1461,70 @@ fn validate_operation(
             )?;
             ReplaceImage::from(operation).validate(package, &target, media_inputs)
         }
+    }
+}
+
+fn validate_replace_text(
+    package: &Package,
+    model: &core_presentation::PresentationDocument,
+    operation: &ReplaceTextOperation,
+) -> Result<()> {
+    let selector = operation.target_selector()?;
+    match selector {
+        Selector::SlideId { .. } => {
+            let target = resolve_notes_slide(model, operation.operation_id.as_str(), &selector)?;
+            ReplaceNotesText::from(operation).validate(package, &target)
+        }
+        Selector::ElementId { .. } if let Some(cell) = operation.cell => {
+            let target = resolve_table_cell(
+                model,
+                operation.operation_id.as_str(),
+                &selector,
+                cell.row,
+                cell.col,
+            )?;
+            ReplaceTableCellText::from(operation).validate(package, &target)
+        }
+        Selector::ElementId { .. } => {
+            let target = resolve_element(model, operation.operation_id.as_str(), &selector)?;
+            ReplaceText::from(operation).validate(package, &target)
+        }
+        Selector::MediaPart { .. } | Selector::CoreProperties { .. } => Err(Error::new(
+            ErrorCode::InvalidInput,
+            "replace_text selector must have type `element_id` or `slide_id`.",
+        )),
+    }
+}
+
+fn apply_replace_text(
+    package: &mut Package,
+    model: &core_presentation::PresentationDocument,
+    operation: &ReplaceTextOperation,
+) -> Result<PatchEffects> {
+    let selector = operation.target_selector()?;
+    match selector {
+        Selector::SlideId { .. } => {
+            let target = resolve_notes_slide(model, operation.operation_id.as_str(), &selector)?;
+            ReplaceNotesText::from(operation).apply(package, &target)
+        }
+        Selector::ElementId { .. } if let Some(cell) = operation.cell => {
+            let target = resolve_table_cell(
+                model,
+                operation.operation_id.as_str(),
+                &selector,
+                cell.row,
+                cell.col,
+            )?;
+            ReplaceTableCellText::from(operation).apply(package, &target)
+        }
+        Selector::ElementId { .. } => {
+            let target = resolve_element(model, operation.operation_id.as_str(), &selector)?;
+            ReplaceText::from(operation).apply(package, &target)
+        }
+        Selector::MediaPart { .. } | Selector::CoreProperties { .. } => Err(Error::new(
+            ErrorCode::InvalidInput,
+            "replace_text selector must have type `element_id` or `slide_id`.",
+        )),
     }
 }
 

@@ -23,10 +23,8 @@ use crate::{
 
 pub const PATCH_SCHEMA: &str = "pptx-compose.patch.v1";
 pub const PATCH_VERSION: u32 = 1;
-pub const ALL_OP_NAMES: [&str; 9] = [
+pub const ALL_OP_NAMES: [&str; 7] = [
     "replace_text",
-    "replace_notes_text",
-    "replace_table_cell_text",
     "add_text_box",
     "move_resize_element",
     "set_alt_text",
@@ -65,8 +63,6 @@ pub struct Patch {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Operation {
     ReplaceText(ReplaceTextOperation),
-    ReplaceNotesText(ReplaceNotesTextOperation),
-    ReplaceTableCellText(ReplaceTableCellTextOperation),
     AddTextBox(AddTextBoxOperation),
     MoveResizeElement(MoveResizeElementOperation),
     SetAltText(SetAltTextOperation),
@@ -80,8 +76,6 @@ impl Operation {
     pub fn operation_id(&self) -> &str {
         match self {
             Self::ReplaceText(operation) => &operation.operation_id,
-            Self::ReplaceNotesText(operation) => &operation.operation_id,
-            Self::ReplaceTableCellText(operation) => &operation.operation_id,
             Self::AddTextBox(operation) => &operation.operation_id,
             Self::MoveResizeElement(operation) => &operation.operation_id,
             Self::SetAltText(operation) => &operation.operation_id,
@@ -95,8 +89,6 @@ impl Operation {
     pub const fn op_name(&self) -> &'static str {
         match self {
             Self::ReplaceText(_) => "replace_text",
-            Self::ReplaceNotesText(_) => "replace_notes_text",
-            Self::ReplaceTableCellText(_) => "replace_table_cell_text",
             Self::AddTextBox(_) => "add_text_box",
             Self::MoveResizeElement(_) => "move_resize_element",
             Self::SetAltText(_) => "set_alt_text",
@@ -109,13 +101,14 @@ impl Operation {
 
 impl ReplaceTextOperation {
     pub fn target_selector(&self) -> Result<Selector> {
-        element_target_selector(&self.operation_id, &self.element_id, self.selector.as_ref())
+        replace_text_target_selector(self)
     }
 
     #[must_use]
     pub fn run_selector(&self) -> Option<&RunSelector> {
-        match &self.selector {
-            Some(Selector::ElementId { run, .. }) => run.as_ref(),
+        match (&self.selector, &self.run) {
+            (Some(Selector::ElementId { run: Some(run), .. }), _) => Some(run),
+            (_, Some(run)) => Some(run),
             _ => None,
         }
     }
@@ -123,36 +116,11 @@ impl ReplaceTextOperation {
     #[must_use]
     pub fn target_element_id(&self) -> &str {
         target_element_id(&self.element_id, self.selector.as_ref()).unwrap_or(&self.element_id)
-    }
-}
-
-impl ReplaceNotesTextOperation {
-    pub fn target_selector(&self) -> Result<Selector> {
-        slide_target_selector(&self.operation_id, &self.slide_id, self.selector.as_ref())
     }
 
     #[must_use]
     pub fn target_slide_id(&self) -> &str {
         target_slide_id(&self.slide_id, self.selector.as_ref()).unwrap_or(&self.slide_id)
-    }
-}
-
-impl ReplaceTableCellTextOperation {
-    pub fn target_selector(&self) -> Result<Selector> {
-        element_target_selector(&self.operation_id, &self.element_id, self.selector.as_ref())
-    }
-
-    #[must_use]
-    pub fn run_selector(&self) -> Option<&RunSelector> {
-        match &self.selector {
-            Some(Selector::ElementId { run, .. }) => run.as_ref(),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn target_element_id(&self) -> &str {
-        target_element_id(&self.element_id, self.selector.as_ref()).unwrap_or(&self.element_id)
     }
 }
 
@@ -302,6 +270,62 @@ fn slide_target_selector(
     }
 }
 
+fn replace_text_target_selector(operation: &ReplaceTextOperation) -> Result<Selector> {
+    match operation.selector.as_ref() {
+        Some(Selector::ElementId { .. }) if operation.slide_id.is_empty() => {
+            element_target_selector(
+                &operation.operation_id,
+                &operation.element_id,
+                operation.selector.as_ref(),
+            )
+        }
+        Some(Selector::ElementId { .. }) => Err(selector_conflict(
+            &operation.operation_id,
+            target_element_id(&operation.element_id, operation.selector.as_ref()),
+            "replace_text cannot combine an element_id selector with slide_id shorthand.",
+        )),
+        Some(Selector::SlideId { .. })
+            if operation.element_id.is_empty() && operation.cell.is_none() =>
+        {
+            slide_target_selector(
+                &operation.operation_id,
+                &operation.slide_id,
+                operation.selector.as_ref(),
+            )
+        }
+        Some(Selector::SlideId { .. }) => Err(selector_conflict(
+            &operation.operation_id,
+            None,
+            "replace_text cannot combine a slide_id selector with element_id shorthand or cell.",
+        )),
+        Some(Selector::MediaPart { .. } | Selector::CoreProperties { .. }) => {
+            Err(selector_conflict(
+                &operation.operation_id,
+                target_element_id(&operation.element_id, operation.selector.as_ref()),
+                "replace_text selector must have type `element_id` or `slide_id`.",
+            ))
+        }
+        None if !operation.slide_id.is_empty() && !operation.element_id.is_empty() => {
+            Err(selector_conflict(
+                &operation.operation_id,
+                Some(&operation.element_id),
+                "replace_text must target either slide_id notes or element_id content, not both.",
+            ))
+        }
+        None if !operation.slide_id.is_empty() && operation.cell.is_some() => {
+            Err(selector_conflict(
+                &operation.operation_id,
+                None,
+                "replace_text cannot combine slide_id notes with cell.",
+            ))
+        }
+        None if !operation.slide_id.is_empty() => {
+            slide_target_selector(&operation.operation_id, &operation.slide_id, None)
+        }
+        None => element_target_selector(&operation.operation_id, &operation.element_id, None),
+    }
+}
+
 fn target_element_id<'a>(shorthand: &'a str, selector: Option<&'a Selector>) -> Option<&'a str> {
     if !shorthand.is_empty() {
         return Some(shorthand);
@@ -348,14 +372,24 @@ pub struct ReplaceTextOperation {
     pub operation_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[schemars(
-        description = "Target element shorthand. Either element_id or selector is required; when both are present, they must identify the same element."
+        description = "Target element shorthand for slide shape/table text. Exactly one target is required: element_id, slide_id, or selector."
     )]
     pub element_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(
+        description = "Target slide shorthand for speaker-notes text. Exactly one target is required: element_id, slide_id, or selector."
+    )]
+    pub slide_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Canonical target selector with optional guards. For replace_text this must be type element_id."
+        description = "Canonical target selector with optional guards. For replace_text this must be type element_id for slide content or slide_id for speaker notes."
     )]
     pub selector: Option<Selector>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Optional table-cell coordinate. When present, replace_text targets this cell within the selected table graphic-frame element."
+    )]
+    pub cell: Option<TableCellSelector>,
     pub text: String,
     #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
     pub current_text_match: Option<String>,
@@ -372,49 +406,14 @@ pub struct ReplaceTextOperation {
         description = "Optional run-property overrides accepted only when mode is run_scoped. Supports font_size_pt, bold, italic, color_hex, font_family, and paragraph-level align."
     )]
     pub run_style: Option<TextBoxStyle>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReplaceNotesTextOperation {
-    pub operation_id: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    #[schemars(
-        description = "Target slide shorthand. Either slide_id or selector is required; when both are present, they must identify the same slide."
-    )]
-    pub slide_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Canonical target selector with optional guards. For replace_notes_text this must be type slide_id."
+        description = "Run selector for speaker-notes or table-cell replacements. Element text may alternatively carry run selection inside selector.run."
     )]
-    pub selector: Option<Selector>,
-    pub text: String,
-    #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
-    pub current_text_match: Option<String>,
-    pub run: RunSelector,
+    pub run: Option<RunSelector>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReplaceTableCellTextOperation {
-    pub operation_id: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    #[schemars(
-        description = "Target table graphic-frame shorthand. Either element_id or selector is required; when both are present, they must identify the same element."
-    )]
-    pub element_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(
-        description = "Canonical target selector with optional guards. For replace_table_cell_text this must be type element_id."
-    )]
-    pub selector: Option<Selector>,
-    pub cell: TableCellSelector,
-    pub text: String,
-    #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
-    pub current_text_match: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TableCellSelector {
     pub row: u32,
@@ -1201,7 +1200,9 @@ fn all_op_names_matches_operation_variants() {
         Operation::ReplaceText(ReplaceTextOperation {
             operation_id: "op-1".to_owned(),
             element_id: "slide-1:shape-1".to_owned(),
+            slide_id: String::new(),
             selector: None,
+            cell: None,
             text: "updated".to_owned(),
             current_text_match: None,
             mode: None,
@@ -1209,30 +1210,10 @@ fn all_op_names_matches_operation_variants() {
             overflow_policy: None,
             allow_formatting_simplification: false,
             run_style: None,
-        }),
-        Operation::ReplaceNotesText(ReplaceNotesTextOperation {
-            operation_id: "op-2".to_owned(),
-            slide_id: "slide-1".to_owned(),
-            selector: None,
-            text: "updated".to_owned(),
-            current_text_match: None,
-            run: RunSelector {
-                paragraph_index: 0,
-                run_index: 0,
-                run_end_index: None,
-                text_hash: None,
-            },
-        }),
-        Operation::ReplaceTableCellText(ReplaceTableCellTextOperation {
-            operation_id: "op-3".to_owned(),
-            element_id: "slide-1:table-1".to_owned(),
-            selector: None,
-            cell: TableCellSelector { row: 0, col: 0 },
-            text: "updated".to_owned(),
-            current_text_match: None,
+            run: None,
         }),
         Operation::AddTextBox(AddTextBoxOperation {
-            operation_id: "op-4".to_owned(),
+            operation_id: "op-2".to_owned(),
             slide_id: "slide-1".to_owned(),
             selector: None,
             text: "new".to_owned(),
@@ -1243,13 +1224,13 @@ fn all_op_names_matches_operation_variants() {
             insert: None,
         }),
         Operation::MoveResizeElement(MoveResizeElementOperation {
-            operation_id: "op-5".to_owned(),
+            operation_id: "op-3".to_owned(),
             element_id: "slide-1:shape-1".to_owned(),
             selector: None,
             bounds: bounds.clone(),
         }),
         Operation::SetAltText(SetAltTextOperation {
-            operation_id: "op-6".to_owned(),
+            operation_id: "op-4".to_owned(),
             element_id: "slide-1:shape-1".to_owned(),
             selector: None,
             title: None,
@@ -1257,7 +1238,7 @@ fn all_op_names_matches_operation_variants() {
             alt_text: None,
         }),
         Operation::SetDocumentMetadata(SetDocumentMetadataOperation {
-            operation_id: "op-7".to_owned(),
+            operation_id: "op-5".to_owned(),
             selector: Selector::CoreProperties {
                 part: "docProps/core.xml".to_owned(),
                 guards: None,
@@ -1269,7 +1250,7 @@ fn all_op_names_matches_operation_variants() {
             },
         }),
         Operation::AddImage(AddImageOperation {
-            operation_id: "op-8".to_owned(),
+            operation_id: "op-6".to_owned(),
             slide_id: "slide-1".to_owned(),
             selector: None,
             media_ref: "image-1".to_owned(),
@@ -1282,7 +1263,7 @@ fn all_op_names_matches_operation_variants() {
             insert: None,
         }),
         Operation::ReplaceImage(ReplaceImageOperation {
-            operation_id: "op-9".to_owned(),
+            operation_id: "op-7".to_owned(),
             element_id: "slide-1:pic-1".to_owned(),
             selector: None,
             media_ref: "image-1".to_owned(),

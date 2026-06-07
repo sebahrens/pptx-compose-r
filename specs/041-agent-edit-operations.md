@@ -25,8 +25,6 @@ Agents should modify decks through explicit operations, not arbitrary raw XML or
 ## V1 Operations
 
 - `replace_text`
-- `replace_notes_text`
-- `replace_table_cell_text`
 - `add_text_box`
 - `move_resize_element`
 - `set_alt_text`
@@ -347,9 +345,11 @@ Example:
 }
 ```
 
-`replace_notes_text` (needs Phase 2):
+`replace_text` with a slide selector (needs Phase 2):
 
-- Required: `slide_id`, `text`. Optional: `match`, `mode`, `format_policy`, `overflow_policy` (same semantics as `replace_text`).
+- Required: `slide_id` or `selector: { "type": "slide_id", ... }`, `text`, `run`.
+  Optional: `match`, `mode`, `format_policy`, `overflow_policy` (same semantics
+  as element-targeted `replace_text`).
 - Resolution adds a new target variant: `slide_id` → slide rels → `ppt/notesSlides/notesSlideN.xml`. The notes body reuses the `p:sp/a:txBody` shape, so it reuses the run-scoped path.
 - Newline mapping and the `formatting_simplified` contract are identical to `replace_text`.
 
@@ -365,9 +365,10 @@ Run-property overrides in `replace_text`:
 
 ### Phase 4 — table cell text
 
-`replace_table_cell_text` (needs Phase 2 + a table-style read model):
+`replace_text` with a table-cell selector (needs Phase 2 + a table-style read model):
 
-- Required: `element_id` (the graphic-frame table), `cell`: `{ "row": u32, "col": u32 }`, `text`.
+- Required: `element_id` or `selector: { "type": "element_id", ... }` for the
+  graphic-frame table, `cell`: `{ "row": u32, "col": u32 }`, `text`.
 - Adds a `(row, col)` cell-coordinate selector variant; the V1 `sp_tree_path` cannot express a path into `a:tbl`.
 - MUST read `gridSpan`/`rowSpan`/`vMerge` and refuse merged cells with `unsupported_edit`. MUST NOT touch `a:tblGrid`.
 - Requires a table-style inheritance read model (`a:tblStyleLst`/`a:tblStyle`/`a:tblPr`) so the run rewrite does not fabricate overriding `rPr` where the cell relies on inherited style.

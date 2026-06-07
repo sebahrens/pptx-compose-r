@@ -180,9 +180,9 @@ For OOXML `p:graphicFrame` elements, the kind derives from
 Graphic-frame subkinds expose frame-level geometry and non-visual properties
 only. `move_resize_element` and `set_alt_text` are supported for `chart`,
 `table`, `diagram`, and `ole` because they mutate only `p:graphicFrame/p:xfrm`
-or `p:cNvPr`. `replace_text` is not supported for any graphic-frame subkind;
-chart data, table cells, SmartArt/diagram content, and embedded OLE payloads
-follow the editability boundaries in
+or `p:cNvPr`. Table-cell text uses `replace_text` with a `cell` coordinate;
+chart data, SmartArt/diagram content, and embedded OLE payloads follow the
+editability boundaries in
 [048. Editability Catalogue](048-editability-catalogue.md).
 
 ## Binary Handling

@@ -75,7 +75,7 @@ Anything whose correctness depends on a cache, a proprietary layout algorithm, a
 | --- | --- | --- | --- | --- |
 | Detection + geometry | `p:graphicFrame/a:graphic/a:graphicData[@uri=…table]/a:tbl` | v1-read (+ `move_resize` on frame) | Classified as `table` (kind fix); frame geometry editable. | Low (frame only). |
 | Cell text read | `a:tbl/a:tr/a:tc/a:txBody` | deferred | The slide text reader is cell-agnostic and reusable for read. | None. |
-| Cell text replace (non-merged) | `a:tc/a:txBody` | deferred (Phase 4) | Needs the run-scoped primitive + a table-style inheritance read model (`a:tblStyleLst`/`a:tblStyle`/`a:tblPr`); reads `gridSpan`/`rowSpan`/`vMerge` only to refuse merged cells. | High without the style model: clone-first-`rPr`-or-default would fabricate overriding `rPr`. Never touch `a:tblGrid`. |
+| Cell text replace (non-merged) | `a:tc/a:txBody` | v1-edit (`replace_text` with `cell`) | Uses the run-scoped primitive + a table-style inheritance read model (`a:tblStyleLst`/`a:tblStyle`/`a:tblPr`); reads `gridSpan`/`rowSpan`/`vMerge` only to refuse merged cells. | High without the style model: clone-first-`rPr`-or-default would fabricate overriding `rPr`. Never touch `a:tblGrid`. |
 | Structural edits (rows/cols/merge/widths/borders/fills) | `a:tblGrid/a:gridCol`, `a:tr@h`, `a:tc@gridSpan`, `a:vMerge`, `a:tcPr`, `a:tblPr` | deferred (very high) | Merge topology and `tblGrid`↔cell-count consistency must be validated atomically or PowerPoint rejects/misrenders. Needs a merge-semantics spec first. | Very high. |
 
 ## Charts

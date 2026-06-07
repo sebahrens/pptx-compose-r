@@ -1431,7 +1431,7 @@ fn replace_table_cell_text_edits_non_merged_cell_preserving_run_formatting() {
         "replace-table-cell-text",
         vec![serde_json::json!({
             "operation_id": "replace-table-cell",
-            "op": "replace_table_cell_text",
+            "op": "replace_text",
             "element_id": "slide-1:graphic-8",
             "cell": { "row": 0, "col": 0 },
             "text": "Northwest",
@@ -1441,7 +1441,7 @@ fn replace_table_cell_text_edits_non_merged_cell_preserving_run_formatting() {
 
     let report = document
         .apply_patch(patch, MediaInputs::default())
-        .expect("replace_table_cell_text applies");
+        .expect("replace_text table cell applies");
     assert_eq!(report.changed_parts, vec!["ppt/slides/slide1.xml"]);
 
     let written = document
@@ -1452,7 +1452,7 @@ fn replace_table_cell_text_edits_non_merged_cell_preserving_run_formatting() {
         .expect("edited deck writes");
     let written_entries = from_bytes(&written).expect("written entries read");
     assert_exact_part_deltas(
-        "replace_table_cell_text",
+        "replace_text",
         &original_entries,
         &written_entries,
         &["ppt/slides/slide1.xml"],
@@ -1477,6 +1477,51 @@ fn replace_table_cell_text_edits_non_merged_cell_preserving_run_formatting() {
 }
 
 #[test]
+fn replace_text_edits_speaker_notes_via_slide_selector() {
+    let bytes = notes_deck_with_clean_extras();
+    let original_entries = from_bytes(&bytes).expect("original entries read");
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-notes-text",
+        vec![serde_json::json!({
+            "operation_id": "replace-notes",
+            "op": "replace_text",
+            "slide_id": "slide-1",
+            "run": { "paragraph_index": 0, "run_index": 0 },
+            "text": "Updated speaker notes",
+            "match": "Original speaker notes"
+        })],
+    );
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("replace_text notes target applies");
+    assert_eq!(
+        report.changed_parts,
+        vec!["ppt/notesSlides/notesSlide1.xml"]
+    );
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("edited deck writes");
+    let written_entries = from_bytes(&written).expect("written entries read");
+    assert_exact_part_deltas(
+        "replace_text notes",
+        &original_entries,
+        &written_entries,
+        &["ppt/notesSlides/notesSlide1.xml"],
+        &[],
+    );
+    let written_notes = entry_text(&written_entries, "ppt/notesSlides/notesSlide1.xml");
+    assert!(written_notes.contains("<a:t>Updated speaker notes</a:t>"));
+    assert!(!written_notes.contains("<a:t>Original speaker notes</a:t>"));
+}
+
+#[test]
 fn replace_table_cell_text_rejects_merged_or_spanned_cells() {
     let slide =
         graphic_frame_slide().replacen("<a:tc><a:txBody>", r#"<a:tc gridSpan="2"><a:txBody>"#, 1);
@@ -1487,7 +1532,7 @@ fn replace_table_cell_text_rejects_merged_or_spanned_cells() {
         "replace-merged-table-cell-text",
         vec![serde_json::json!({
             "operation_id": "replace-merged-table-cell",
-            "op": "replace_table_cell_text",
+            "op": "replace_text",
             "element_id": "slide-1:graphic-8",
             "cell": { "row": 0, "col": 0 },
             "text": "Merged"
@@ -2152,6 +2197,31 @@ fn graphic_frame_deck_with_clean_extras() -> Vec<u8> {
     )
 }
 
+fn notes_deck_with_clean_extras() -> Vec<u8> {
+    zip_entries(
+        [
+            (
+                "[Content_Types].xml",
+                content_types_with_notes_and_unknown().as_bytes(),
+            ),
+            ("_rels/.rels", root_rels().as_bytes()),
+            ("ppt/presentation.xml", presentation().as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", notes_linked_slide().as_bytes()),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                notes_slide_rels().as_bytes(),
+            ),
+            ("ppt/notesSlides/notesSlide1.xml", notes_slide().as_bytes()),
+            ("custom/unknown.bin", b"unknown payload"),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
 fn linked_image_deck() -> Vec<u8> {
     zip_entries(
         [
@@ -2256,6 +2326,19 @@ fn content_types_with_png_and_unknown() -> String {
         .to_owned()
 }
 
+fn content_types_with_notes_and_unknown() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="bin" ContentType="application/octet-stream"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+  <Override PartName="/ppt/notesSlides/notesSlide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>
+</Types>"#
+        .to_owned()
+}
+
 fn content_types_with_core() -> String {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -2340,8 +2423,26 @@ fn linked_image_slide_rels() -> String {
         .to_owned()
 }
 
+fn notes_slide_rels() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide1.xml"/>
+</Relationships>"#
+        .to_owned()
+}
+
 fn text_slide() -> String {
     text_slide_with_text("Original title")
+}
+
+fn notes_linked_slide() -> String {
+    r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/></p:spTree></p:cSld></p:sld>"#
+        .to_owned()
+}
+
+fn notes_slide() -> String {
+    r#"<p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="2" name="Notes Placeholder 1"/><p:cNvSpPr txBox="1"/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Original speaker notes</a:t></a:r><a:r><a:t>Sibling note</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>"#
+        .to_owned()
 }
 
 fn text_slide_with_text(text: &str) -> String {

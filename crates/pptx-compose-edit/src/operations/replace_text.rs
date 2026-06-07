@@ -22,9 +22,8 @@ use crate::{
         is_real_shape_tree_child,
     },
     patch::{
-        FormatPolicy, OverflowPolicy, PatchEffects, ReplaceNotesTextOperation,
-        ReplaceTableCellTextOperation, ReplaceTextMode, ReplaceTextOperation, TextAlign,
-        TextBoxStyle,
+        FormatPolicy, OverflowPolicy, PatchEffects, ReplaceTextMode, ReplaceTextOperation,
+        TextAlign, TextBoxStyle,
     },
     selectors::RunSelector,
 };
@@ -68,17 +67,17 @@ pub struct ReplaceNotesText {
     pub slide_id: String,
     pub text: String,
     pub current_text_match: Option<String>,
-    pub run: RunSelector,
+    pub run: Option<RunSelector>,
 }
 
-impl From<&ReplaceNotesTextOperation> for ReplaceNotesText {
-    fn from(operation: &ReplaceNotesTextOperation) -> Self {
+impl From<&ReplaceTextOperation> for ReplaceNotesText {
+    fn from(operation: &ReplaceTextOperation) -> Self {
         Self {
             operation_id: operation.operation_id.clone(),
             slide_id: operation.target_slide_id().to_owned(),
             text: operation.text.clone(),
             current_text_match: operation.current_text_match.clone(),
-            run: operation.run.clone(),
+            run: operation.run_selector().cloned(),
         }
     }
 }
@@ -94,13 +93,14 @@ pub struct ReplaceTableCellText {
     pub run: Option<RunSelector>,
 }
 
-impl From<&ReplaceTableCellTextOperation> for ReplaceTableCellText {
-    fn from(operation: &ReplaceTableCellTextOperation) -> Self {
+impl From<&ReplaceTextOperation> for ReplaceTableCellText {
+    fn from(operation: &ReplaceTextOperation) -> Self {
+        let cell = operation.cell.as_ref().copied().unwrap_or_default();
         Self {
             operation_id: operation.operation_id.clone(),
             element_id: operation.target_element_id().to_owned(),
-            row: operation.cell.row,
-            col: operation.cell.col,
+            row: cell.row,
+            col: cell.col,
             text: operation.text.clone(),
             current_text_match: operation.current_text_match.clone(),
             run: operation.run_selector().cloned(),
@@ -382,7 +382,7 @@ impl ReplaceNotesText {
         if target.slide_id != self.slide_id {
             return Err(Error::new(
                 ErrorCode::SelectorGuardFailed,
-                "Resolved slide does not match replace_notes_text slide_id.",
+                "Resolved slide does not match replace_text slide_id.",
             )
             .with_location(self.location(Some(target))));
         }
@@ -413,7 +413,7 @@ impl ReplaceNotesText {
             ),
             element_id: target.map(|target| target.element_id.clone()),
             operation_id: Some(self.operation_id.clone()),
-            operation: Some("replace_notes_text".to_owned()),
+            operation: Some("replace_text".to_owned()),
             ..ErrorLocation::default()
         }
     }
@@ -545,7 +545,7 @@ impl ReplaceTableCellText {
         if target.element.element_id != self.element_id {
             return Err(Error::new(
                 ErrorCode::SelectorGuardFailed,
-                "Resolved element does not match replace_table_cell_text element_id.",
+                "Resolved element does not match replace_text element_id.",
             )
             .with_location(self.location(Some(&target.element))));
         }
@@ -559,7 +559,7 @@ impl ReplaceTableCellText {
         if target.row != self.row || target.col != self.col {
             return Err(Error::new(
                 ErrorCode::SelectorGuardFailed,
-                "Resolved table cell does not match replace_table_cell_text cell coordinates.",
+                "Resolved table cell does not match replace_text cell coordinates.",
             )
             .with_location(self.location(Some(&target.element))));
         }
@@ -580,7 +580,7 @@ impl ReplaceTableCellText {
                     .unwrap_or_else(|| self.element_id.clone()),
             ),
             operation_id: Some(self.operation_id.clone()),
-            operation: Some("replace_table_cell_text".to_owned()),
+            operation: Some("replace_text".to_owned()),
             ..ErrorLocation::default()
         }
     }
@@ -648,7 +648,7 @@ impl RunScopedTextOperation for ReplaceNotesText {
     }
 
     fn run_selector(&self) -> Option<&RunSelector> {
-        Some(&self.run)
+        self.run.as_ref()
     }
 
     fn location(&self, target: Option<&ResolvedElement>) -> ErrorLocation {
@@ -661,21 +661,21 @@ impl RunScopedTextOperation for ReplaceNotesText {
             ),
             element_id: target.map(|target| target.element_id.clone()),
             operation_id: Some(self.operation_id.clone()),
-            operation: Some("replace_notes_text".to_owned()),
+            operation: Some("replace_text".to_owned()),
             ..ErrorLocation::default()
         }
     }
 
     fn missing_run_message(&self) -> &'static str {
-        "replace_notes_text requires run."
+        "replace_text notes target requires run."
     }
 
     fn newline_message(&self) -> &'static str {
-        "replace_notes_text text must not contain newline characters."
+        "replace_text notes target text must not contain newline characters."
     }
 
     fn match_guard_message(&self) -> &'static str {
-        "replace_notes_text match guard did not match current run text."
+        "replace_text notes target match guard did not match current run text."
     }
 
     fn allow_default_run(&self) -> bool {
@@ -701,15 +701,15 @@ impl RunScopedTextOperation for ReplaceTableCellText {
     }
 
     fn missing_run_message(&self) -> &'static str {
-        "replace_table_cell_text requires selector.run when the default first run is not selected."
+        "replace_text table cell target requires selector.run when the default first run is not selected."
     }
 
     fn newline_message(&self) -> &'static str {
-        "replace_table_cell_text text must not contain newline characters."
+        "replace_text table cell target text must not contain newline characters."
     }
 
     fn match_guard_message(&self) -> &'static str {
-        "replace_table_cell_text match guard did not match current run text."
+        "replace_text table cell target match guard did not match current run text."
     }
 
     fn allow_default_run(&self) -> bool {
@@ -1131,14 +1131,14 @@ fn table_cell<'a>(
     let row_index = usize::try_from(row).map_err(|_| {
         Error::new(
             ErrorCode::InvalidInput,
-            "replace_table_cell_text cell.row is too large for this platform.",
+            "replace_text cell.row is too large for this platform.",
         )
         .with_location(operation.location(Some(target)))
     })?;
     let col_index = usize::try_from(col).map_err(|_| {
         Error::new(
             ErrorCode::InvalidInput,
-            "replace_table_cell_text cell.col is too large for this platform.",
+            "replace_text cell.col is too large for this platform.",
         )
         .with_location(operation.location(Some(target)))
     })?;
@@ -1151,7 +1151,7 @@ fn table_cell<'a>(
         .ok_or_else(|| {
             Error::new(
                 ErrorCode::SelectorNotFound,
-                "replace_table_cell_text cell.row resolved to a missing table row.",
+                "replace_text cell.row resolved to a missing table row.",
             )
             .with_location(operation.location(Some(target)))
         })?;
@@ -1164,7 +1164,7 @@ fn table_cell<'a>(
         .ok_or_else(|| {
             Error::new(
                 ErrorCode::SelectorNotFound,
-                "replace_table_cell_text cell.col resolved to a missing table cell.",
+                "replace_text cell.col resolved to a missing table cell.",
             )
             .with_location(operation.location(Some(target)))
         })
@@ -1180,14 +1180,14 @@ fn table_cell_mut<'a>(
     let row_index = usize::try_from(row).map_err(|_| {
         Error::new(
             ErrorCode::InvalidInput,
-            "replace_table_cell_text cell.row is too large for this platform.",
+            "replace_text cell.row is too large for this platform.",
         )
         .with_location(operation.location(Some(target)))
     })?;
     let col_index = usize::try_from(col).map_err(|_| {
         Error::new(
             ErrorCode::InvalidInput,
-            "replace_table_cell_text cell.col is too large for this platform.",
+            "replace_text cell.col is too large for this platform.",
         )
         .with_location(operation.location(Some(target)))
     })?;
@@ -1200,7 +1200,7 @@ fn table_cell_mut<'a>(
         .ok_or_else(|| {
             Error::new(
                 ErrorCode::SelectorNotFound,
-                "replace_table_cell_text cell.row resolved to a missing table row.",
+                "replace_text cell.row resolved to a missing table row.",
             )
             .with_location(operation.location(Some(target)))
         })?;
@@ -1213,7 +1213,7 @@ fn table_cell_mut<'a>(
         .ok_or_else(|| {
             Error::new(
                 ErrorCode::SelectorNotFound,
-                "replace_table_cell_text cell.col resolved to a missing table cell.",
+                "replace_text cell.col resolved to a missing table cell.",
             )
             .with_location(operation.location(Some(target)))
         })
@@ -1231,7 +1231,7 @@ fn reject_merged_cell(
     {
         return Err(Error::new(
             ErrorCode::UnsupportedEdit,
-            "replace_table_cell_text does not support merged or spanned table cells.",
+            "replace_text does not support merged or spanned table cells.",
         )
         .with_location(operation.location(Some(target))));
     }

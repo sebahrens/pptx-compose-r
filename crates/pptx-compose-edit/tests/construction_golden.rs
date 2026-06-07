@@ -338,12 +338,12 @@ mod construction {
             slide_id: target.slide_id.clone(),
             text: "Updated notes".to_owned(),
             current_text_match: Some("Linked".to_owned()),
-            run: RunSelector {
+            run: Some(RunSelector {
                 paragraph_index: 0,
                 run_index: 0,
                 run_end_index: None,
                 text_hash: None,
-            },
+            }),
         };
 
         let effects = operation.apply(&mut package, &target)?;
@@ -386,12 +386,12 @@ mod construction {
             slide_id: target.slide_id.clone(),
             text: "Updated notes".to_owned(),
             current_text_match: None,
-            run: RunSelector {
+            run: Some(RunSelector {
                 paragraph_index: 0,
                 run_index: 0,
                 run_end_index: None,
                 text_hash: None,
-            },
+            }),
         };
 
         let error = operation

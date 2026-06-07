@@ -130,6 +130,16 @@ fn parse_patch_rejects_unknown_text_box_style_keys_as_invalid_input() {
 }
 
 #[test]
+fn patch_schema_lists_only_unified_replace_text_op() {
+    let schema = patch_json_schema().expect("patch schema emits");
+    let schema_text = serde_json::to_string(&schema).expect("schema text serializes");
+
+    assert!(schema_text.contains("\"replace_text\""));
+    assert!(!schema_text.contains("\"replace_notes_text\""));
+    assert!(!schema_text.contains("\"replace_table_cell_text\""));
+}
+
+#[test]
 fn all_agent_view_modes_validate_against_published_schema() {
     let pkg = package_from_pptx_bytes(include_bytes!(
         "../../../fixtures/real-world/worldbank-cpf-concept-note.pptx"
@@ -305,7 +315,9 @@ fn patch() -> Patch {
         operations: vec![Operation::ReplaceText(ReplaceTextOperation {
             operation_id: "op-1".to_owned(),
             element_id: "slide-1:shape-4".to_owned(),
+            slide_id: String::new(),
             selector: None,
+            cell: None,
             text: "Updated title".to_owned(),
             current_text_match: None,
             mode: None,
@@ -313,6 +325,7 @@ fn patch() -> Patch {
             overflow_policy: None,
             allow_formatting_simplification: false,
             run_style: None,
+            run: None,
         })],
     }
 }

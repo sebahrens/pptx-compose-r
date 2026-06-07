@@ -61,10 +61,8 @@ const PARAGRAPH_PREVIEW_CHARS: usize = 1_024;
 const RUN_PREVIEW_CHARS: usize = 1_024;
 const ACCESSIBILITY_PREVIEW_CHARS: usize = 1_024;
 const EMBEDDED_SLIDE_ELEMENT_LIMIT: u32 = 50;
-const ALL_OP_NAMES: [&str; 9] = [
+const ALL_OP_NAMES: [&str; 7] = [
     "replace_text",
-    "replace_notes_text",
-    "replace_table_cell_text",
     "add_text_box",
     "move_resize_element",
     "set_alt_text",
