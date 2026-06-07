@@ -55,7 +55,11 @@ use pptx_compose_edit::{
         set_alt_text::SetAltText,
         set_document_metadata::SetDocumentMetadata,
     },
-    patch::{DocumentState, Operation, OperationExecutor, PatchEffects, validate_envelope},
+    patch::{
+        DocumentState, Operation, OperationExecutor, PatchEffects, ValidationFailedReport,
+        validate_envelope,
+    },
+    reports::has_blocking_findings,
     selectors::{self, Selector},
 };
 use pptx_compose_json::{
@@ -286,7 +290,7 @@ impl PresentationDocument {
 
     pub fn write_vec_with_options(&self, options: WriteOptions) -> Result<Vec<u8>> {
         if options.validate {
-            let _report = self.validate()?;
+            self.ensure_write_validation_passes()?;
         }
         let mut package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         apply_dirty_parts(&mut package, &self.dirty_parts);
@@ -531,7 +535,7 @@ impl PresentationDocument {
         W: Write + std::io::Seek,
     {
         if options.validate {
-            let _report = self.validate()?;
+            self.ensure_write_validation_passes()?;
         }
         let mut package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         apply_dirty_parts(&mut package, &self.dirty_parts);
@@ -549,6 +553,29 @@ impl PresentationDocument {
 
     pub fn validate(&self) -> Result<ValidationReport> {
         let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
+        pptx_compose_edit::reports::validation_report(
+            core::validation::validate_package(&package, core::validation::ValidationMode::Edited),
+            document_id_from_entries(&self.entries)?,
+            self.current_revision()?,
+        )
+    }
+
+    fn ensure_write_validation_passes(&self) -> Result<()> {
+        let report = self.write_validation_report()?;
+        if has_blocking_findings(&report) {
+            return Err(Error::with_source(
+                ErrorCode::ValidationFailed,
+                "Package failed validation and was not written.",
+                ValidationFailedReport { report },
+            )
+            .with_suggestion("Inspect the validation report, fix blocking findings, and retry."));
+        }
+        Ok(())
+    }
+
+    fn write_validation_report(&self) -> Result<ValidationReport> {
+        let mut package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
+        apply_dirty_parts(&mut package, &self.dirty_parts);
         pptx_compose_edit::reports::validation_report(
             core::validation::validate_package(&package, core::validation::ValidationMode::Edited),
             document_id_from_entries(&self.entries)?,
@@ -1581,13 +1608,17 @@ fn with_operation_location(error: Error, operation_id: &str) -> Error {
 mod tests {
     use std::io::{Cursor, Write};
 
-    use pptx_compose_core::zip::{
-        limits::{OpenOptions as CoreOpenOptions, ResourceLimits},
-        reader::from_bytes_with_options,
+    use pptx_compose_core::{
+        error::ErrorCode,
+        opc::part_name::PartName,
+        zip::{
+            limits::{OpenOptions as CoreOpenOptions, ResourceLimits},
+            reader::from_bytes_with_options,
+        },
     };
     use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
-    use super::package_from_entries_with_limits;
+    use super::{PresentationDocument, WriteOptions, package_from_entries_with_limits};
 
     #[test]
     fn facade_crate_compiles() {
@@ -1622,6 +1653,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn validation_on_write_blocks_dirty_malformed_xml_without_writing_bytes() {
+        let bytes = zip_entries([
+            ("[Content_Types].xml", CONTENT_TYPES_WITH_SLIDE.as_bytes()),
+            ("_rels/.rels", ROOT_RELS.as_bytes()),
+            ("ppt/presentation.xml", PRESENTATION_WITH_SLIDE.as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                PRESENTATION_RELS.as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", b"<p:sld>"),
+        ]);
+        let mut document =
+            PresentationDocument::from_bytes(&bytes).expect("malformed dirty slide deck opens");
+        document.dirty_parts.insert(
+            PartName::from_zip_entry("ppt/slides/slide1.xml").expect("slide part name is valid"),
+        );
+
+        let result = document.write_vec_with_options(WriteOptions {
+            validate: true,
+            ..WriteOptions::default()
+        });
+
+        let error = result.expect_err("blocking validation findings fail the write");
+        assert_eq!(error.code(), ErrorCode::ValidationFailed);
+    }
+
     fn zip_entries<const N: usize>(entries: [(&str, &[u8]); N]) -> Vec<u8> {
         let mut bytes = Vec::new();
         {
@@ -1644,6 +1702,14 @@ mod tests {
   <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
 </Types>"#;
 
+    const CONTENT_TYPES_WITH_SLIDE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>"#;
+
     const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
@@ -1651,4 +1717,14 @@ mod tests {
 
     const PRESENTATION: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>"#;
+
+    const PRESENTATION_WITH_SLIDE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>"#;
+
+    const PRESENTATION_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>"#;
 }
