@@ -1,0 +1,55 @@
+{
+  "schema": "pptx-compose.cli_eval_transcript.v1",
+  "version": 1,
+  "case": "find-text-selector",
+  "command": ["--json-errors", "find-text", "{input}", "Media", "--slides", "slide-1", "--limit", "10", "--output", "-"],
+  "expected_exit": 0,
+  "stdout_json": {
+    "schema": "pptx-compose.find_text.v1",
+    "version": 1,
+    "document_id": "sha256:5a5f3d46b642af04b0276c50dd3a2203809f262208823840e2ad803101ec5c81",
+    "revision": 1,
+    "query": "Media",
+    "scope": {
+      "type": "slide",
+      "slide_id": "slide-1"
+    },
+    "view": {
+      "mode": "find_text",
+      "limit": 10,
+      "next_cursor": null,
+      "truncated": false
+    },
+    "omitted_count": 0,
+    "matches": [
+      {
+        "slide_id": "slide-1",
+        "slide_index": 0,
+        "element_id": "slide-1:shape-2",
+        "kind": "shape",
+        "part": "ppt/slides/slide1.xml",
+        "fingerprint": "sha256:bef0fba5d8986f3d7f58f28b3f2a862e74176f2e34d30edb2205bd4937c284dc",
+        "text_hash": "sha256:06339bc175dead44c7e34102ab267fd827df35ae5a93c63b0ad537cc80e8b7fc",
+        "span": {
+          "start": 0,
+          "end": 5
+        },
+        "matched_text": "Media",
+        "selector": {
+          "type": "element_id",
+          "id": "slide-1:shape-2",
+          "guards": {
+            "slide_id": "slide-1",
+            "kind": "shape",
+            "part": "ppt/slides/slide1.xml",
+            "text_hash": "sha256:06339bc175dead44c7e34102ab267fd827df35ae5a93c63b0ad537cc80e8b7fc",
+            "fingerprint": "sha256:bef0fba5d8986f3d7f58f28b3f2a862e74176f2e34d30edb2205bd4937c284dc"
+          }
+        }
+      }
+    ]
+  },
+  "stderr_json": null,
+  "report_json": null,
+  "output_invariants": null
+}

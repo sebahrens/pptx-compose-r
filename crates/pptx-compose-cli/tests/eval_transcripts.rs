@@ -2,6 +2,7 @@
 
 mod evals {
     use std::{
+        collections::BTreeSet,
         fs,
         path::{Path, PathBuf},
         process::Command,
@@ -11,8 +12,9 @@ mod evals {
     use serde::Deserialize;
     use serde_json::Value;
 
-    const CLI_CASES: [&str; 7] = [
+    const CLI_CASES: [&str; 8] = [
         "replace-title",
+        "find-text-selector",
         "add-text-box",
         "add-image",
         "replace-image",
@@ -31,6 +33,12 @@ mod evals {
     #[test]
     fn cli_replace_title_golden_transcript() {
         assert_golden_transcript("replace-title");
+    }
+
+    #[test]
+    fn cli_find_text_selector_golden_transcript() {
+        let actual = assert_golden_transcript("find-text-selector");
+        assert_find_text_selector_output(&actual);
     }
 
     #[test]
@@ -57,12 +65,17 @@ mod evals {
             for file_name in [
                 "input-ref.txt",
                 "instruction.txt",
-                "patch.json",
                 "expected.transcript.json",
             ] {
                 assert!(
                     case_dir.join(file_name).exists(),
                     "{case_name}: missing {file_name}"
+                );
+            }
+            if case_requires_patch(case_name) {
+                assert!(
+                    case_dir.join("patch.json").exists(),
+                    "{case_name}: missing patch.json"
                 );
             }
         }
@@ -74,6 +87,9 @@ mod evals {
         for case_name in CLI_CASES {
             let case_dir = repo_root.join("evals").join("cli").join(case_name);
             let transcript = read_transcript(&case_dir.join("expected.transcript.json"), case_name);
+            if !case_requires_patch(case_name) {
+                continue;
+            }
             if transcript.expected_exit != 0
                 || patch_operation_count(&case_dir.join("patch.json")) == 0
             {
@@ -158,7 +174,9 @@ mod evals {
             let report = temp_dir.join("report.json");
             let diff = temp_dir.join("diff.json");
             assert!(input.exists(), "{case_name}: input fixture exists");
-            assert!(patch.exists(), "{case_name}: patch exists");
+            if case_requires_patch(case_name) {
+                assert!(patch.exists(), "{case_name}: patch exists");
+            }
 
             let command = transcript
                 .command
@@ -200,7 +218,7 @@ mod evals {
         }
     }
 
-    fn assert_golden_transcript(case_name: &str) {
+    fn assert_golden_transcript(case_name: &str) -> Value {
         let repo_root = repo_root();
         let bin = env!("CARGO_BIN_EXE_pptx-compose");
         let case = EvalCase::load(&repo_root, case_name);
@@ -239,6 +257,50 @@ mod evals {
             case.expected_report.as_ref(),
         );
         assert_output_invariants(case_name, &case);
+        case.expected_stdout
+            .clone()
+            .or(case.expected_report.clone())
+            .or(case.expected_stderr.clone())
+            .unwrap_or(Value::Null)
+    }
+
+    fn assert_find_text_selector_output(output: &Value) {
+        assert_schema_validates("find-text-selector", output);
+        let matches = output["matches"]
+            .as_array()
+            .expect("find-text-selector: matches is an array");
+        let first = matches
+            .first()
+            .expect("find-text-selector: at least one match is returned");
+        let selector = &first["selector"];
+        assert_eq!(selector["type"], "element_id");
+        assert_eq!(selector["id"], first["element_id"]);
+
+        let guards = selector["guards"]
+            .as_object()
+            .expect("find-text-selector: selector guards is an object");
+        let actual_keys = guards.keys().cloned().collect::<BTreeSet<_>>();
+        let expected_keys = ["fingerprint", "kind", "part", "slide_id", "text_hash"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual_keys, expected_keys);
+        assert_eq!(guards["slide_id"], first["slide_id"]);
+        assert_eq!(guards["kind"], first["kind"]);
+        assert_eq!(guards["part"], first["part"]);
+        assert_eq!(guards["text_hash"], first["text_hash"]);
+        assert_eq!(guards["fingerprint"], first["fingerprint"]);
+    }
+
+    fn assert_schema_validates(case_name: &str, actual: &Value) {
+        let schema = pptx_compose::json::schemas::find_text_json_schema()
+            .unwrap_or_else(|err| panic!("{case_name}: find-text schema should generate: {err:?}"));
+        let validator = jsonschema::validator_for(&schema)
+            .unwrap_or_else(|err| panic!("{case_name}: find-text schema compiles: {err}"));
+        assert!(
+            validator.is_valid(actual),
+            "{case_name}: find-text output should validate against schema"
+        );
     }
 
     fn read_transcript(transcript_path: &Path, case_name: &str) -> Transcript {
@@ -259,6 +321,10 @@ mod evals {
             .get("operations")
             .and_then(Value::as_array)
             .map_or(0, Vec::len)
+    }
+
+    fn case_requires_patch(case_name: &str) -> bool {
+        !matches!(case_name, "find-text-selector")
     }
 
     fn assert_optional_json_file(

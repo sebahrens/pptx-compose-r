@@ -1,0 +1,1 @@
+Find exact text matching "Media" on slide 1 and return a patch-ready selector with guard fields that can be pasted into a replace_text operation.

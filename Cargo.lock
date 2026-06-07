@@ -1271,6 +1271,7 @@ name = "pptx-compose-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "jsonschema",
  "pptx-compose",
  "schemars",
  "serde",
