@@ -1,11 +1,19 @@
 #![deny(warnings)]
 
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
 
+use pptx_compose::edit::patch::{PATCH_SCHEMA, PATCH_VERSION};
+use pptx_compose_mcp::{
+    ApplyPatchInput, CloseInput, ExportInput, GetSlideInput, ImportMediaInput, ListSlidesInput,
+    OpenInput, SummaryInput, ValidateInput, ValidatePatchInput,
+};
+use schemars::JsonSchema;
 use serde_json::Value;
+use serde_json::json;
 
 const MCP_CASES: [&str; 5] = [
     "inspect-large-deck",
@@ -49,10 +57,124 @@ fn mcp_eval_corpus_contains_required_cases() {
                 .is_some_and(|tools| !tools.is_empty()),
             "{case_name}: transcript has tool steps"
         );
+        assert_transcript_arguments_validate(case_name, &transcript);
         if case_name == "stale-revision" {
             assert_stale_revision_transcript(&transcript);
         }
     }
+}
+
+fn assert_transcript_arguments_validate(case_name: &str, transcript: &Value) {
+    let tools = transcript["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{case_name}: tools is an array"));
+    for (index, step) in tools.iter().enumerate() {
+        let name = step["name"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{case_name}: tool step {index} has a string name"));
+        let arguments = substitute_placeholders(step["arguments"].clone());
+        assert_tool_arguments_validate(case_name, index, name, &arguments);
+        assert_tool_runtime_argument_invariants(case_name, index, name, &arguments);
+    }
+}
+
+fn assert_tool_arguments_validate(case_name: &str, index: usize, name: &str, arguments: &Value) {
+    let schema = tool_input_schema(name)
+        .unwrap_or_else(|| panic!("{case_name}: tool step {index} uses unknown tool {name}"));
+    let validator = jsonschema::validator_for(&schema)
+        .unwrap_or_else(|err| panic!("{case_name}: tool {name} input schema compiles: {err}"));
+    assert!(
+        validator.is_valid(arguments),
+        "{case_name}: tool step {index} {name} arguments validate against input schema; arguments={arguments}"
+    );
+}
+
+fn assert_tool_runtime_argument_invariants(
+    case_name: &str,
+    index: usize,
+    name: &str,
+    arguments: &Value,
+) {
+    if name != "pptx_export" {
+        return;
+    }
+    let output_path = arguments.get("output_path").and_then(Value::as_str);
+    let inline = arguments
+        .get("inline")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    assert!(
+        output_path.is_some() || inline,
+        "{case_name}: tool step {index} pptx_export must set inline=true when output_path is absent"
+    );
+}
+
+fn tool_input_schema(name: &str) -> Option<Value> {
+    let schemas: BTreeMap<&'static str, Value> = BTreeMap::from([
+        ("pptx_open", schema_for::<OpenInput>()),
+        ("pptx_get_document_summary", schema_for::<SummaryInput>()),
+        ("pptx_list_slides", schema_for::<ListSlidesInput>()),
+        ("pptx_get_slide", schema_for::<GetSlideInput>()),
+        ("pptx_import_media", schema_for::<ImportMediaInput>()),
+        ("pptx_validate_patch", schema_for::<ValidatePatchInput>()),
+        ("pptx_apply_patch", schema_for::<ApplyPatchInput>()),
+        ("pptx_validate", schema_for::<ValidateInput>()),
+        ("pptx_export", schema_for::<ExportInput>()),
+        ("pptx_close", schema_for::<CloseInput>()),
+    ]);
+    schemas.get(name).cloned()
+}
+
+fn schema_for<T: JsonSchema>() -> Value {
+    serde_json::to_value(schemars::schema_for!(T)).expect("input schema serializes")
+}
+
+fn substitute_placeholders(value: Value) -> Value {
+    match value {
+        Value::String(value) => substitute_string_placeholder(&value),
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(substitute_placeholders)
+                .collect::<Vec<_>>(),
+        ),
+        Value::Object(values) => Value::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| (key, substitute_placeholders(value)))
+                .collect(),
+        ),
+        value => value,
+    }
+}
+
+fn substitute_string_placeholder(value: &str) -> Value {
+    match value {
+        "{input}" => json!("fixtures/minimal/minimal.pptx"),
+        "{session_id}" => json!("session-1"),
+        "{revision}" => json!(1),
+        "{new_revision}" => json!(2),
+        "{expected_patch}" => expected_patch_placeholder(),
+        value => Value::String(value.to_owned()),
+    }
+}
+
+fn expected_patch_placeholder() -> Value {
+    json!({
+        "schema": PATCH_SCHEMA,
+        "version": PATCH_VERSION,
+        "document_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "base_revision": 1,
+        "client_request_id": "eval-request-1",
+        "operations": [
+            {
+                "operation_id": "op-1",
+                "op": "replace_text",
+                "element_id": "slide-1:shape-1",
+                "text": "Updated title"
+            }
+        ]
+    })
 }
 
 fn assert_stale_revision_transcript(transcript: &Value) {

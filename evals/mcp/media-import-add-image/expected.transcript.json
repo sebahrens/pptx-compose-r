@@ -8,6 +8,7 @@
       "name": "pptx_import_media",
       "arguments": {
         "session_id": "{session_id}",
+        "expected_revision": "{revision}",
         "media_path": null,
         "inline": {
           "encoding": "base64",
@@ -19,7 +20,7 @@
     },
     { "name": "pptx_validate_patch", "arguments": { "session_id": "{session_id}", "patch": "{expected_patch}" }, "expect": { "status": "success", "patch_status": "dry_run_success" } },
     { "name": "pptx_apply_patch", "arguments": { "session_id": "{session_id}", "patch": "{expected_patch}", "dry_run": false }, "expect": { "status": "success", "revision_increment": 1 } },
-    { "name": "pptx_export", "arguments": { "session_id": "{session_id}", "expected_revision": "{new_revision}", "output_path": null, "overwrite": false }, "expect": { "status": "success", "inline_pptx": true } },
+    { "name": "pptx_export", "arguments": { "session_id": "{session_id}", "expected_revision": "{new_revision}", "output_path": null, "inline": true, "overwrite": false }, "expect": { "status": "success", "inline_pptx": true } },
     { "name": "pptx_close", "arguments": { "session_id": "{session_id}" }, "expect": { "status": "success" } }
   ],
   "output_invariants": {
