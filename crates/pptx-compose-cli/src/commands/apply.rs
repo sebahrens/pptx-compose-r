@@ -69,19 +69,7 @@ pub(crate) fn apply(
         sink.emit_patch_report(&output.report, args.report, args.overwrite)?;
         sink.emit_diff(&output.diff, args.diff, args.overwrite)?;
         if output.report.status == PatchStatus::DryRunFailed {
-            let error = output
-                .report
-                .operation_reports
-                .iter()
-                .filter_map(|operation| operation.error.as_ref())
-                .next()
-                .map(dry_run_operation_error)
-                .unwrap_or_else(|| {
-                    Error::new(
-                        ErrorCode::ValidationFailed,
-                        "Dry-run patch validation failed; inspect the patch report for per-operation errors.",
-                    )
-                });
+            let error = output_operation_error(&output.report, true);
             return Err(apply_error(error));
         }
         return Ok(());
@@ -110,6 +98,13 @@ pub(crate) fn apply(
             },
         )
         .map_err(apply_error)?;
+    if apply_output.report.status == PatchStatus::Failed {
+        let sink = OutputSink::default();
+        sink.emit_patch_report(&apply_output.report, args.report, args.overwrite)?;
+        sink.emit_diff(&apply_output.diff, args.diff, args.overwrite)?;
+        let error = output_operation_error(&apply_output.report, false);
+        return Err(apply_error(error));
+    }
     let mut write_options = write_options_from_args(&args);
     if write_options.atomic {
         let temp_path = temp_output_path(&output, Some(&permissions.temp_dir));
@@ -330,7 +325,29 @@ fn apply_error(error: Error) -> CliError {
     }
 }
 
-fn dry_run_operation_error(error: &ErrorView) -> Error {
+fn output_operation_error(
+    report: &pptx_compose::json::schemas::PatchReport,
+    dry_run: bool,
+) -> Error {
+    report
+        .operation_reports
+        .iter()
+        .filter_map(|operation| operation.error.as_ref())
+        .next()
+        .map(operation_error)
+        .unwrap_or_else(|| {
+            Error::new(
+                ErrorCode::ValidationFailed,
+                if dry_run {
+                    "Dry-run patch validation failed; inspect the patch report for per-operation errors."
+                } else {
+                    "Patch application failed; inspect the patch report for per-operation errors."
+                },
+            )
+        })
+}
+
+fn operation_error(error: &ErrorView) -> Error {
     Error::new(core_error_code(error.code), error.message.clone())
         .with_location(error_location(&error.location))
 }
@@ -544,6 +561,12 @@ fn dry_run_writes_no_pptx() {
 #[test]
 fn dry_run_writes_report_for_all_failed_operations() {
     test_support::dry_run_writes_report_for_all_failed_operations();
+}
+
+#[cfg(test)]
+#[test]
+fn non_dry_run_writes_failed_report_without_output_pptx() {
+    test_support::non_dry_run_writes_failed_report_without_output_pptx();
 }
 
 #[cfg(test)]
@@ -907,6 +930,45 @@ mod test_support {
         assert!(operation_reports.iter().all(|operation| {
             operation["status"] == "failed" && operation["error"]["code"] == "selector_not_found"
         }));
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn non_dry_run_writes_failed_report_without_output_pptx() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let output = root.join("output.pptx");
+        let report = root.join("report.json");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, one_valid_one_invalid_patch(&input_bytes)).expect("patch fixture writes");
+
+        let mut args = args(&input, &patch, &output, false, false);
+        args.report = Some(report.clone());
+
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("non-dry-run with invalid operation exits nonzero");
+        assert_eq!(err.code(), ErrorCode::SelectorNotFound);
+        assert!(
+            !output.exists(),
+            "failed apply must not create a PPTX output"
+        );
+
+        let report_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report).expect("report reads"))
+                .expect("report is JSON");
+        assert_eq!(report_json["status"], "failed");
+        assert_eq!(report_json["dry_run"], false);
+        let operation_reports = report_json["operation_reports"]
+            .as_array()
+            .expect("operation reports is an array");
+        assert_eq!(operation_reports.len(), 2);
+        assert_eq!(operation_reports[0]["operation_id"], "good-1");
+        assert_eq!(operation_reports[0]["status"], "applied");
+        assert_eq!(operation_reports[1]["operation_id"], "bad-2");
+        assert_eq!(operation_reports[1]["status"], "failed");
+        assert_eq!(operation_reports[1]["error"]["code"], "selector_not_found");
 
         fs::remove_dir_all(root).expect("test dir removes");
     }
@@ -1338,6 +1400,38 @@ mod test_support {
                     "operation_id": "bad-1",
                     "op": "replace_text",
                     "element_id": "slide-1:missing-1",
+                    "text": "Updated title"
+                }},
+                {{
+                    "operation_id": "bad-2",
+                    "op": "replace_text",
+                    "element_id": "slide-1:missing-2",
+                    "text": "Updated subtitle"
+                }}
+            ]
+        }}"#
+        )
+        .into_bytes()
+    }
+
+    fn one_valid_one_invalid_patch(bytes: &[u8]) -> Vec<u8> {
+        let document_id = PresentationDocument::from_bytes(bytes)
+            .expect("fixture opens")
+            .validate()
+            .expect("fixture validates")
+            .document_id;
+        format!(
+            r#"{{
+            "schema": "pptx-compose.patch.v1",
+            "version": 1,
+            "document_id": "{document_id}",
+            "base_revision": 1,
+            "client_request_id": "apply-test-one-valid-one-invalid",
+            "operations": [
+                {{
+                    "operation_id": "good-1",
+                    "op": "replace_text",
+                    "element_id": "slide-1:shape-3",
                     "text": "Updated title"
                 }},
                 {{

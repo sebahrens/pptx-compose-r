@@ -874,7 +874,7 @@ where
     E: OperationExecutor,
 {
     let result = apply_patch_staged(package, context, patch, dry_run, executor)?;
-    if !dry_run {
+    if !dry_run && result.report.status == PatchStatus::Applied {
         *package = result.package.into_inner();
     }
     Ok(result.report)
@@ -905,14 +905,22 @@ where
                     operation_reports.push(failed_operation_report(operation, &error)?);
                     continue;
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    failed = true;
+                    operation_reports.push(failed_operation_report(operation, &error)?);
+                    continue;
+                }
             },
             Err(error) if dry_run => {
                 failed = true;
                 operation_reports.push(failed_operation_report(operation, &error)?);
                 continue;
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                failed = true;
+                operation_reports.push(failed_operation_report(operation, &error)?);
+                continue;
+            }
         };
 
         changed_parts.extend(effects.changed_parts.iter().cloned());
@@ -930,13 +938,19 @@ where
     changed_parts.sort();
     changed_parts.dedup();
 
-    let wrote_part = !changed_parts.is_empty();
-    let report_revision = if dry_run || !wrote_part {
+    let report_changed_parts = if failed { Vec::new() } else { changed_parts };
+    let wrote_part = !report_changed_parts.is_empty();
+    let report_revision = if failed || dry_run || !wrote_part {
         context.base_revision
     } else {
         context.new_revision
     };
-    let validation = validate_for_write(&staged, &context.new_document_id, report_revision)?;
+    let validation_package = if failed { package } else { &staged };
+    let validation = validate_for_write(
+        validation_package,
+        &context.new_document_id,
+        report_revision,
+    )?;
 
     if has_blocking_findings(&validation) {
         return Err(validation_failed(validation));
@@ -951,7 +965,11 @@ where
             request_id: None,
             transaction_id: None,
             status: if failed {
-                PatchStatus::DryRunFailed
+                if dry_run {
+                    PatchStatus::DryRunFailed
+                } else {
+                    PatchStatus::Failed
+                }
             } else if dry_run {
                 PatchStatus::DryRunSuccess
             } else {
@@ -963,7 +981,7 @@ where
             new_document_id: context.new_document_id,
             new_revision: report_revision,
             operation_reports,
-            changed_parts,
+            changed_parts: report_changed_parts,
             warnings: Vec::new(),
             validation: patch_validation_summary(&validation),
         },
@@ -1262,6 +1280,12 @@ fn dry_run_reports_all_failed_operations() {
 }
 
 #[cfg(test)]
+#[test]
+fn non_dry_run_reports_failed_operation_without_committing() {
+    test_support::non_dry_run_reports_failed_operation_without_committing();
+}
+
+#[cfg(test)]
 mod test_support {
     use pptx_compose_core::{
         error::{Error, ErrorCode, Result},
@@ -1353,10 +1377,15 @@ mod test_support {
         let patch = two_op_patch();
         let mut executor = FailingSecondOp;
 
-        let error = super::apply_patch(&mut package, context(), &patch, false, &mut executor)
-            .expect_err("second operation failure aborts patch");
+        let report = super::apply_patch(&mut package, context(), &patch, false, &mut executor)
+            .expect("second operation failure returns a patch report");
 
-        assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+        assert_eq!(
+            report.status,
+            pptx_compose_json::schemas::PatchStatus::Failed
+        );
+        assert_eq!(report.changed_parts, Vec::<String>::new());
+        assert_eq!(report.new_revision, report.base_revision);
         assert_eq!(package, original);
 
         let mut executor = SuccessfulOps;
@@ -1407,6 +1436,38 @@ mod test_support {
                 })
                 .count(),
             2
+        );
+        assert_eq!(package, original);
+    }
+
+    pub fn non_dry_run_reports_failed_operation_without_committing() {
+        let mut package = base_package();
+        let original = package.clone();
+        let patch = two_op_patch();
+        let mut executor = FailingSecondOp;
+
+        let report = super::apply_patch(&mut package, context(), &patch, false, &mut executor)
+            .expect("non-dry-run failure returns a report");
+
+        assert_eq!(
+            report.status,
+            pptx_compose_json::schemas::PatchStatus::Failed
+        );
+        assert!(!report.dry_run);
+        assert_eq!(report.changed_parts, Vec::<String>::new());
+        assert_eq!(report.new_revision, report.base_revision);
+        assert_eq!(report.operation_reports.len(), 2);
+        assert_eq!(report.operation_reports[0].operation_id, "op-1");
+        assert_eq!(report.operation_reports[0].status, OperationStatus::Applied);
+        assert_eq!(report.operation_reports[1].operation_id, "op-2");
+        assert_eq!(report.operation_reports[1].status, OperationStatus::Failed);
+        assert_eq!(
+            report.operation_reports[1]
+                .error
+                .as_ref()
+                .expect("failed operation reports an error")
+                .code,
+            pptx_compose_json::schemas::ErrorCode::UnsupportedEdit
         );
         assert_eq!(package, original);
     }

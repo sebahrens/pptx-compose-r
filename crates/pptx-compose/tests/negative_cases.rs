@@ -16,6 +16,7 @@ use pptx_compose::{
     edit::media_inputs::{MediaBinding, MediaInputs, MediaSource},
     edit::patch::parse_patch,
     edit::selectors::{self, Selector},
+    json::schemas::PatchStatus,
 };
 use serde_json::{Value, json};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
@@ -166,16 +167,28 @@ fn assert_patch_failure(
         ..WriteOptions::default()
     })?;
     let patch = parse_patch(patch)?;
-    let error = document
-        .apply_patch_with_options(
-            patch,
-            media_inputs.unwrap_or_default(),
-            ApplyPatchOptions {
-                ..ApplyPatchOptions::default()
-            },
-        )
-        .expect_err("patch must fail");
-    assert_eq!(error.code(), expected, "{error}");
+    match document.apply_patch_with_options(
+        patch,
+        media_inputs.unwrap_or_default(),
+        ApplyPatchOptions {
+            ..ApplyPatchOptions::default()
+        },
+    ) {
+        Ok(report) => {
+            assert_eq!(report.status, PatchStatus::Failed);
+            let error = report.operation_reports[0]
+                .error
+                .as_ref()
+                .expect("failed operation has an error");
+            assert_eq!(
+                serde_json::to_value(error.code).expect("schema error code serializes"),
+                serde_json::to_value(expected).expect("core error code serializes")
+            );
+        }
+        Err(error) => {
+            assert_eq!(error.code(), expected, "{error}");
+        }
+    }
     let after = document.write_vec_with_options(WriteOptions {
         mode: WriteMode::Preserve,
         ..WriteOptions::default()

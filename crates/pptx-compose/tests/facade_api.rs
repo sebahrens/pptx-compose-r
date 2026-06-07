@@ -24,6 +24,7 @@ use pptx_compose::{
         FindTextScope,
         views::{FindTextRequest, ViewMode},
     },
+    json::schemas::{OperationStatus, PatchStatus},
 };
 use serde_json::Value;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
@@ -611,18 +612,20 @@ fn set_document_metadata_rejects_stale_revision_and_match_guard() {
             }
         })],
     );
-    let guarded_error = guarded_document
+    let guarded_report = guarded_document
         .apply_patch(guarded_patch, MediaInputs::default())
-        .expect_err("metadata match guard fails");
-    assert_eq!(guarded_error.code(), ErrorCode::SelectorGuardFailed);
+        .expect("metadata match guard returns a failed report");
+    assert_eq!(guarded_report.status, PatchStatus::Failed);
+    let guarded_error = guarded_report.operation_reports[0]
+        .error
+        .as_ref()
+        .expect("failed operation has an error");
     assert_eq!(
-        guarded_error.details().location.operation_id.as_deref(),
-        Some("set-guarded-title")
+        guarded_error.code,
+        pptx_compose::json::schemas::ErrorCode::SelectorGuardFailed
     );
-    assert_eq!(
-        guarded_error.details().location.operation.as_deref(),
-        Some("set_document_metadata")
-    );
+    assert_eq!(guarded_error.location["operation_id"], "set-guarded-title");
+    assert_eq!(guarded_error.location["operation"], "set_document_metadata");
 }
 
 #[test]
@@ -918,18 +921,20 @@ fn guarded_selector_replace_text_applies_and_rejects_stale_fingerprint() {
     }))
     .expect("stale guarded patch parses");
 
-    let error = stale_document
+    let report = stale_document
         .apply_patch(stale_patch, MediaInputs::default())
-        .expect_err("mismatched fingerprint guard fails");
-    assert_eq!(error.code(), ErrorCode::SelectorGuardFailed);
+        .expect("mismatched fingerprint guard returns a failed report");
+    assert_eq!(report.status, PatchStatus::Failed);
+    let error = report.operation_reports[0]
+        .error
+        .as_ref()
+        .expect("failed operation has an error");
     assert_eq!(
-        error.details().location.operation_id.as_deref(),
-        Some("replace-title")
+        error.code,
+        pptx_compose::json::schemas::ErrorCode::SelectorGuardFailed
     );
-    assert_eq!(
-        error.details().location.element_id.as_deref(),
-        Some("slide-1:shape-3")
-    );
+    assert_eq!(error.location["operation_id"], "replace-title");
+    assert_eq!(error.location["element_id"], "slide-1:shape-3");
 }
 
 #[test]
@@ -1173,19 +1178,21 @@ fn external_link_image_view_flag_matches_replace_image_rejection() {
             "content_type": "image/png"
         })],
     );
-    let error = document
+    let report = document
         .apply_patch(patch, media_inputs("replacement", "image/png", tiny_png()))
-        .expect_err("replace_image rejects externally linked images");
+        .expect("replace_image rejection returns a failed report");
 
-    assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+    assert_eq!(report.status, PatchStatus::Failed);
+    let error = report.operation_reports[0]
+        .error
+        .as_ref()
+        .expect("failed operation has an error");
     assert_eq!(
-        error.details().location.operation_id.as_deref(),
-        Some("replace-linked")
+        error.code,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit
     );
-    assert_eq!(
-        error.details().location.element_id.as_deref(),
-        Some("slide-1:pic-4")
-    );
+    assert_eq!(error.location["operation_id"], "replace-linked");
+    assert_eq!(error.location["element_id"], "slide-1:pic-4");
 }
 
 #[test]
@@ -1223,7 +1230,10 @@ fn text_editability_view_flag_matches_replace_text_acceptance() {
                 "text": "replacement"
             })],
         );
-        let accepted = candidate.apply_patch(patch, MediaInputs::default()).is_ok();
+        let accepted = candidate
+            .apply_patch(patch, MediaInputs::default())
+            .map(|report| report.status == PatchStatus::Applied)
+            .unwrap_or(false);
 
         assert_eq!(
             advertised, accepted,
@@ -1412,10 +1422,19 @@ fn replace_table_cell_text_rejects_merged_or_spanned_cells() {
         })],
     );
 
-    let error = document
+    let report = document
         .apply_patch(patch, MediaInputs::default())
-        .expect_err("merged table cell edit fails");
-    assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+        .expect("merged table cell edit returns a failed report");
+    assert_eq!(report.status, PatchStatus::Failed);
+    assert_eq!(report.operation_reports[0].status, OperationStatus::Failed);
+    assert_eq!(
+        report.operation_reports[0]
+            .error
+            .as_ref()
+            .expect("failed operation has an error")
+            .code,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit
+    );
 
     let written = document
         .write_vec_with_options(WriteOptions {
@@ -1448,10 +1467,21 @@ fn failed_multi_operation_patch_leaves_package_byte_identical() {
         ],
     );
 
-    let error = document
+    let report = document
         .apply_patch(patch, MediaInputs::default())
-        .expect_err("multi-operation patch fails before mutating");
-    assert_eq!(error.code(), ErrorCode::InvalidInput);
+        .expect("multi-operation patch returns a failed report");
+    assert_eq!(report.status, PatchStatus::Failed);
+    assert_eq!(report.changed_parts, Vec::<String>::new());
+    assert_eq!(report.operation_reports[0].status, OperationStatus::Applied);
+    assert_eq!(report.operation_reports[1].status, OperationStatus::Failed);
+    assert_eq!(
+        report.operation_reports[1]
+            .error
+            .as_ref()
+            .expect("failed operation has an error")
+            .code,
+        pptx_compose::json::schemas::ErrorCode::InvalidInput
+    );
 
     let written = document
         .write_vec_with_options(WriteOptions {

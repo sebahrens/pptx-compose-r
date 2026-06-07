@@ -16,7 +16,7 @@ use pptx_compose::{
         media_inputs::{MediaBinding, MediaInputs, MediaLimits, MediaSource},
         patch::Patch,
     },
-    json::schemas::{PatchReport, ValidationReport},
+    json::schemas::{PatchReport, PatchStatus, ValidationReport},
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -476,7 +476,7 @@ impl SessionStore {
                 expected_revision,
             ));
         }
-        if !dry_run {
+        if report.status == PatchStatus::Applied {
             session.package = package;
             session.revision = u64::from(report.new_revision);
             session

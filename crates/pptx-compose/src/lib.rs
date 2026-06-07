@@ -64,7 +64,7 @@ use pptx_compose_edit::{
 };
 use pptx_compose_json::{
     agent_view::views::{FindTextRequest, ViewRequest},
-    schemas::{PatchReport, ValidationReport},
+    schemas::{PatchReport, PatchStatus, ValidationReport},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -340,14 +340,10 @@ impl PresentationDocument {
         validate_envelope(&patch, &DocumentState::new(document_id.clone(), revision))?;
         let original_package =
             package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
-        let media_report = if options.dry_run {
-            media.check_references(
-                patch.operations.iter().filter_map(operation_media_ref),
-                pptx_compose_edit::media_inputs::ExtraBindingPolicy::Warn,
-            )?
-        } else {
-            validate_patch_operations(&original_package, &patch.operations, &media)?
-        };
+        let media_report = media.check_references(
+            patch.operations.iter().filter_map(operation_media_ref),
+            pptx_compose_edit::media_inputs::ExtraBindingPolicy::Warn,
+        )?;
 
         let package = original_package.clone();
         let mut executor = RealOperationExecutor {
@@ -382,10 +378,10 @@ impl PresentationDocument {
             &patch.operations,
             &report,
         )?;
-        if !options.dry_run {
+        if report.status == PatchStatus::Applied {
             self.replace_entries_from_package(staged_package)?;
         }
-        if !options.dry_run && !report.changed_parts.is_empty() {
+        if report.status == PatchStatus::Applied && !report.changed_parts.is_empty() {
             let recorded_revision =
                 u32::try_from(self.revision.record_apply(true)).map_err(|source| {
                     Error::with_source(
@@ -1373,23 +1369,6 @@ impl OperationExecutor for RealOperationExecutor<'_> {
             }
         }
     }
-}
-
-fn validate_patch_operations(
-    package: &Package,
-    operations: &[Operation],
-    media_inputs: &MediaInputs,
-) -> Result<MediaInputReport> {
-    let media_report = media_inputs.check_references(
-        operations.iter().filter_map(operation_media_ref),
-        pptx_compose_edit::media_inputs::ExtraBindingPolicy::Warn,
-    )?;
-
-    let model = core_presentation::PresentationDocument::open(package.clone())?;
-    for operation in operations {
-        validate_operation(package, &model, operation, media_inputs)?;
-    }
-    Ok(media_report)
 }
 
 fn append_media_input_warnings(report: &mut PatchReport, media_report: MediaInputReport) {
