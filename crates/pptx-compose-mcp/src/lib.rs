@@ -749,19 +749,22 @@ impl PptxServer {
             .map_err(outputs::map_error)?;
         let result = session
             .package
-            .to_agent_json_with_options(AgentViewOptions {
-                mode: if input.slide_id.is_some() {
-                    ViewMode::SlideDetail
-                } else {
-                    ViewMode::SlidePage
+            .to_agent_json_with_revision(
+                AgentViewOptions {
+                    mode: if input.slide_id.is_some() {
+                        ViewMode::SlideDetail
+                    } else {
+                        ViewMode::SlidePage
+                    },
+                    include_elements: input.slide_id.is_none(),
+                    slide_id: input.slide_id,
+                    slide_ids: Vec::new(),
+                    element_id: None,
+                    cursor: input.cursor,
+                    limit: input.limit,
                 },
-                include_elements: input.slide_id.is_none(),
-                slide_id: input.slide_id,
-                slide_ids: Vec::new(),
-                element_id: None,
-                cursor: input.cursor,
-                limit: input.limit,
-            })
+                session.revision,
+            )
             .map_err(outputs::map_error)?;
         Ok(Json(outputs::ListElementsOutput::success(result)))
     }
@@ -817,12 +820,15 @@ impl PptxServer {
             .map_err(outputs::map_error)?;
         let result: FindTextResult = session
             .package
-            .find_text(FindTextRequest {
-                query: input.0.query,
-                scope: input.0.scope,
-                cursor: input.0.cursor,
-                limit: input.0.limit,
-            })
+            .find_text_with_revision(
+                FindTextRequest {
+                    query: input.0.query,
+                    scope: input.0.scope,
+                    cursor: input.0.cursor,
+                    limit: input.0.limit,
+                },
+                session.revision,
+            )
             .map_err(outputs::map_error)?;
         Ok(rmcp::Json(outputs::FindTextOutput::found(result)))
     }

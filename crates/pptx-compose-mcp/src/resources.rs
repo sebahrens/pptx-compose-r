@@ -383,9 +383,8 @@ fn session_view(
     limit: Option<u32>,
 ) -> Result<Value, Error> {
     let session = sessions.get(session_id)?;
-    session
-        .package
-        .to_agent_json_with_options(AgentViewOptions {
+    session.package.to_agent_json_with_revision(
+        AgentViewOptions {
             mode,
             include_elements: false,
             slide_id,
@@ -393,7 +392,9 @@ fn session_view(
             element_id,
             cursor,
             limit,
-        })
+        },
+        session.revision,
+    )
 }
 
 fn schema_resource(name: &str, version: &str) -> Result<Value, Error> {

@@ -113,7 +113,15 @@ pub struct FindTextRequest {
 }
 
 pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonError> {
-    let context = ViewContext::new(pkg)?;
+    build_view_with_revision(pkg, revision::on_open().value(), req)
+}
+
+pub fn build_view_with_revision(
+    pkg: &PptxPackage,
+    revision: u64,
+    req: ViewRequest,
+) -> Result<Value, JsonError> {
+    let context = ViewContext::new(pkg, revision)?;
     let mode = req.mode.as_token();
     let limit = bounded_limit(mode, req.limit)?;
     let scope = CursorScope {
@@ -279,13 +287,21 @@ fn paginate_slide_elements(
 }
 
 pub fn find_text(pkg: &PptxPackage, req: FindTextRequest) -> Result<FindTextResult, JsonError> {
+    find_text_with_revision(pkg, revision::on_open().value(), req)
+}
+
+pub fn find_text_with_revision(
+    pkg: &PptxPackage,
+    revision: u64,
+    req: FindTextRequest,
+) -> Result<FindTextResult, JsonError> {
     if req.query.is_empty() {
         return Err(JsonError::Projection(
             "find_text query must not be empty.".to_owned(),
         ));
     }
 
-    let context = ViewContext::new(pkg)?;
+    let context = ViewContext::new(pkg, revision)?;
     let mode = "find_text";
     let limit = bounded_limit(mode, req.limit)?;
     let scope = CursorScope {
@@ -335,10 +351,10 @@ struct ViewPayload {
 }
 
 impl<'a> ViewContext<'a> {
-    fn new(pkg: &'a PptxPackage) -> Result<Self, JsonError> {
+    fn new(pkg: &'a PptxPackage, revision: u64) -> Result<Self, JsonError> {
         let document_id = package_document_id(pkg.package())?;
-        let revision = u32::try_from(revision::on_open().value())
-            .map_err(|err| JsonError::Projection(err.to_string()))?;
+        let revision =
+            u32::try_from(revision).map_err(|err| JsonError::Projection(err.to_string()))?;
         let slide_count = u32::try_from(pkg.slides().len())
             .map_err(|err| JsonError::Projection(err.to_string()))?;
 

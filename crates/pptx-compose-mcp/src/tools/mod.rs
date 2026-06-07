@@ -210,6 +210,7 @@ async fn tools_read_apply_and_export_mutated_deck() {
         ))
         .await
         .expect("slide reads");
+    assert_eq!(slide.0.0.result["revision"], 2);
     let elements = slide.0.0.result["slides"][0]["elements"]
         .as_array()
         .expect("slide detail has elements");

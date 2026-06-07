@@ -228,10 +228,19 @@ impl PresentationDocument {
         &self,
         options: AgentViewOptions,
     ) -> Result<serde_json::Value> {
+        self.to_agent_json_with_revision(options, self.revision.value())
+    }
+
+    pub fn to_agent_json_with_revision(
+        &self,
+        options: AgentViewOptions,
+        revision: u64,
+    ) -> Result<serde_json::Value> {
         let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         let model = core_presentation::PresentationDocument::open(package)?;
-        pptx_compose_json::agent_view::views::build_view(
+        pptx_compose_json::agent_view::views::build_view_with_revision(
             &model,
+            revision,
             ViewRequest {
                 mode: options.mode,
                 include_elements: options.include_elements,
@@ -254,9 +263,18 @@ impl PresentationDocument {
         &self,
         request: FindTextRequest,
     ) -> Result<pptx_compose_json::agent_view::FindTextResult> {
+        self.find_text_with_revision(request, self.revision.value())
+    }
+
+    pub fn find_text_with_revision(
+        &self,
+        request: FindTextRequest,
+        revision: u64,
+    ) -> Result<pptx_compose_json::agent_view::FindTextResult> {
         let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         let model = core_presentation::PresentationDocument::open(package)?;
-        pptx_compose_json::agent_view::views::find_text(&model, request).map_err(json_error)
+        pptx_compose_json::agent_view::views::find_text_with_revision(&model, revision, request)
+            .map_err(json_error)
     }
 
     pub fn from_legacy_json(value: serde_json::Value) -> Result<Self> {

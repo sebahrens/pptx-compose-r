@@ -1521,6 +1521,18 @@ fn successful_real_applies_increment_session_revision_and_reject_stale_patch() {
 
     let after_first = document.validate().expect("post-apply validation succeeds");
     assert_eq!(after_first.revision, 2);
+    let after_first_view = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("post-apply agent view builds");
+    assert_eq!(after_first_view["revision"], 2);
     let stale_error = document
         .apply_patch(
             replace_title_patch(
@@ -1538,7 +1550,12 @@ fn successful_real_applies_increment_session_revision_and_reject_stale_patch() {
         .apply_patch(
             replace_title_patch(
                 &after_first.document_id,
-                2,
+                u32::try_from(
+                    after_first_view["revision"]
+                        .as_u64()
+                        .expect("agent view revision is numeric"),
+                )
+                .expect("agent view revision fits patch schema"),
                 "revision-second",
                 "Second update",
             ),
