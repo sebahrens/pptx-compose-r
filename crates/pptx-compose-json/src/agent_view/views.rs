@@ -1249,20 +1249,29 @@ fn editable(
         ImageEditSupport::Unresolved => (false, None),
     };
     let (bounds_supported, bounds_reason) = bounds_edit_support(core_kind);
-
-    Editable {
-        text: EditableSupport {
-            supported: has_text,
-            reason: (!has_text).then(|| "not_text".to_owned()),
-        },
-        bounds: EditableSupport {
-            supported: bounds_supported,
-            reason: bounds_reason.map(str::to_owned),
-        },
-        image: EditableSupport {
+    let text = has_text.then_some(EditableSupport {
+        supported: true,
+        reason: None,
+    });
+    let bounds = (bounds_supported || bounds_reason.is_some()).then_some(EditableSupport {
+        supported: bounds_supported,
+        reason: bounds_reason.map(str::to_owned),
+    });
+    let alt_text = Some(EditableSupport {
+        supported: true,
+        reason: None,
+    });
+    let image =
+        (!matches!(image_support, ImageEditSupport::NotPicture)).then_some(EditableSupport {
             supported: image_supported,
             reason: image_reason,
-        },
+        });
+
+    Editable {
+        text,
+        bounds,
+        alt_text,
+        image,
     }
 }
 
@@ -1998,18 +2007,16 @@ fn test_element(index: u32) -> ElementView {
             cy: 1000,
         },
         editable: Editable {
-            text: EditableSupport {
-                supported: false,
-                reason: Some("shape has no text body".to_owned()),
-            },
-            bounds: EditableSupport {
+            text: None,
+            bounds: Some(EditableSupport {
                 supported: true,
                 reason: None,
-            },
-            image: EditableSupport {
-                supported: false,
-                reason: Some("shape is not an image".to_owned()),
-            },
+            }),
+            alt_text: Some(EditableSupport {
+                supported: true,
+                reason: None,
+            }),
+            image: None,
         },
         fingerprint: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             .to_owned(),

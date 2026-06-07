@@ -1287,9 +1287,14 @@ fn text_editability_view_flag_matches_replace_text_acceptance() {
 
     for element in elements {
         let element_id = element["id"].as_str().expect("element id is a string");
-        let advertised = element["editable"]["text"]["supported"]
-            .as_bool()
-            .expect("text edit support is a bool");
+        let advertised = element["editable"]
+            .get("text")
+            .map(|text| {
+                text["supported"]
+                    .as_bool()
+                    .expect("text edit support is a bool")
+            })
+            .unwrap_or(false);
         let mut candidate = PresentationDocument::from_bytes(&bytes).expect("candidate deck opens");
         let patch = patch_with_operations(
             &bytes,

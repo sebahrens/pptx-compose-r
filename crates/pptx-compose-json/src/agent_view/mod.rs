@@ -136,9 +136,14 @@ pub struct Bounds {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Editable {
-    pub text: EditableSupport,
-    pub bounds: EditableSupport,
-    pub image: EditableSupport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<EditableSupport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<EditableSupport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alt_text: Option<EditableSupport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<EditableSupport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -399,7 +404,7 @@ pub mod schema {
                                 "editable": {
                                     "text": { "supported": true },
                                     "bounds": { "supported": true },
-                                    "image": { "supported": false, "reason": "not_picture" }
+                                    "alt_text": { "supported": true }
                                 },
                                 "fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                                 "text": {
@@ -434,8 +439,8 @@ pub mod schema {
                                 "z_order": 4,
                                 "bounds": { "x": 914400, "y": 1524000, "cx": 3657600, "cy": 2743200 },
                                 "editable": {
-                                    "text": { "supported": false, "reason": "not_text" },
                                     "bounds": { "supported": true },
+                                    "alt_text": { "supported": true },
                                     "image": { "supported": true }
                                 },
                                 "fingerprint": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
@@ -565,18 +570,19 @@ pub mod binary {
                         cy: 2743200,
                     },
                     editable: Editable {
-                        text: EditableSupport {
-                            supported: false,
-                            reason: Some("not_text".to_owned()),
-                        },
-                        bounds: EditableSupport {
+                        text: None,
+                        bounds: Some(EditableSupport {
                             supported: true,
                             reason: None,
-                        },
-                        image: EditableSupport {
+                        }),
+                        alt_text: Some(EditableSupport {
                             supported: true,
                             reason: None,
-                        },
+                        }),
+                        image: Some(EditableSupport {
+                            supported: true,
+                            reason: None,
+                        }),
                     },
                     fingerprint:
                         "sha256:4444444444444444444444444444444444444444444444444444444444444444"

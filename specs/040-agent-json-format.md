@@ -77,7 +77,7 @@ Full-deck export is not the primary agent read path for large decks. Agent-facin
           "editable": {
             "text": { "supported": true },
             "bounds": { "supported": true },
-            "image": { "supported": false, "reason": "not_picture" }
+            "alt_text": { "supported": true }
           },
           "fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
           "text": {
@@ -112,8 +112,8 @@ Full-deck export is not the primary agent read path for large decks. Agent-facin
           "z_order": 4,
           "bounds": { "x": 914400, "y": 1524000, "cx": 3657600, "cy": 2743200 },
           "editable": {
-            "text": { "supported": false, "reason": "not_text" },
             "bounds": { "supported": true },
+            "alt_text": { "supported": true },
             "image": { "supported": true }
           },
           "fingerprint": "sha256:4444444444444444444444444444444444444444444444444444444444444444",

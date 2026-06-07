@@ -95,11 +95,15 @@ Element entries must include enough provenance for agents to target and recover 
   "editable": {
     "text": { "supported": true },
     "bounds": { "supported": true },
-    "image": { "supported": false, "reason": "not_picture" }
+    "alt_text": { "supported": true }
   },
   "fingerprint": "sha256:..."
 }
 ```
+
+`editable` MUST be kind-appropriate: text-capable elements expose `text`,
+picture and graphic-frame media elements expose `image`, and bounded elements
+with `p:cNvPr` expose `bounds` and `alt_text`.
 
 The canonical element kind vocabulary is `text_box`, `shape`, `image`, `group`,
 `chart`, `table`, `diagram`, and `ole`. Selector `guards.kind` uses this same
