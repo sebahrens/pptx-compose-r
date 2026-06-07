@@ -323,7 +323,7 @@ fn media_list_and_get_extract_sanitized_package_media() {
     let extracted = root.join("image1.png");
     let report = root.join("media-report.json");
 
-    let list = run_cli(["media", "list", fixture_str(&fixture), "--json"]);
+    let list = run_cli(["media", "list", fixture_str(&fixture)]);
     let list_json = parse_stdout(&list);
     assert_eq!(list_json["schema"], "pptx-compose.result.v1");
     assert!(
@@ -333,6 +333,28 @@ fn media_list_and_get_extract_sanitized_package_media() {
             .iter()
             .any(|media| media["package_path"] == "ppt/media/image1.png")
     );
+
+    let rejected_json_flag = run_cli_raw([
+        "--json-errors",
+        "media",
+        "list",
+        fixture_str(&fixture),
+        "--json",
+    ]);
+    assert_eq!(
+        rejected_json_flag.status.code(),
+        Some(1),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&rejected_json_flag.stdout),
+        String::from_utf8_lossy(&rejected_json_flag.stderr)
+    );
+    assert!(rejected_json_flag.stdout.is_empty());
+    let stderr_text = String::from_utf8(rejected_json_flag.stderr).expect("stderr is UTF-8");
+    let envelope: serde_json::Value =
+        serde_json::from_str(&stderr_text).expect("stderr is one JSON document");
+    assert_eq!(envelope["schema"], "pptx-compose.error.v1");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "invalid_input");
 
     run_cli_owned(vec![
         "media".to_owned(),

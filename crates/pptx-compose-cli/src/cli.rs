@@ -186,8 +186,6 @@ pub enum MediaCmd {
 #[derive(Args, Debug, Eq, PartialEq)]
 pub struct MediaListArgs {
     pub input: PathBuf,
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Args, Debug, Eq, PartialEq)]

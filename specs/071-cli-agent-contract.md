@@ -229,7 +229,7 @@ Rules:
 ### `media`
 
 ```bash
-pptx-compose media list INPUT.pptx --json
+pptx-compose media list INPUT.pptx
 pptx-compose media get INPUT.pptx ppt/media/image1.png --output image1.png --report media.report.json
 ```
 

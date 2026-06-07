@@ -265,12 +265,7 @@ fn media_list(
     let result = MediaListResult {
         media: document.media_parts().map_err(CliError::from_error)?,
     };
-    let output = if args.json {
-        json!(result)
-    } else {
-        json!(result.media)
-    };
-    sink.emit_json(&success_envelope(output), OutputDest::Stdout)
+    sink.emit_json(&success_envelope(json!(result)), OutputDest::Stdout)
 }
 
 fn media_get(
