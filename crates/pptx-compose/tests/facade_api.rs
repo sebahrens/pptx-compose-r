@@ -11,6 +11,7 @@ use pptx_compose::{
     WriteMode, WriteOptions,
     core::{
         error::ErrorCode,
+        provenance::checksum::part_checksum,
         provenance::document_id::document_id as provenance_document_id,
         zip::limits::ResourceLimits,
         zip::reader::{RawEntry, from_bytes},
@@ -429,6 +430,154 @@ fn agent_view_advertises_image_content_types_accepted_by_image_edits() {
         .collect::<BTreeSet<_>>();
 
     assert_eq!(advertised, accepted);
+}
+
+#[test]
+fn agent_view_advertises_set_document_metadata() {
+    let document = PresentationDocument::from_bytes(metadata_deck()).expect("metadata deck opens");
+    let view = document.to_agent_json().expect("agent view builds");
+    let advertised = view["capabilities"]["operations"]
+        .as_array()
+        .expect("operations are an array")
+        .iter()
+        .map(|value| value.as_str().expect("operation is a string"))
+        .collect::<BTreeSet<_>>();
+
+    assert!(advertised.contains("set_document_metadata"));
+}
+
+#[test]
+fn set_document_metadata_round_trips_and_preserves_clean_parts() {
+    let bytes = metadata_deck();
+    let original_entries = from_bytes(&bytes).expect("original entries read");
+    let core_before = entry_text(&original_entries, "docProps/core.xml");
+    let core_checksum = part_checksum(core_before.as_bytes());
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("metadata deck opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "set-document-metadata",
+        vec![serde_json::json!({
+            "operation_id": "set-core-fields",
+            "op": "set_document_metadata",
+            "selector": {
+                "type": "core_properties",
+                "part": "docProps/core.xml",
+                "guards": {
+                    "part_checksum": core_checksum
+                }
+            },
+            "match": {
+                "title": "Old title"
+            },
+            "metadata": {
+                "title": "New title",
+                "subject": "Board update",
+                "creator": "Research Team",
+                "keywords": "finance; q4"
+            }
+        })],
+    );
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("metadata applies");
+    assert_eq!(report.changed_parts, vec!["docProps/core.xml"]);
+    assert_ne!(report.new_document_id, report.document_id);
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("edited deck writes");
+    let reopened = PresentationDocument::from_bytes(&written).expect("edited deck reopens");
+    assert_eq!(
+        reopened.validate().expect("edited deck validates").status,
+        pptx_compose::json::schemas::ValidationStatus::Valid
+    );
+    let written_entries = from_bytes(&written).expect("written entries read");
+    assert_exact_part_deltas(
+        "set_document_metadata",
+        &original_entries,
+        &written_entries,
+        &["docProps/core.xml"],
+        &[],
+    );
+
+    let core_after = entry_text(&written_entries, "docProps/core.xml");
+    assert!(core_after.contains("<dc:title>New title</dc:title>"));
+    assert!(core_after.contains("<dc:subject>Board update</dc:subject>"));
+    assert!(core_after.contains("<dc:creator>Research Team</dc:creator>"));
+    assert!(core_after.contains("<cp:keywords>finance; q4</cp:keywords>"));
+    assert!(core_after.contains(
+        r#"<dcterms:created xsi:type="dcterms:W3CDTF">2026-01-01T00:00:00Z</dcterms:created>"#
+    ));
+    assert!(core_after.contains(
+        r#"<dcterms:modified xsi:type="dcterms:W3CDTF">2026-01-02T00:00:00Z</dcterms:modified>"#
+    ));
+    assert!(core_after.contains("<cp:lastModifiedBy>Original editor</cp:lastModifiedBy>"));
+}
+
+#[test]
+fn set_document_metadata_rejects_stale_revision_and_match_guard() {
+    let bytes = metadata_deck();
+    let mut stale_document = PresentationDocument::from_bytes(&bytes).expect("metadata deck opens");
+    let stale_patch = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(&bytes),
+        "base_revision": 2,
+        "client_request_id": "stale-metadata",
+        "operations": [{
+            "operation_id": "set-stale-title",
+            "op": "set_document_metadata",
+            "selector": {
+                "type": "core_properties",
+                "part": "docProps/core.xml"
+            },
+            "metadata": {
+                "title": "New title"
+            }
+        }]
+    }))
+    .expect("stale patch parses");
+    let stale_error = stale_document
+        .apply_patch(stale_patch, MediaInputs::default())
+        .expect_err("stale metadata patch fails");
+    assert_eq!(stale_error.code(), ErrorCode::StalePatch);
+
+    let mut guarded_document =
+        PresentationDocument::from_bytes(&bytes).expect("metadata deck opens");
+    let guarded_patch = patch_with_operations(
+        &bytes,
+        "metadata-match-guard",
+        vec![serde_json::json!({
+            "operation_id": "set-guarded-title",
+            "op": "set_document_metadata",
+            "selector": {
+                "type": "core_properties",
+                "part": "docProps/core.xml"
+            },
+            "match": {
+                "title": "Not the current title"
+            },
+            "metadata": {
+                "title": "New title"
+            }
+        })],
+    );
+    let guarded_error = guarded_document
+        .apply_patch(guarded_patch, MediaInputs::default())
+        .expect_err("metadata match guard fails");
+    assert_eq!(guarded_error.code(), ErrorCode::SelectorGuardFailed);
+    assert_eq!(
+        guarded_error.details().location.operation_id.as_deref(),
+        Some("set-guarded-title")
+    );
+    assert_eq!(
+        guarded_error.details().location.operation.as_deref(),
+        Some("set_document_metadata")
+    );
 }
 
 #[test]
@@ -1657,6 +1806,28 @@ fn text_deck_with_clean_extras() -> Vec<u8> {
     )
 }
 
+fn metadata_deck() -> Vec<u8> {
+    zip_entries(
+        [
+            ("[Content_Types].xml", content_types_with_core().as_bytes()),
+            ("_rels/.rels", root_rels_with_core().as_bytes()),
+            ("ppt/presentation.xml", presentation().as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", text_slide().as_bytes()),
+            ("docProps/core.xml", core_properties().as_bytes()),
+            (
+                "docProps/app.xml",
+                b"<Properties><Application>PowerPoint</Application></Properties>",
+            ),
+            ("custom/unknown.bin", b"unknown payload"),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
 fn image_deck_with_clean_extras() -> Vec<u8> {
     zip_entries(
         [
@@ -1811,11 +1982,46 @@ fn content_types_with_png_and_unknown() -> String {
         .to_owned()
 }
 
+fn content_types_with_core() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="bin" ContentType="application/octet-stream"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>"#
+        .to_owned()
+}
+
 fn root_rels() -> String {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
 </Relationships>"#
+        .to_owned()
+}
+
+fn root_rels_with_core() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>"#
+        .to_owned()
+}
+
+fn core_properties() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>Old title</dc:title>
+  <dcterms:created xsi:type="dcterms:W3CDTF">2026-01-01T00:00:00Z</dcterms:created>
+  <cp:lastModifiedBy>Original editor</cp:lastModifiedBy>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">2026-01-02T00:00:00Z</dcterms:modified>
+</cp:coreProperties>"#
         .to_owned()
 }
 
