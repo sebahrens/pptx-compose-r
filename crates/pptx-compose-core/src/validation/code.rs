@@ -44,95 +44,27 @@ pub enum FindingCode {
     SignatureInvalidatedByEdit,
 }
 
-pub const FINDING_REGISTRY: &[(FindingCode, FindingCategory, Severity)] = &[
-    (
-        FindingCode::MissingContentType,
-        FindingCategory::ContentType,
-        Severity::Error,
-    ),
-    (
-        FindingCode::MediaContentTypeMismatch,
-        FindingCategory::ContentType,
-        Severity::Error,
-    ),
-    (
-        FindingCode::DanglingInternalRelationship,
-        FindingCategory::Relationship,
-        Severity::Error,
-    ),
-    (
-        FindingCode::UnreferencedMedia,
-        FindingCategory::Package,
-        Severity::Info,
-    ),
-    (
-        FindingCode::UnresolvedRelationshipReference,
-        FindingCategory::Relationship,
-        Severity::Error,
-    ),
-    (
-        FindingCode::DuplicateRelationshipId,
-        FindingCategory::Relationship,
-        Severity::Error,
-    ),
-    (
-        FindingCode::ExternalRelationshipNotChecked,
-        FindingCategory::Relationship,
-        Severity::Warning,
-    ),
-    (
-        FindingCode::DanglingCommentAuthorRef,
-        FindingCategory::Comments,
-        Severity::Error,
-    ),
-    (
-        FindingCode::DuplicateSlideId,
-        FindingCategory::Presentation,
-        Severity::Error,
-    ),
-    (
-        FindingCode::SlideOrderMismatch,
-        FindingCategory::Presentation,
-        Severity::Error,
-    ),
-    (
-        FindingCode::DuplicateDrawingId,
-        FindingCategory::Slide,
-        Severity::Error,
-    ),
-    (
-        FindingCode::InvalidBounds,
-        FindingCategory::Slide,
-        Severity::Error,
-    ),
-    (
-        FindingCode::MalformedXml,
-        FindingCategory::Xml,
-        Severity::Fatal,
-    ),
-    (
-        FindingCode::MissingNamespaceDeclaration,
-        FindingCategory::Xml,
-        Severity::Error,
-    ),
-    (
-        FindingCode::PartDropped,
-        FindingCategory::Package,
-        Severity::Fatal,
-    ),
-    (
-        FindingCode::OrphanPart,
-        FindingCategory::Package,
-        Severity::Info,
-    ),
-    (
-        FindingCode::SignatureInvalidatedByEdit,
-        FindingCategory::Signature,
-        Severity::Warning,
-    ),
-];
-
 impl FindingCode {
+    pub const ALL: &[Self] = &[
+        Self::MissingContentType,
+        Self::MediaContentTypeMismatch,
+        Self::DanglingInternalRelationship,
+        Self::UnreferencedMedia,
+        Self::UnresolvedRelationshipReference,
+        Self::DuplicateRelationshipId,
+        Self::ExternalRelationshipNotChecked,
+        Self::DanglingCommentAuthorRef,
+        Self::DuplicateSlideId,
+        Self::SlideOrderMismatch,
+        Self::DuplicateDrawingId,
+        Self::InvalidBounds,
+        Self::MalformedXml,
+        Self::MissingNamespaceDeclaration,
+        Self::PartDropped,
+        Self::OrphanPart,
+        Self::SignatureInvalidatedByEdit,
+    ];
+
     #[must_use]
     pub const fn default_entry(self) -> (FindingCategory, Severity) {
         match self {
@@ -161,100 +93,38 @@ impl FindingCode {
     }
 }
 
+const fn registry_entry(code: FindingCode) -> (FindingCode, FindingCategory, Severity) {
+    let (category, severity) = code.default_entry();
+    (code, category, severity)
+}
+
+const fn build_finding_registry()
+-> [(FindingCode, FindingCategory, Severity); FindingCode::ALL.len()] {
+    let mut entries = [registry_entry(FindingCode::MissingContentType); FindingCode::ALL.len()];
+    let mut index = 0;
+
+    while index < FindingCode::ALL.len() {
+        entries[index] = registry_entry(FindingCode::ALL[index]);
+        index += 1;
+    }
+
+    entries
+}
+
+const FINDING_REGISTRY_ENTRIES: [(FindingCode, FindingCategory, Severity); FindingCode::ALL.len()] =
+    build_finding_registry();
+
+pub const FINDING_REGISTRY: &[(FindingCode, FindingCategory, Severity)] = &FINDING_REGISTRY_ENTRIES;
+
 #[test]
 fn registry_matches_044_table() {
-    let expected = [
-        (
-            FindingCode::MissingContentType,
-            FindingCategory::ContentType,
-            Severity::Error,
-        ),
-        (
-            FindingCode::MediaContentTypeMismatch,
-            FindingCategory::ContentType,
-            Severity::Error,
-        ),
-        (
-            FindingCode::DanglingInternalRelationship,
-            FindingCategory::Relationship,
-            Severity::Error,
-        ),
-        (
-            FindingCode::UnreferencedMedia,
-            FindingCategory::Package,
-            Severity::Info,
-        ),
-        (
-            FindingCode::UnresolvedRelationshipReference,
-            FindingCategory::Relationship,
-            Severity::Error,
-        ),
-        (
-            FindingCode::DuplicateRelationshipId,
-            FindingCategory::Relationship,
-            Severity::Error,
-        ),
-        (
-            FindingCode::ExternalRelationshipNotChecked,
-            FindingCategory::Relationship,
-            Severity::Warning,
-        ),
-        (
-            FindingCode::DanglingCommentAuthorRef,
-            FindingCategory::Comments,
-            Severity::Error,
-        ),
-        (
-            FindingCode::DuplicateSlideId,
-            FindingCategory::Presentation,
-            Severity::Error,
-        ),
-        (
-            FindingCode::SlideOrderMismatch,
-            FindingCategory::Presentation,
-            Severity::Error,
-        ),
-        (
-            FindingCode::DuplicateDrawingId,
-            FindingCategory::Slide,
-            Severity::Error,
-        ),
-        (
-            FindingCode::InvalidBounds,
-            FindingCategory::Slide,
-            Severity::Error,
-        ),
-        (
-            FindingCode::MalformedXml,
-            FindingCategory::Xml,
-            Severity::Fatal,
-        ),
-        (
-            FindingCode::MissingNamespaceDeclaration,
-            FindingCategory::Xml,
-            Severity::Error,
-        ),
-        (
-            FindingCode::PartDropped,
-            FindingCategory::Package,
-            Severity::Fatal,
-        ),
-        (
-            FindingCode::OrphanPart,
-            FindingCategory::Package,
-            Severity::Info,
-        ),
-        (
-            FindingCode::SignatureInvalidatedByEdit,
-            FindingCategory::Signature,
-            Severity::Warning,
-        ),
-    ];
+    assert_eq!(FindingCode::ALL.len(), 17);
+    assert_eq!(FINDING_REGISTRY.len(), FindingCode::ALL.len());
 
-    assert_eq!(FINDING_REGISTRY, expected);
-    assert_eq!(FINDING_REGISTRY.len(), 17);
-
-    for (code, category, severity) in expected {
+    for (&(code, category, severity), &expected_code) in
+        FINDING_REGISTRY.iter().zip(FindingCode::ALL)
+    {
+        assert_eq!(code, expected_code);
         assert_eq!(code.default_entry(), (category, severity));
     }
 
