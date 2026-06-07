@@ -27,6 +27,7 @@ use pptx_compose_edit::{
         Bounds, FormatPolicy, ImageDedupe, ImageFit, InsertOptions, OverflowPolicy,
         ReplaceTextMode, ZOrder, ZOrderKeyword,
     },
+    selectors::RunSelector,
 };
 
 mod construction {
@@ -168,6 +169,8 @@ mod construction {
             mode: ReplaceTextMode::WholeElement,
             format_policy: FormatPolicy::PreserveFirstRun,
             overflow_policy: OverflowPolicy::Allow,
+            allow_formatting_simplification: false,
+            run: None,
         };
 
         operation.apply(&mut package, &target)?;
@@ -192,6 +195,8 @@ mod construction {
             mode: ReplaceTextMode::WholeElement,
             format_policy: FormatPolicy::PreserveExistingRuns,
             overflow_policy: OverflowPolicy::Allow,
+            allow_formatting_simplification: true,
+            run: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;
@@ -218,6 +223,8 @@ mod construction {
             mode: ReplaceTextMode::WholeElement,
             format_policy: FormatPolicy::PreserveExistingRuns,
             overflow_policy: OverflowPolicy::Allow,
+            allow_formatting_simplification: true,
+            run: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;
@@ -228,6 +235,104 @@ mod construction {
         assert!(!output.contains("<a:fld"));
         assert!(!output.contains("<a:br"));
         assert_eq!(output.matches("<a:r>").count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn replace_text_run_scoped_preserves_sibling_runs_and_rich_constructs() -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(RICH_TEXT_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated".to_owned(),
+            current_text_match: Some("Linked".to_owned()),
+            mode: ReplaceTextMode::RunScoped,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            overflow_policy: OverflowPolicy::Allow,
+            allow_formatting_simplification: false,
+            run: Some(RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: None,
+                text_hash: None,
+            }),
+        };
+
+        let effects = operation.apply(&mut package, &target)?;
+        let output = element_xml_at_path(&package, &slide_part, &[3])?;
+
+        assert!(!has_warning_code(
+            &effects.warnings,
+            "formatting_simplified"
+        ));
+        assert!(output.contains(r#"<a:t>Updated</a:t>"#));
+        assert!(!output.contains(r#"<a:t>Linked</a:t>"#));
+        assert!(output.contains(r#"<a:hlinkClick r:id="rId2"/>"#));
+        assert!(output.contains(r#"<a:fld id="{00000000-0000-0000-0000-000000000000}" type="slidenum"><a:rPr lang="en-US"/><a:t>Field</a:t></a:fld>"#));
+        assert!(output.contains(r#"<a:br/>"#));
+        assert!(output.contains(r#"<a:r><a:t>Break</a:t></a:r>"#));
+        assert_eq!(output.matches("<a:r>").count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn replace_text_whole_element_refuses_rich_text_without_confirmation() -> Result<()> {
+        let package = package_with_slide(RICH_TEXT_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated".to_owned(),
+            current_text_match: None,
+            mode: ReplaceTextMode::WholeElement,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            overflow_policy: OverflowPolicy::Allow,
+            allow_formatting_simplification: false,
+            run: None,
+        };
+
+        let error = operation
+            .validate(&package, &target)
+            .expect_err("rich whole-element rewrite requires confirmation");
+
+        assert_eq!(
+            error.code(),
+            pptx_compose_core::error::ErrorCode::UnsupportedEdit
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn replace_text_run_scoped_match_guard_fails_on_selected_run() -> Result<()> {
+        let package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated".to_owned(),
+            current_text_match: Some("FirstSecond".to_owned()),
+            mode: ReplaceTextMode::RunScoped,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            overflow_policy: OverflowPolicy::Allow,
+            allow_formatting_simplification: false,
+            run: Some(RunSelector {
+                paragraph_index: 0,
+                run_index: 1,
+                run_end_index: None,
+                text_hash: None,
+            }),
+        };
+
+        let error = operation
+            .validate(&package, &target)
+            .expect_err("run-level match guard uses selected run text");
+
+        assert_eq!(
+            error.code(),
+            pptx_compose_core::error::ErrorCode::SelectorGuardFailed
+        );
         Ok(())
     }
 
@@ -243,6 +348,8 @@ mod construction {
             mode: ReplaceTextMode::WholeElement,
             format_policy: FormatPolicy::PreserveExistingRuns,
             overflow_policy: OverflowPolicy::Allow,
+            allow_formatting_simplification: false,
+            run: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;

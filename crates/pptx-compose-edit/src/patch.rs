@@ -21,7 +21,7 @@ use serde_json::Value;
 
 use crate::{
     reports::{has_blocking_findings, patch_validation_summary, validation_report},
-    selectors::Selector,
+    selectors::{RunSelector, Selector},
 };
 
 pub const PATCH_SCHEMA: &str = "pptx-compose.patch.v1";
@@ -93,6 +93,14 @@ impl Operation {
 impl ReplaceTextOperation {
     pub fn target_selector(&self) -> Result<Selector> {
         element_target_selector(&self.operation_id, &self.element_id, self.selector.as_ref())
+    }
+
+    #[must_use]
+    pub fn run_selector(&self) -> Option<&RunSelector> {
+        match &self.selector {
+            Some(Selector::ElementId { run, .. }) => run.as_ref(),
+            _ => None,
+        }
     }
 
     #[must_use]
@@ -191,6 +199,7 @@ fn element_target_selector(
         None => Ok(Selector::ElementId {
             id: shorthand.to_owned(),
             guards: None,
+            run: None,
         }),
     }
 }
@@ -289,12 +298,19 @@ pub struct ReplaceTextOperation {
     pub format_policy: Option<FormatPolicy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overflow_policy: Option<OverflowPolicy>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_formatting_simplification: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplaceTextMode {
     WholeElement,
+    RunScoped,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]

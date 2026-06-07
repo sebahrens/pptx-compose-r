@@ -2,6 +2,7 @@ use pptx_compose_core::{
     error::{Error, ErrorCode, ErrorLocation, Result},
     opc::package::Package,
     pptx::text::read_text_body,
+    provenance::text_hash,
     xml::{
         document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
         parser::parse_document,
@@ -14,6 +15,7 @@ use serde_json::json;
 use crate::{
     operations::ResolvedElement,
     patch::{FormatPolicy, OverflowPolicy, PatchEffects, ReplaceTextMode, ReplaceTextOperation},
+    selectors::RunSelector,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,6 +27,8 @@ pub struct ReplaceText {
     pub mode: ReplaceTextMode,
     pub format_policy: FormatPolicy,
     pub overflow_policy: OverflowPolicy,
+    pub allow_formatting_simplification: bool,
+    pub run: Option<RunSelector>,
 }
 
 impl From<&ReplaceTextOperation> for ReplaceText {
@@ -39,6 +43,8 @@ impl From<&ReplaceTextOperation> for ReplaceText {
                 .format_policy
                 .unwrap_or(FormatPolicy::PreserveExistingRuns),
             overflow_policy: operation.overflow_policy.unwrap_or(OverflowPolicy::Allow),
+            allow_formatting_simplification: operation.allow_formatting_simplification,
+            run: operation.run_selector().cloned(),
         }
     }
 }
@@ -71,7 +77,7 @@ impl ReplaceText {
             )
             .with_location(self.location(Some(target)))
         })?;
-        self.validate_match(target, tx_body)
+        self.validate_text_body(target, tx_body)
     }
 
     pub fn apply(&self, package: &mut Package, target: &ResolvedElement) -> Result<PatchEffects> {
@@ -95,7 +101,7 @@ impl ReplaceText {
             .with_location(self.location(Some(target)))
         })?;
 
-        let formatting_simplified = rewrite_text_body(&mut document, self, target)?;
+        let rewrite = rewrite_text_body(&mut document, self, target)?;
         *part.bytes_mut() = write_document(
             &document,
             &WriteOptions {
@@ -104,8 +110,11 @@ impl ReplaceText {
         )?;
         package.mark_dirty(part_name.clone());
 
-        let mut warnings = vec![json!({ "newline_mapping": "paragraph" })];
-        if formatting_simplified {
+        let mut warnings = Vec::new();
+        if self.mode == ReplaceTextMode::WholeElement {
+            warnings.push(json!({ "newline_mapping": "paragraph" }));
+        }
+        if rewrite.formatting_simplified {
             warnings.push(json!({
                 "code": "formatting_simplified",
                 "message": "Existing rich text structure could not be preserved exactly."
@@ -142,7 +151,44 @@ impl ReplaceText {
         Ok(())
     }
 
-    fn validate_match(&self, target: &ResolvedElement, tx_body: &XmlElement) -> Result<()> {
+    fn validate_text_body(&self, target: &ResolvedElement, tx_body: &XmlElement) -> Result<()> {
+        match self.mode {
+            ReplaceTextMode::WholeElement => {
+                self.validate_whole_element_text_body(target, tx_body)?;
+                self.validate_whole_element_match(target, tx_body)
+            }
+            ReplaceTextMode::RunScoped => self.validate_run_scoped_text_body(target, tx_body),
+        }
+    }
+
+    fn validate_whole_element_text_body(
+        &self,
+        target: &ResolvedElement,
+        tx_body: &XmlElement,
+    ) -> Result<()> {
+        if self.run.is_some() {
+            return Err(Error::new(
+                ErrorCode::InvalidInput,
+                "selector.run is only valid when replace_text mode is run_scoped.",
+            )
+            .with_location(self.location(Some(target))));
+        }
+        if !self.allow_formatting_simplification && should_warn_formatting_simplified(tx_body, self)
+        {
+            return Err(Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Whole-element replace_text would simplify rich text; set allow_formatting_simplification to confirm.",
+            )
+            .with_location(self.location(Some(target))));
+        }
+        Ok(())
+    }
+
+    fn validate_whole_element_match(
+        &self,
+        target: &ResolvedElement,
+        tx_body: &XmlElement,
+    ) -> Result<()> {
         let Some(expected) = &self.current_text_match else {
             return Ok(());
         };
@@ -153,6 +199,48 @@ impl ReplaceText {
                 "replace_text match guard did not match current element text.",
             )
             .with_location(self.location(Some(target))));
+        }
+        Ok(())
+    }
+
+    fn validate_run_scoped_text_body(
+        &self,
+        target: &ResolvedElement,
+        tx_body: &XmlElement,
+    ) -> Result<()> {
+        if self.text.contains('\n') {
+            return Err(Error::new(
+                ErrorCode::InvalidInput,
+                "run_scoped replace_text text must not contain newline characters.",
+            )
+            .with_location(self.location(Some(target))));
+        }
+        let run = self.run.as_ref().ok_or_else(|| {
+            Error::new(
+                ErrorCode::InvalidInput,
+                "run_scoped replace_text requires selector.run.",
+            )
+            .with_location(self.location(Some(target)))
+        })?;
+        let current = selected_run_text(tx_body, run, self, target)?;
+        if let Some(expected) = &self.current_text_match
+            && current != *expected
+        {
+            return Err(Error::new(
+                ErrorCode::SelectorGuardFailed,
+                "replace_text match guard did not match current run text.",
+            )
+            .with_location(self.location(Some(target))));
+        }
+        if let Some(expected_hash) = &run.text_hash {
+            let actual_hash = text_hash::text_hash(&current);
+            if actual_hash != *expected_hash {
+                return Err(Error::new(
+                    ErrorCode::SelectorGuardFailed,
+                    "selector.run text_hash guard did not match current run text.",
+                )
+                .with_location(self.location(Some(target))));
+            }
         }
         Ok(())
     }
@@ -181,7 +269,7 @@ fn rewrite_text_body(
     document: &mut XmlDocument,
     operation: &ReplaceText,
     target: &ResolvedElement,
-) -> Result<bool> {
+) -> Result<RewriteResult> {
     let root = root_element_mut(document).ok_or_else(|| {
         Error::malformed_xml("Slide XML does not contain a root element.")
             .with_location(operation.location(Some(target)))
@@ -223,11 +311,216 @@ fn rewrite_text_body(
                 "Text body node is not an element.",
             )
         })?;
-    operation.validate_match(target, tx_body)?;
-    let replacement = replacement_text_body(tx_body, operation);
-    let formatting_simplified = should_warn_formatting_simplified(tx_body, operation);
-    element.children[tx_body_index] = XmlNode::Element(replacement);
-    Ok(formatting_simplified)
+    operation.validate_text_body(target, tx_body)?;
+    match operation.mode {
+        ReplaceTextMode::WholeElement => {
+            let replacement = replacement_text_body(tx_body, operation);
+            let formatting_simplified = should_warn_formatting_simplified(tx_body, operation);
+            element.children[tx_body_index] = XmlNode::Element(replacement);
+            Ok(RewriteResult {
+                formatting_simplified,
+            })
+        }
+        ReplaceTextMode::RunScoped => {
+            let tx_body =
+                node_element_mut(&mut element.children[tx_body_index]).ok_or_else(|| {
+                    Error::new(
+                        ErrorCode::InternalError,
+                        "Text body node is not an element.",
+                    )
+                })?;
+            replace_run_scoped_text(tx_body, operation, target)?;
+            Ok(RewriteResult {
+                formatting_simplified: false,
+            })
+        }
+    }
+}
+
+struct RewriteResult {
+    formatting_simplified: bool,
+}
+
+fn selected_run_text(
+    tx_body: &XmlElement,
+    run: &RunSelector,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+) -> Result<String> {
+    let indices = run_indices(tx_body, run, operation, target)?;
+    let paragraph = paragraph_at(tx_body, run.paragraph_index, operation, target)?;
+    let mut text = String::new();
+    for run_index in indices {
+        let run_element = paragraph.children[run_index]
+            .as_element()
+            .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run node is not an element."))?;
+        text.push_str(&run_text(run_element));
+    }
+    Ok(text)
+}
+
+fn replace_run_scoped_text(
+    tx_body: &mut XmlElement,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+) -> Result<()> {
+    let run = operation.run.as_ref().ok_or_else(|| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "run_scoped replace_text requires selector.run.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let indices = run_indices(tx_body, run, operation, target)?;
+    let first_index = indices[0];
+    let paragraph = paragraph_at_mut(tx_body, run.paragraph_index, operation, target)?;
+    let first_run = node_element_mut(&mut paragraph.children[first_index])
+        .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run node is not an element."))?;
+    replace_run_text(first_run, &operation.text, operation, target)?;
+    for remove_index in indices.iter().skip(1).rev() {
+        paragraph.children.remove(*remove_index);
+    }
+    Ok(())
+}
+
+fn run_indices(
+    tx_body: &XmlElement,
+    run: &RunSelector,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+) -> Result<Vec<usize>> {
+    let end_index = run.run_end_index.unwrap_or(run.run_index);
+    if end_index < run.run_index {
+        return Err(Error::new(
+            ErrorCode::InvalidInput,
+            "selector.run run_end_index must be greater than or equal to run_index.",
+        )
+        .with_location(operation.location(Some(target))));
+    }
+    let paragraph = paragraph_at(tx_body, run.paragraph_index, operation, target)?;
+    let start = usize::try_from(run.run_index).map_err(|_| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "selector.run run_index is too large for this platform.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let end = usize::try_from(end_index).map_err(|_| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "selector.run run_end_index is too large for this platform.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let run_child_indices = paragraph
+        .children
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| {
+            node.as_element()
+                .is_some_and(|child| child.name.local_name == "r")
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    if end >= run_child_indices.len() {
+        return Err(Error::new(
+            ErrorCode::SelectorNotFound,
+            "selector.run resolved to a missing run.",
+        )
+        .with_location(operation.location(Some(target))));
+    }
+    Ok(run_child_indices[start..=end].to_vec())
+}
+
+fn paragraph_at<'a>(
+    tx_body: &'a XmlElement,
+    paragraph_index: u32,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+) -> Result<&'a XmlElement> {
+    let index = usize::try_from(paragraph_index).map_err(|_| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "selector.run paragraph_index is too large for this platform.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    tx_body
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .filter(|child| child.name.local_name == "p")
+        .nth(index)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                "selector.run resolved to a missing paragraph.",
+            )
+            .with_location(operation.location(Some(target)))
+        })
+}
+
+fn paragraph_at_mut<'a>(
+    tx_body: &'a mut XmlElement,
+    paragraph_index: u32,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+) -> Result<&'a mut XmlElement> {
+    let index = usize::try_from(paragraph_index).map_err(|_| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "selector.run paragraph_index is too large for this platform.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    tx_body
+        .children
+        .iter_mut()
+        .filter_map(node_element_mut)
+        .filter(|child| child.name.local_name == "p")
+        .nth(index)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                "selector.run resolved to a missing paragraph.",
+            )
+            .with_location(operation.location(Some(target)))
+        })
+}
+
+fn run_text(run: &XmlElement) -> String {
+    run.children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .filter(|child| child.name.local_name == "t")
+        .flat_map(|text| text.children.iter())
+        .filter_map(|node| match node {
+            XmlNode::Text(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>()
+}
+
+fn replace_run_text(
+    run: &mut XmlElement,
+    text: &str,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+) -> Result<()> {
+    let text_element = run
+        .children
+        .iter_mut()
+        .filter_map(node_element_mut)
+        .find(|child| child.name.local_name == "t")
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Selected run does not contain literal a:t text.",
+            )
+            .with_location(operation.location(Some(target)))
+        })?;
+    text_element.children = vec![XmlNode::Text(text.to_owned())];
+    Ok(())
 }
 
 fn replacement_text_body(existing: &XmlElement, operation: &ReplaceText) -> XmlElement {
@@ -507,6 +800,8 @@ fn replaces_and_maps_newlines() {
         mode: ReplaceTextMode::WholeElement,
         format_policy: FormatPolicy::PreserveFirstRun,
         overflow_policy: OverflowPolicy::Allow,
+        allow_formatting_simplification: false,
+        run: None,
     };
 
     let effects = operation
@@ -538,6 +833,7 @@ fn replaces_and_maps_newlines() {
     let guarded = ReplaceText {
         current_text_match: Some("old".to_owned()),
         text: "again".to_owned(),
+        allow_formatting_simplification: true,
         ..operation
     };
     let error = guarded

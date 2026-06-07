@@ -28,6 +28,8 @@ pub enum Selector {
         id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         guards: Option<Guards>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run: Option<RunSelector>,
     },
     SlideId {
         id: String,
@@ -40,6 +42,17 @@ pub enum Selector {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         guards: Option<Guards>,
     },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunSelector {
+    pub paragraph_index: u32,
+    pub run_index: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_end_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -59,7 +72,7 @@ pub struct Guards {
 
 pub fn resolve(model: &PresentationDocument, selector: &Selector) -> Result<ResolvedTarget> {
     match selector {
-        Selector::ElementId { id, guards } => resolve_element(model, id, guards.as_ref()),
+        Selector::ElementId { id, guards, .. } => resolve_element(model, id, guards.as_ref()),
         Selector::SlideId { id, guards } => resolve_slide(model, id, guards.as_ref()),
         Selector::MediaPart { part, guards } => {
             resolve_media_part(model, part.as_deref(), guards.as_ref())
@@ -478,6 +491,7 @@ fn resolve_and_guard() {
         &Selector::ElementId {
             id: "slide-1:shape-4".to_owned(),
             guards: None,
+            run: None,
         },
     )
     .expect("element resolves");
@@ -496,6 +510,7 @@ fn resolve_and_guard() {
                 text_hash: element.text_hash.clone(),
                 fingerprint: Some(element.fingerprint.clone()),
             }),
+            run: None,
         },
     )
     .expect("guarded element resolves");
@@ -512,6 +527,7 @@ fn resolve_and_guard() {
                 ),
                 ..Guards::default()
             }),
+            run: None,
         },
     )
     .expect_err("stale fingerprint fails");
@@ -569,6 +585,7 @@ fn element_view_kind_guards_resolve_for_each_emitted_kind() {
                     kind: Some(guard_kind.to_owned()),
                     ..Guards::default()
                 }),
+                run: None,
             },
         )
         .unwrap_or_else(|error| panic!("{id} should resolve with kind {guard_kind}: {error:?}"));
@@ -595,6 +612,7 @@ fn legacy_kind_guard_aliases_still_resolve() {
                     kind: Some(guard_kind.to_owned()),
                     ..Guards::default()
                 }),
+                run: None,
             },
         )
         .unwrap_or_else(|error| {

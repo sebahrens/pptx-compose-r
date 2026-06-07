@@ -822,6 +822,7 @@ fn wires_part_rel_ctype() {
         &Selector::ElementId {
             id: effects.created_element_ids[0].clone(),
             guards: None,
+            run: None,
         },
     )
     .expect("created image element id resolves");
@@ -1021,6 +1022,7 @@ fn add_image_allocates_from_existing_rels_xml_without_graph_set() {
         &Selector::ElementId {
             id: effects.created_element_ids[0].clone(),
             guards: None,
+            run: None,
         },
     )
     .expect("created image element id resolves");

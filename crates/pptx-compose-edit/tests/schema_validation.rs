@@ -227,6 +227,7 @@ fn patch() -> Patch {
             mode: None,
             format_policy: None,
             overflow_policy: None,
+            allow_formatting_simplification: false,
         })],
     }
 }
