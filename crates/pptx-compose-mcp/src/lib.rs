@@ -211,6 +211,7 @@ pub struct ImportMediaInput {
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InlineMediaInput {
+    #[serde(default = "default_inline_media_encoding")]
     #[schemars(
         description = "Inline media encoding.",
         regex(pattern = "^base64$"),
@@ -222,6 +223,10 @@ pub struct InlineMediaInput {
         length(min = 1, max = 22369624)
     )]
     pub data: String,
+}
+
+fn default_inline_media_encoding() -> String {
+    "base64".to_owned()
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -1239,6 +1244,36 @@ mod tests {
             .get(&opened.session_id)
             .expect("session remains open");
         assert!(session.media.contains_key("media_1"));
+    }
+
+    #[tokio::test]
+    async fn import_media_defaults_inline_base64_encoding() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+        let input = serde_json::from_value::<ImportMediaInput>(serde_json::json!({
+            "session_id": opened.session_id,
+            "expected_revision": opened.revision,
+            "inline": {
+                "data": ONE_BY_ONE_PNG_BASE64
+            },
+            "content_type": "image/png"
+        }))
+        .expect("inline encoding defaults during deserialization");
+
+        assert_eq!(
+            input.inline.as_ref().expect("inline media input").encoding,
+            "base64"
+        );
+
+        let imported = server
+            .pptx_import_media(rmcp::handler::server::wrapper::Parameters(input))
+            .await
+            .expect("inline media imports with default encoding");
+
+        let result = imported.0.0.result;
+        assert_eq!(result["media_ref"], "media_1");
+        assert_eq!(result["content_type"], "image/png");
+        assert_eq!(result["byte_length"], 68);
     }
 
     #[tokio::test]
