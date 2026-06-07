@@ -40,10 +40,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    AgentView, Bounds, Capabilities, Editable, EditableSupport, ElementKind, ElementPageView,
-    ElementSelector, ElementView, FindTextResult, FindTextScope, ImageView, IntrinsicSizePx,
-    Paragraph, PresentationView, Run, SelectorGuards, SlideView, StyleSummary, TextMatch, TextSpan,
-    TextView, TruncationMarker, XmlLocation,
+    AccessibilityView, AgentView, Bounds, Capabilities, Editable, EditableSupport, ElementKind,
+    ElementPageView, ElementSelector, ElementView, FindTextResult, FindTextScope, ImageView,
+    IntrinsicSizePx, Paragraph, PresentationView, Run, SelectorGuards, SlideView, StyleSummary,
+    TextMatch, TextSpan, TextView, TruncationMarker, XmlLocation,
     pagination::{CursorScope, ViewMeta, bounded_limit, cursor_offset, paginate},
 };
 use crate::{
@@ -59,6 +59,7 @@ pub type PptxPackage = PresentationDocument;
 const TEXT_PREVIEW_CHARS: usize = 4_096;
 const PARAGRAPH_PREVIEW_CHARS: usize = 1_024;
 const RUN_PREVIEW_CHARS: usize = 1_024;
+const ACCESSIBILITY_PREVIEW_CHARS: usize = 1_024;
 const EMBEDDED_SLIDE_ELEMENT_LIMIT: u32 = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -889,9 +890,34 @@ fn project_element(
             cnvpr_id: shape.cnvpr_id,
             text_hash,
         }),
+        accessibility: project_accessibility(&shape),
         text,
         image,
     })
+}
+
+fn project_accessibility(shape: &Shape) -> Option<AccessibilityView> {
+    let title = shape.alt_text_title.as_ref().map(|title| {
+        truncate_text(
+            title.clone(),
+            ACCESSIBILITY_PREVIEW_CHARS,
+            "Use element_detail for this element to inspect the full accessibility title.",
+        )
+        .0
+    });
+    let description = shape.alt_text_description.as_ref().map(|description| {
+        truncate_text(
+            description.clone(),
+            ACCESSIBILITY_PREVIEW_CHARS,
+            "Use element_detail for this element to inspect the full accessibility description.",
+        )
+        .0
+    });
+    if title.is_none() && description.is_none() {
+        None
+    } else {
+        Some(AccessibilityView { title, description })
+    }
 }
 
 fn project_text(tx_body: &XmlElement) -> TextView {
@@ -1889,6 +1915,7 @@ fn test_element(index: u32) -> ElementView {
         },
         fingerprint: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             .to_owned(),
+        accessibility: None,
         text: None,
         image: None,
     }

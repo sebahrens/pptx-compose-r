@@ -85,9 +85,20 @@ pub struct ElementView {
     pub editable: Editable,
     pub fingerprint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub accessibility: Option<AccessibilityView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<TextView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AccessibilityView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -508,6 +519,7 @@ pub mod binary {
                     fingerprint:
                         "sha256:4444444444444444444444444444444444444444444444444444444444444444"
                             .to_owned(),
+                    accessibility: None,
                     text: None,
                     image: Some(reference_image()),
                 }],

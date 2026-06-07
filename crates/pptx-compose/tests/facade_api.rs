@@ -438,6 +438,51 @@ fn inspect_find_text_and_apply_use_identical_selector_guards() {
 }
 
 #[test]
+fn inspect_surfaces_set_alt_text_read_back() {
+    let bytes = text_deck();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "set-alt-text-read-back",
+        vec![serde_json::json!({
+            "operation_id": "set-accessibility",
+            "op": "set_alt_text",
+            "element_id": "slide-1:shape-3",
+            "title": "Accessible title",
+            "description": "UNIQUE_MARKER accessible description"
+        })],
+    );
+    document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("set_alt_text applies");
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("edited deck writes");
+    let reopened = PresentationDocument::from_bytes(&written).expect("edited deck reopens");
+    let inspect = reopened
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("edited deck inspects");
+    let element = inspect_element(&inspect, "slide-1:shape-3");
+
+    assert_eq!(element["accessibility"]["title"], "Accessible title");
+    assert_eq!(
+        element["accessibility"]["description"],
+        "UNIQUE_MARKER accessible description"
+    );
+}
+
+#[test]
 fn agent_view_rejects_huge_page_limit() {
     let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
     let error = document

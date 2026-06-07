@@ -48,6 +48,8 @@ pub struct Shape {
     pub flip_h: bool,
     pub flip_v: bool,
     pub alt_text: Option<String>,
+    pub alt_text_title: Option<String>,
+    pub alt_text_description: Option<String>,
     pub placeholder: Option<PlaceholderRole>,
 }
 
@@ -56,6 +58,7 @@ pub fn read_shape(element: &XmlElement, path: SpTreePath) -> Shape {
     let cnvpr = first_descendant(element, "cNvPr");
     let xfrm = transform_element(element);
 
+    let (alt_text_title, alt_text_description) = read_alt_text_fields(cnvpr);
     Shape {
         kind: shape_kind(element),
         sp_tree_path: path,
@@ -75,7 +78,11 @@ pub fn read_shape(element: &XmlElement, path: SpTreePath) -> Shape {
         flip_v: xfrm
             .and_then(|element| attr(element, "flipV"))
             .is_some_and(parse_bool),
-        alt_text: read_alt_text(cnvpr),
+        alt_text: alt_text_description
+            .clone()
+            .or_else(|| alt_text_title.clone()),
+        alt_text_title,
+        alt_text_description,
         placeholder: first_descendant(element, "ph").and_then(read_placeholder),
     }
 }
@@ -137,11 +144,14 @@ fn read_bounds(xfrm: &XmlElement) -> Option<Bounds> {
     })
 }
 
-fn read_alt_text(cnvpr: Option<&XmlElement>) -> Option<String> {
-    let cnvpr = cnvpr?;
-    attr(cnvpr, "descr")
-        .or_else(|| attr(cnvpr, "title"))
-        .map(str::to_owned)
+fn read_alt_text_fields(cnvpr: Option<&XmlElement>) -> (Option<String>, Option<String>) {
+    let Some(cnvpr) = cnvpr else {
+        return (None, None);
+    };
+    (
+        attr(cnvpr, "title").map(str::to_owned),
+        attr(cnvpr, "descr").map(str::to_owned),
+    )
 }
 
 fn read_placeholder(ph: &XmlElement) -> Option<PlaceholderRole> {
@@ -250,7 +260,39 @@ mod tests {
         assert!(shape.flip_h);
         assert!(shape.flip_v);
         assert_eq!(shape.alt_text.as_deref(), Some("Quarterly results title"));
+        assert_eq!(shape.alt_text_title, None);
+        assert_eq!(
+            shape.alt_text_description.as_deref(),
+            Some("Quarterly results title")
+        );
         assert_eq!(shape.placeholder, Some(PlaceholderRole::Title));
+    }
+
+    #[test]
+    fn reads_alt_text_title_and_description_separately() {
+        let raw = br#"
+<p:pic xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:nvPicPr>
+    <p:cNvPr id="5" name="Picture 1" title="Accessible title" descr="Accessible description"/>
+  </p:nvPicPr>
+</p:pic>
+"#;
+        let document = parse_document(raw).expect("fixture parses");
+        let element = document.root_element().expect("fixture has root");
+        let shape = read_shape(
+            element,
+            SpTreePath {
+                sp_tree_path: vec![4],
+                group_path: Vec::new(),
+            },
+        );
+
+        assert_eq!(shape.alt_text.as_deref(), Some("Accessible description"));
+        assert_eq!(shape.alt_text_title.as_deref(), Some("Accessible title"));
+        assert_eq!(
+            shape.alt_text_description.as_deref(),
+            Some("Accessible description")
+        );
     }
 
     #[test]
