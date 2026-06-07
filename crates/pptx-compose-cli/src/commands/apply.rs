@@ -75,16 +75,7 @@ pub(crate) fn apply(
         return Ok(());
     }
 
-    let output = args
-        .output
-        .as_ref()
-        .ok_or_else(|| {
-            CliError::invalid_input(
-                InvalidInputCause::CliArgument,
-                "apply requires --output unless --dry-run is selected.",
-            )
-        })
-        .and_then(|output| permissions.authorize_write(output, PathIntent::OutputPptx))?;
+    let output = resolve_apply_output(&args, &input, permissions)?;
     let in_place_output = same_path(&input, &output);
     enforce_apply_write_guards(&input, &output, args.overwrite, args.in_place)?;
 
@@ -131,6 +122,25 @@ pub(crate) fn apply(
     sink.emit_diff(&apply_output.diff, args.diff, args.overwrite)?;
 
     Ok(())
+}
+
+fn resolve_apply_output(
+    args: &ApplyArgs,
+    input: &Path,
+    permissions: &PermissionContext,
+) -> Result<PathBuf, CliError> {
+    match (&args.output, args.in_place) {
+        (Some(output), true) if !same_path(input, output) => Err(CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            "--in-place cannot be combined with a different --output path.",
+        )),
+        (Some(output), _) => permissions.authorize_write(output, PathIntent::OutputPptx),
+        (None, true) => permissions.authorize_write(input, PathIntent::OutputPptx),
+        (None, false) => Err(CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            "apply requires --output unless --dry-run or --in-place is selected.",
+        )),
+    }
 }
 
 fn read_patch(path: &Path) -> Result<Patch, CliError> {
@@ -536,6 +546,18 @@ fn in_place_apply_writes_backup() {
 
 #[cfg(test)]
 #[test]
+fn in_place_apply_without_output_writes_input_and_backup() {
+    test_support::in_place_apply_without_output_writes_input_and_backup();
+}
+
+#[cfg(test)]
+#[test]
+fn in_place_apply_rejects_different_output() {
+    test_support::in_place_apply_rejects_different_output();
+}
+
+#[cfg(test)]
+#[test]
 fn in_place_no_backup_suppresses_backup() {
     test_support::in_place_no_backup_suppresses_backup();
 }
@@ -755,6 +777,64 @@ mod test_support {
             fs::read(&input).expect("input reads after apply"),
             input_bytes,
             "input is replaced in-place"
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn in_place_apply_without_output_writes_input_and_backup() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        fs::create_dir_all(&root).expect("test dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
+
+        let mut args = args(&input, &patch, &input, false, false);
+        args.output = None;
+        args.in_place = true;
+        apply(args, &permissions(&root), OpenOptions::default())
+            .expect("in-place apply without explicit output succeeds");
+
+        assert_eq!(
+            fs::read(root.join("input.pptx.bak")).expect("backup reads"),
+            input_bytes,
+            "backup preserves original input bytes"
+        );
+        assert_ne!(
+            fs::read(&input).expect("input reads after apply"),
+            input_bytes,
+            "input is replaced in-place"
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn in_place_apply_rejects_different_output() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let output = root.join("output.pptx");
+        fs::create_dir_all(&root).expect("test dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
+
+        let mut args = args(&input, &patch, &output, false, false);
+        args.in_place = true;
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("in-place apply with different output must fail");
+
+        assert_eq!(err.code(), ErrorCode::InvalidInput);
+        assert!(
+            !output.exists(),
+            "rejected in-place apply must not write the different output"
+        );
+        assert_eq!(
+            fs::read(&input).expect("input reads after rejected apply"),
+            input_bytes,
+            "rejected in-place apply must not modify input"
         );
 
         fs::remove_dir_all(root).expect("test dir removes");

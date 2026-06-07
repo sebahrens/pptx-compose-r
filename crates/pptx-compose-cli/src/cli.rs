@@ -132,7 +132,10 @@ pub struct ApplyArgs {
     pub diff: Option<PathBuf>,
     #[arg(long)]
     pub overwrite: bool,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Write back to INPUT atomically; creates INPUT.bak unless --no-backup is set"
+    )]
     pub in_place: bool,
     #[arg(long)]
     pub no_backup: bool,

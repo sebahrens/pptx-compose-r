@@ -68,7 +68,7 @@ Rules:
 
 - Must be atomic: never leave a partial output at `--output`.
 - Must fail if output exists unless `--overwrite` is explicit.
-- Must fail if output equals input unless `--in-place` is explicit.
+- `--in-place` sets the output path to `INPUT.pptx`; if `--output` is also present it must equal the input path.
 - Must validate edited output before final write by default.
 - Must write deterministic ZIP framing/order/metadata by default, while still raw-copying clean part payload bytes.
 - Must emit a patch report with operations, changed parts, generated IDs, warnings, and output document fingerprint.
