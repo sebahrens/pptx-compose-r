@@ -23,6 +23,7 @@ use pptx_compose::{
     json::{
         agent_view::{
             FindTextScope,
+            pagination::MAX_PAGE_LIMIT,
             views::{FindTextRequest, ViewMode},
         },
         schemas::{
@@ -332,6 +333,7 @@ fn inspect_view_options(args: &cli::InspectArgs) -> Result<AgentViewOptions, Cli
     if matches!(args.detail, Some(cli::InspectDetail::Full)) {
         options.mode = ViewMode::SlidePage;
         options.include_elements = true;
+        options.limit = Some(MAX_PAGE_LIMIT);
     }
     if let Some(slides) = &args.slides {
         let slide_ids = parse_slide_scope(slides)?;

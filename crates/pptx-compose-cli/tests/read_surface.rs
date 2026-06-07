@@ -48,7 +48,7 @@ fn json_errors_parse_failures_emit_one_error_envelope() {
 fn inspect_slides_accepts_single_range_and_list_scopes() {
     let root = unique_dir();
     let deck = root.join("three-slides.pptx");
-    fs::write(&deck, three_slide_deck()).expect("deck fixture writes");
+    fs::write(&deck, slide_deck(3)).expect("deck fixture writes");
 
     let single = parse_stdout(&run_cli_owned(vec![
         "inspect".to_owned(),
@@ -84,6 +84,53 @@ fn inspect_slides_accepts_single_range_and_list_scopes() {
     ]));
     assert_eq!(list["view"]["mode"], "slide_page");
     assert_slide_ids(&list, &["slide-1", "slide-3"]);
+
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
+fn inspect_full_whole_deck_matches_union_of_scoped_slides() {
+    let root = unique_dir();
+    let deck = root.join("twenty-two-slides.pptx");
+    fs::write(&deck, slide_deck(22)).expect("deck fixture writes");
+
+    let whole = parse_stdout(&run_cli_owned(vec![
+        "inspect".to_owned(),
+        deck.to_string_lossy().into_owned(),
+        "--format".to_owned(),
+        "agent-json".to_owned(),
+        "--detail".to_owned(),
+        "full".to_owned(),
+    ]));
+    assert_eq!(whole["view"]["mode"], "slide_page");
+    assert_eq!(whole["omitted_count"], 0);
+
+    let whole_slides = whole["slides"].as_array().expect("whole slides array");
+    assert_eq!(whole_slides.len(), 22);
+
+    for slide_number in 1..=22 {
+        let scoped = parse_stdout(&run_cli_owned(vec![
+            "inspect".to_owned(),
+            deck.to_string_lossy().into_owned(),
+            "--format".to_owned(),
+            "agent-json".to_owned(),
+            "--detail".to_owned(),
+            "full".to_owned(),
+            "--slides".to_owned(),
+            slide_number.to_string(),
+        ]));
+        let scoped_slide = &scoped["slides"].as_array().expect("scoped slides array")[0];
+        let whole_slide = &whole_slides[slide_number - 1];
+
+        assert_eq!(whole_slide["id"], scoped_slide["id"]);
+        assert_eq!(whole_slide["elements"], scoped_slide["elements"]);
+        assert!(
+            !whole_slide["elements"]
+                .as_array()
+                .expect("whole slide elements")
+                .is_empty()
+        );
+    }
 
     fs::remove_dir_all(root).expect("test dir removes");
 }
@@ -252,43 +299,54 @@ fn unique_counter() -> u64 {
     COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
-fn three_slide_deck() -> Vec<u8> {
+fn slide_deck(slide_count: usize) -> Vec<u8> {
     let mut bytes = Vec::new();
     {
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut bytes));
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
-        for (name, data) in [
-            ("[Content_Types].xml", content_types().into_bytes()),
-            ("_rels/.rels", root_rels().into_bytes()),
-            ("ppt/presentation.xml", presentation().into_bytes()),
+        let mut entries = vec![
+            ("[Content_Types].xml".to_owned(), content_types(slide_count)),
+            ("_rels/.rels".to_owned(), root_rels()),
+            ("ppt/presentation.xml".to_owned(), presentation(slide_count)),
             (
-                "ppt/_rels/presentation.xml.rels",
-                presentation_rels().into_bytes(),
+                "ppt/_rels/presentation.xml.rels".to_owned(),
+                presentation_rels(slide_count),
             ),
-            ("ppt/slides/slide1.xml", text_slide("Slide 1").into_bytes()),
-            ("ppt/slides/slide2.xml", text_slide("Slide 2").into_bytes()),
-            ("ppt/slides/slide3.xml", text_slide("Slide 3").into_bytes()),
-        ] {
+        ];
+        entries.extend((1..=slide_count).map(|index| {
+            (
+                format!("ppt/slides/slide{index}.xml"),
+                text_slide(&format!("Slide {index}")),
+            )
+        }));
+        for (name, data) in entries {
             writer.start_file(name, options).expect("start ZIP entry");
-            writer.write_all(&data).expect("write ZIP entry");
+            writer.write_all(data.as_bytes()).expect("write ZIP entry");
         }
         writer.finish().expect("finish ZIP");
     }
     bytes
 }
 
-fn content_types() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+fn content_types(slide_count: usize) -> String {
+    let slide_overrides = (1..=slide_count)
+        .map(|index| {
+            format!(
+                r#"  <Override PartName="/ppt/slides/slide{index}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
-  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
-  <Override PartName="/ppt/slides/slide2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
-  <Override PartName="/ppt/slides/slide3.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+{slide_overrides}
 </Types>"#
-        .to_owned()
+    )
 }
 
 fn root_rels() -> String {
@@ -299,26 +357,39 @@ fn root_rels() -> String {
         .to_owned()
 }
 
-fn presentation() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+fn presentation(slide_count: usize) -> String {
+    let slide_ids = (1..=slide_count)
+        .map(|index| {
+            let id = 255 + index;
+            format!(r#"    <p:sldId id="{id}" r:id="rId{index}"/>"#)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <p:sldIdLst>
-    <p:sldId id="256" r:id="rId1"/>
-    <p:sldId id="257" r:id="rId2"/>
-    <p:sldId id="258" r:id="rId3"/>
+{slide_ids}
   </p:sldIdLst>
 </p:presentation>"#
-        .to_owned()
+    )
 }
 
-fn presentation_rels() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+fn presentation_rels(slide_count: usize) -> String {
+    let rels = (1..=slide_count)
+        .map(|index| {
+            format!(
+                r#"  <Relationship Id="rId{index}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide{index}.xml"/>"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide2.xml"/>
-  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide3.xml"/>
+{rels}
 </Relationships>"#
-        .to_owned()
+    )
 }
 
 fn text_slide(text: &str) -> String {
