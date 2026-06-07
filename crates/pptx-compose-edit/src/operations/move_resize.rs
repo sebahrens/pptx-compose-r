@@ -11,7 +11,7 @@ use pptx_compose_core::{
 use pptx_compose_json::schemas::OperationTarget;
 
 use crate::{
-    operations::{ResolvedElement, bounds::validate_bounds},
+    operations::{ResolvedElement, bounds::validate_bounds, is_real_shape_tree_child},
     patch::{Bounds, MoveResizeElementOperation, PatchEffects},
 };
 
@@ -198,6 +198,7 @@ fn element_at_path_mut<'a>(
             .children
             .iter_mut()
             .filter_map(node_element_mut)
+            .filter(|element| is_real_shape_tree_child(element))
             .nth(wanted)?;
     }
     Some(current)
@@ -303,10 +304,10 @@ fn rejects_bounds_above_emu_max_without_writing() {
         .expect("slide inserted");
     let target = ResolvedElement {
         slide_id: "slide-1".to_owned(),
-        element_id: "slide-1:shape-3".to_owned(),
+        element_id: "slide-1:shape-1".to_owned(),
         kind: ElementKind::Shape,
         part: slide_part.clone(),
-        sp_tree_path: vec![3],
+        sp_tree_path: vec![1],
         group_path: Vec::new(),
         cnvpr_id: None,
         text_hash: None,
@@ -354,10 +355,10 @@ fn preserves_rot_flip() {
 
     let target = ResolvedElement {
         slide_id: "slide-1".to_owned(),
-        element_id: "slide-1:shape-3".to_owned(),
+        element_id: "slide-1:shape-1".to_owned(),
         kind: ElementKind::Shape,
         part: slide_part.clone(),
-        sp_tree_path: vec![3],
+        sp_tree_path: vec![1],
         group_path: Vec::new(),
         cnvpr_id: None,
         text_hash: None,
@@ -395,9 +396,9 @@ fn preserves_rot_flip() {
     assert!(slide_xml.contains(r#"<a:prstGeom prst="rect"/>"#));
 
     let non_bounded = ResolvedElement {
-        element_id: "slide-1:cxn-4".to_owned(),
+        element_id: "slide-1:cxn-2".to_owned(),
         kind: ElementKind::Connector,
-        sp_tree_path: vec![4],
+        sp_tree_path: vec![2],
         ..target
     };
     let error = operation

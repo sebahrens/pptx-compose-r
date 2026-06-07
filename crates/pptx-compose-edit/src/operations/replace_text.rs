@@ -19,6 +19,7 @@ use serde_json::json;
 use crate::{
     operations::{
         ResolvedElement, ResolvedNotesSlide, ResolvedTableCell, add_text_box::validate_style,
+        is_real_shape_tree_child,
     },
     patch::{
         FormatPolicy, OverflowPolicy, PatchEffects, ReplaceNotesTextOperation,
@@ -1487,6 +1488,7 @@ fn element_at_path<'a>(sp_tree: &'a XmlElement, path: &[u32]) -> Option<&'a XmlE
             .children
             .iter()
             .filter_map(XmlNode::as_element)
+            .filter(|element| is_real_shape_tree_child(element))
             .nth(index)?;
     }
     Some(current)
@@ -1503,6 +1505,7 @@ fn element_at_path_mut<'a>(
             .children
             .iter_mut()
             .filter_map(node_element_mut)
+            .filter(|element| is_real_shape_tree_child(element))
             .nth(index)?;
     }
     Some(current)
@@ -1636,10 +1639,10 @@ fn replaces_and_maps_newlines() {
         .expect("slide inserted");
     let target = ResolvedElement {
         slide_id: "slide-1".to_owned(),
-        element_id: "slide-1:shape-3".to_owned(),
+        element_id: "slide-1:shape-1".to_owned(),
         kind: ElementKind::TextBox,
         part: slide_part.clone(),
-        sp_tree_path: vec![3],
+        sp_tree_path: vec![1],
         group_path: Vec::new(),
         cnvpr_id: None,
         text_hash: None,

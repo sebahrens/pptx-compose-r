@@ -749,6 +749,7 @@ fn collect_elements_at(
         .children
         .iter()
         .filter_map(XmlNode::as_element)
+        .filter(|element| is_drawable_shape_tree_child(element))
         .enumerate()
     {
         let child_index = u32::try_from(zero_based_index + 1)
@@ -787,6 +788,13 @@ fn collect_elements_at(
         }
     }
     Ok(())
+}
+
+fn is_drawable_shape_tree_child(element: &XmlElement) -> bool {
+    matches!(
+        element.name.local_name.as_str(),
+        "sp" | "pic" | "graphicFrame" | "grpSp" | "cxnSp"
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1405,8 +1413,10 @@ fn relationship_source_for(rels_part_name: &PartName) -> Result<PartName, JsonEr
 #[cfg(test)]
 #[test]
 fn all_modes() {
-    let pkg = package_from_pptx_bytes(include_bytes!("../../../../fixtures/minimal.pptx"))
-        .expect("fixture package parses");
+    let pkg = package_from_pptx_bytes(include_bytes!(
+        "../../../../fixtures/real-world/worldbank-cpf-concept-note.pptx"
+    ))
+    .expect("fixture package parses");
     let slide_count = pkg.slides().len();
 
     let deck_summary = build_view(
@@ -1546,6 +1556,12 @@ fn image_editability_matches_embedded_and_external_picture_support() {
     let elements = value["slides"][0]["elements"]
         .as_array()
         .expect("elements array");
+
+    assert_eq!(elements.len(), 2);
+    assert!(elements.iter().all(|element| {
+        let tag = &element["xml_location"]["element_tag"];
+        tag != "p:nvGrpSpPr" && tag != "p:grpSpPr"
+    }));
 
     let embedded = elements
         .iter()

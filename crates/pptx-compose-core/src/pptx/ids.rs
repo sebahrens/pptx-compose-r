@@ -100,6 +100,7 @@ fn walk_children(
         .children
         .iter()
         .filter_map(XmlNode::as_element)
+        .filter(|element| is_drawable_shape_tree_child(element))
         .enumerate()
     {
         let Ok(child_index) = u32::try_from(zero_based_index + 1) else {
@@ -119,6 +120,13 @@ fn walk_children(
             walk_children(child, &sp_tree_path, &sp_tree_path, indexed);
         }
     }
+}
+
+fn is_drawable_shape_tree_child(element: &XmlElement) -> bool {
+    matches!(
+        element.name.local_name.as_str(),
+        "sp" | "pic" | "graphicFrame" | "grpSp" | "cxnSp"
+    )
 }
 
 fn element_kind(element: &XmlElement) -> ElementKind {
@@ -196,10 +204,8 @@ fn sp_tree_indexing() {
             (&[2][..], &[][..], ElementKind::Picture),
             (&[3][..], &[][..], ElementKind::Group),
             (&[3, 1][..], &[3][..], ElementKind::Picture),
-            (&[3, 2][..], &[3][..], ElementKind::Other),
-            (&[3, 3][..], &[3][..], ElementKind::Connector),
+            (&[3, 2][..], &[3][..], ElementKind::Connector),
             (&[4][..], &[][..], ElementKind::GraphicFrameOther),
-            (&[5][..], &[][..], ElementKind::Other),
         ]
     );
 

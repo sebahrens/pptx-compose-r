@@ -80,8 +80,10 @@ fn emitted_schema_rejects_out_of_schema_instance() {
 
 #[test]
 fn all_agent_view_modes_validate_against_published_schema() {
-    let pkg = package_from_pptx_bytes(include_bytes!("../../../fixtures/minimal.pptx"))
-        .expect("fixture package parses");
+    let pkg = package_from_pptx_bytes(include_bytes!(
+        "../../../fixtures/real-world/worldbank-cpf-concept-note.pptx"
+    ))
+    .expect("fixture package parses");
     let schema = agent_view_json_schema().expect("agent view schema emits");
     let slide_detail = build_view(
         &pkg,

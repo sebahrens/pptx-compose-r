@@ -180,7 +180,7 @@ fn back_child_index(sp_tree: &XmlElement) -> usize {
 fn child_index_for_element_ordinal(sp_tree: &XmlElement, ordinal: u32) -> Result<usize> {
     let mut element_ordinal = 0_u32;
     for (child_index, child) in sp_tree.children.iter().enumerate() {
-        if child.as_element().is_some() {
+        if child.as_element().is_some_and(is_real_shape_tree_child) {
             element_ordinal = element_ordinal.checked_add(1).ok_or_else(|| {
                 Error::new(
                     ErrorCode::UnsupportedEdit,
@@ -200,13 +200,13 @@ fn element_ordinal_before_child_index(sp_tree: &XmlElement, child_index: usize) 
         .children
         .iter()
         .take(child_index)
-        .filter(|child| child.as_element().is_some())
+        .filter(|child| child.as_element().is_some_and(is_real_shape_tree_child))
         .count()
         .try_into()
         .unwrap_or(u32::MAX)
 }
 
-fn is_real_shape_tree_child(element: &XmlElement) -> bool {
+pub(crate) fn is_real_shape_tree_child(element: &XmlElement) -> bool {
     matches!(
         element.name.local_name.as_str(),
         "sp" | "pic" | "grpSp" | "graphicFrame" | "cxnSp"

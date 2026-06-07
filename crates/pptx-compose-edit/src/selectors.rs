@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::operations::{
     ResolvedCoreProperties, ResolvedElement, ResolvedMediaPart, ResolvedNotesSlide, ResolvedSlide,
-    ResolvedTarget,
+    ResolvedTarget, is_real_shape_tree_child,
 };
 
 const CORE_PROPERTIES_REL_TYPE: &str =
@@ -432,6 +432,7 @@ fn element_at_path<'a>(sp_tree: &'a XmlElement, path: &[u32]) -> Option<&'a XmlE
             .children
             .iter()
             .filter_map(XmlNode::as_element)
+            .filter(|element| is_real_shape_tree_child(element))
             .nth(index)?;
     }
     Some(current)
@@ -737,7 +738,6 @@ fn element_view_kind_guards_resolve_for_each_emitted_kind() {
         ("slide-1:graphic-13", "ole"),
         ("slide-1:shape-8", "shape"),
         ("slide-1:cxn-9", "shape"),
-        ("slide-1:oth-10", "shape"),
     ] {
         resolve(
             &document,
@@ -764,7 +764,6 @@ fn legacy_kind_guard_aliases_still_resolve() {
         ("slide-1:graphic-12", "graphic_frame"),
         ("slide-1:graphic-13", "graphic_frame"),
         ("slide-1:cxn-9", "connector"),
-        ("slide-1:oth-10", "other"),
     ] {
         resolve(
             &document,

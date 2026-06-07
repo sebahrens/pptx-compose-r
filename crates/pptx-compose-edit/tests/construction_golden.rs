@@ -108,54 +108,54 @@ mod construction {
 
     #[test]
     fn add_text_box_honors_z_order_front_back_and_index() -> Result<()> {
-        assert_text_box_insert_order(None, &["Back", "Front", "Inserted"], &[5])?;
+        assert_text_box_insert_order(None, &["Back", "Front", "Inserted"], &[3])?;
         assert_text_box_insert_order(
             Some(InsertOptions {
                 z_order: Some(ZOrder::Keyword(ZOrderKeyword::Front)),
             }),
             &["Back", "Front", "Inserted"],
-            &[5],
+            &[3],
         )?;
         assert_text_box_insert_order(
             Some(InsertOptions {
                 z_order: Some(ZOrder::Keyword(ZOrderKeyword::Back)),
             }),
             &["Inserted", "Back", "Front"],
-            &[3],
+            &[1],
         )?;
         assert_text_box_insert_order(
             Some(InsertOptions {
-                z_order: Some(ZOrder::Index(4)),
+                z_order: Some(ZOrder::Index(2)),
             }),
             &["Back", "Inserted", "Front"],
-            &[4],
+            &[2],
         )?;
         Ok(())
     }
 
     #[test]
     fn add_image_honors_z_order_front_back_and_index() -> Result<()> {
-        assert_image_insert_order(None, &["Back", "Front", "Inserted"], &[5])?;
+        assert_image_insert_order(None, &["Back", "Front", "Inserted"], &[3])?;
         assert_image_insert_order(
             Some(InsertOptions {
                 z_order: Some(ZOrder::Keyword(ZOrderKeyword::Front)),
             }),
             &["Back", "Front", "Inserted"],
-            &[5],
+            &[3],
         )?;
         assert_image_insert_order(
             Some(InsertOptions {
                 z_order: Some(ZOrder::Keyword(ZOrderKeyword::Back)),
             }),
             &["Inserted", "Back", "Front"],
-            &[3],
+            &[1],
         )?;
         assert_image_insert_order(
             Some(InsertOptions {
-                z_order: Some(ZOrder::Index(4)),
+                z_order: Some(ZOrder::Index(2)),
             }),
             &["Back", "Inserted", "Front"],
-            &[4],
+            &[2],
         )?;
         Ok(())
     }
@@ -181,7 +181,7 @@ mod construction {
         operation.apply(&mut package, &target)?;
 
         assert_eq!(
-            element_xml_at_path(&package, &slide_part, &[3])?,
+            element_xml_at_path(&package, &slide_part, &[1])?,
             golden(REPLACE_TEXT_EXPECTED)
         );
         Ok(())
@@ -206,7 +206,7 @@ mod construction {
         };
 
         let effects = operation.apply(&mut package, &target)?;
-        let output = element_xml_at_path(&package, &slide_part, &[3])?;
+        let output = element_xml_at_path(&package, &slide_part, &[1])?;
 
         assert!(has_warning_code(&effects.warnings, "formatting_simplified"));
         assert!(output.contains(r#"<a:rPr lang="en-US" sz="1800" b="1"/>"#));
@@ -235,7 +235,7 @@ mod construction {
         };
 
         let effects = operation.apply(&mut package, &target)?;
-        let output = element_xml_at_path(&package, &slide_part, &[3])?;
+        let output = element_xml_at_path(&package, &slide_part, &[1])?;
 
         assert!(has_warning_code(&effects.warnings, "formatting_simplified"));
         assert!(!output.contains("hlinkClick"));
@@ -269,7 +269,7 @@ mod construction {
         };
 
         let effects = operation.apply(&mut package, &target)?;
-        let output = element_xml_at_path(&package, &slide_part, &[3])?;
+        let output = element_xml_at_path(&package, &slide_part, &[1])?;
 
         assert!(!has_warning_code(
             &effects.warnings,
@@ -317,7 +317,7 @@ mod construction {
         };
 
         operation.apply(&mut package, &target)?;
-        let output = element_xml_at_path(&package, &slide_part, &[3])?;
+        let output = element_xml_at_path(&package, &slide_part, &[1])?;
 
         assert!(output.contains(r#"<a:pPr algn="ctr"/>"#));
         assert!(output.contains(r#"<a:r><a:rPr lang="en-US" sz="2000" b="0" i="1"><a:solidFill><a:srgbClr val="112233"/></a:solidFill><a:latin typeface="Aptos"/></a:rPr><a:t>Updated</a:t></a:r>"#));
@@ -627,7 +627,7 @@ mod construction {
         operation.apply(&mut package, &target)?;
 
         assert_eq!(
-            element_xml_at_path(&package, &slide_part, &[3])?,
+            element_xml_at_path(&package, &slide_part, &[1])?,
             golden(MOVE_RESIZE_EXPECTED)
         );
         Ok(())
@@ -649,7 +649,7 @@ mod construction {
         operation.apply(&mut package, &target)?;
 
         assert_eq!(
-            element_xml_at_path(&package, &slide_part, &[3])?,
+            element_xml_at_path(&package, &slide_part, &[1])?,
             golden(SET_ALT_TEXT_EXPECTED)
         );
         Ok(())
@@ -872,7 +872,7 @@ mod construction {
             element_id: "slide-1:target-9".to_owned(),
             kind,
             part: slide_part().expect("slide part is valid"),
-            sp_tree_path: vec![3],
+            sp_tree_path: vec![1],
             group_path: Vec::new(),
             cnvpr_id: Some(9),
             text_hash: None,
@@ -993,8 +993,16 @@ mod construction {
                 .children
                 .iter()
                 .filter_map(XmlNode::as_element)
+                .filter(|element| is_drawable_shape_tree_child(element))
                 .nth(index)?;
         }
         Some(current)
+    }
+
+    fn is_drawable_shape_tree_child(element: &XmlElement) -> bool {
+        matches!(
+            element.name.local_name.as_str(),
+            "sp" | "pic" | "graphicFrame" | "grpSp" | "cxnSp"
+        )
     }
 }

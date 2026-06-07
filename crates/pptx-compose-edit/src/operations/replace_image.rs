@@ -19,7 +19,7 @@ use pptx_compose_json::schemas::OperationTarget;
 
 use crate::{
     media_inputs::MediaInputs,
-    operations::{ResolvedElement, add_image::ensure_content_type},
+    operations::{ResolvedElement, add_image::ensure_content_type, is_real_shape_tree_child},
     patch::{PatchEffects, ReplaceImageOperation},
 };
 
@@ -386,6 +386,7 @@ fn element_at_path<'a>(sp_tree: &'a XmlElement, path: &[u32]) -> Option<&'a XmlE
             .children
             .iter()
             .filter_map(XmlNode::as_element)
+            .filter(|element| is_real_shape_tree_child(element))
             .nth(index)?;
     }
     Some(current)
