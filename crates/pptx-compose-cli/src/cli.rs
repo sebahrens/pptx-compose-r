@@ -18,27 +18,27 @@ pub struct Cli {
 
 #[derive(Args, Debug, Default, Eq, PartialEq)]
 pub struct GlobalArgs {
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub json_errors: bool,
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub quiet: bool,
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub verbose: bool,
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub no_color: bool,
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, global = true, value_name = "DIR")]
     pub workspace: Option<PathBuf>,
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, global = true, value_name = "DIR")]
     pub temp_dir: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub keep_temp: bool,
-    #[arg(long, value_name = "N")]
+    #[arg(long, global = true, value_name = "N")]
     pub max_compressed_bytes: Option<u64>,
-    #[arg(long, value_name = "N")]
+    #[arg(long, global = true, value_name = "N")]
     pub max_uncompressed_bytes: Option<u64>,
-    #[arg(long, value_name = "N")]
+    #[arg(long, global = true, value_name = "N")]
     pub max_part_count: Option<u64>,
-    #[arg(long, value_name = "N")]
+    #[arg(long, global = true, value_name = "N")]
     pub max_media_bytes: Option<u64>,
 }
 
@@ -279,4 +279,49 @@ fn parses_apply_media_bindings() {
         args.media,
         vec!["hero=override.png".to_owned(), "logo=logo.gif".to_owned()]
     );
+}
+
+#[cfg(test)]
+#[test]
+fn parses_trailing_global_flags_after_subcommands() {
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    let inspect = Cli::try_parse_from([
+        "pptx-compose",
+        "inspect",
+        "INPUT.pptx",
+        "--slides",
+        "1-5",
+        "--detail",
+        "summary",
+        "--output",
+        "-",
+        "--json-errors",
+    ])
+    .expect("inspect with trailing global flag should parse");
+
+    assert!(inspect.global.json_errors);
+    let Commands::Inspect(args) = inspect.command else {
+        unreachable!("expected inspect command");
+    };
+    assert_eq!(args.input, PathBuf::from("INPUT.pptx"));
+    assert_eq!(args.output, Some(PathBuf::from("-")));
+
+    let validate = Cli::try_parse_from([
+        "pptx-compose",
+        "validate",
+        "INPUT.pptx",
+        "--report",
+        "-",
+        "--json-errors",
+    ])
+    .expect("validate with trailing global flag should parse");
+
+    assert!(validate.global.json_errors);
+    let Commands::Validate(args) = validate.command else {
+        unreachable!("expected validate command");
+    };
+    assert_eq!(args.input, PathBuf::from("INPUT.pptx"));
+    assert_eq!(args.report, Some(PathBuf::from("-")));
 }
