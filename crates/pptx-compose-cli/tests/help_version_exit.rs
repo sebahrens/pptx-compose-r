@@ -38,3 +38,32 @@ fn inspect_help_documents_slide_scope_forms() {
     assert!(stdout.contains("slide-N"), "{stdout}");
     assert!(stdout.contains("N-M"), "{stdout}");
 }
+
+#[test]
+fn spec_071_documents_apply_flags() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
+        .args(["apply", "--help"])
+        .output()
+        .expect("apply help runs");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
+    let spec = include_str!("../../../specs/071-cli-agent-contract.md");
+
+    for flag in [
+        "--dry-run",
+        "--media-manifest",
+        "--media-root",
+        "--media",
+        "--output",
+        "--report",
+        "--diff",
+        "--overwrite",
+        "--in-place",
+        "--no-backup",
+        "--deterministic",
+    ] {
+        assert!(stdout.contains(flag), "apply help must expose {flag}");
+        assert!(spec.contains(flag), "spec 071 must document {flag}");
+    }
+}

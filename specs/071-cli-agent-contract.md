@@ -53,7 +53,7 @@ Validation emits a [validation report](044-results-validation-errors.md#validati
 ### `apply --dry-run`
 
 ```bash
-pptx-compose apply INPUT.pptx PATCH.json --dry-run --media-manifest media.json --report dry-run.report.json --diff diff.json
+pptx-compose apply INPUT.pptx PATCH.json --dry-run --media-manifest media.json --media-root assets --media hero=override.png --report dry-run.report.json --diff diff.json
 ```
 
 Dry-run validates and computes reports/diffs without creating PPTX output or mutating state.
@@ -62,13 +62,33 @@ Dry-run validates and computes reports/diffs without creating PPTX output or mut
 
 ```bash
 pptx-compose apply INPUT.pptx PATCH.json --media-manifest media.json --output OUTPUT.pptx --report apply.report.json
+pptx-compose apply INPUT.pptx PATCH.json --in-place --no-backup --report apply.report.json
 ```
+
+Flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--dry-run` | Validate the patch and compute reports/diffs without writing PPTX output. |
+| `--media-manifest PATH` | Load a media manifest that maps patch `media_ref` values to input media. |
+| `--media-root DIR` | Resolve relative media paths in `--media-manifest` against `DIR` instead of the manifest's parent directory. Requires `--media-manifest`. |
+| `--media MEDIA_REF=PATH` | Bind one media reference directly to a file path. May be repeated. Explicit bindings override manifest bindings for the same `MEDIA_REF`. Duplicate explicit bindings for the same `MEDIA_REF` fail. |
+| `--output PATH` | Write the edited PPTX to `PATH`. Required unless `--dry-run` or `--in-place` is selected. |
+| `--report PATH` | Write the patch report JSON to `PATH` or `-` for stdout where safe. |
+| `--diff PATH` | Write the patch diff JSON to `PATH` or `-` for stdout where safe. |
+| `--overwrite` | Permit replacing an existing `--output`, `--report`, or `--diff` path. |
+| `--in-place` | Write back to `INPUT.pptx` atomically. If `--output` is present it must be the same path as `INPUT.pptx`. |
+| `--no-backup` | Suppress the default `INPUT.pptx.bak` backup. Valid only with `--in-place`. |
+| `--deterministic` | Accepted for CLI stability; deterministic ZIP framing/order/metadata is already the default write profile. |
 
 Rules:
 
 - Must be atomic: never leave a partial output at `--output`.
 - Must fail if output exists unless `--overwrite` is explicit.
 - `--in-place` sets the output path to `INPUT.pptx`; if `--output` is also present it must equal the input path.
+- `--no-backup` is meaningful only with `--in-place`; non-in-place writes never create an input backup.
+- `--media-root` is valid only with `--media-manifest`.
+- If both `--media-manifest` and repeatable `--media MEDIA_REF=PATH` bindings are present, each explicit `--media` binding overrides the manifest entry with the same `MEDIA_REF`; unrelated manifest bindings remain available.
 - Must validate edited output before final write by default.
 - Must write deterministic ZIP framing/order/metadata by default, while still raw-copying clean part payload bytes.
 - Must emit a patch report with operations, changed parts, generated IDs, warnings, and output document fingerprint.
