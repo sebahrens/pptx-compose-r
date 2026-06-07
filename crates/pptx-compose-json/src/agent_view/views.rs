@@ -1170,7 +1170,11 @@ fn core_element_kind(element: &XmlElement) -> CoreElementKind {
         ShapeKind::TextBox => CoreElementKind::TextBox,
         ShapeKind::AutoShape => CoreElementKind::Shape,
         ShapeKind::Picture => CoreElementKind::Picture,
-        ShapeKind::GraphicFrame => CoreElementKind::GraphicFrame,
+        ShapeKind::GraphicFrameChart
+        | ShapeKind::GraphicFrameTable
+        | ShapeKind::GraphicFrameDiagram
+        | ShapeKind::GraphicFrameOle
+        | ShapeKind::GraphicFrameOther => CoreElementKind::GraphicFrame,
         ShapeKind::Group => CoreElementKind::Group,
         ShapeKind::Connector => CoreElementKind::Connector,
         ShapeKind::Other => CoreElementKind::Other,

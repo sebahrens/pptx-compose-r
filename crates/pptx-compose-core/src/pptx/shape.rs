@@ -14,7 +14,11 @@ pub enum ShapeKind {
     AutoShape,
     TextBox,
     Picture,
-    GraphicFrame,
+    GraphicFrameChart,
+    GraphicFrameTable,
+    GraphicFrameDiagram,
+    GraphicFrameOle,
+    GraphicFrameOther,
     Group,
     Connector,
     Other,
@@ -81,10 +85,30 @@ fn shape_kind(element: &XmlElement) -> ShapeKind {
         "sp" if is_text_box(element) => ShapeKind::TextBox,
         "sp" => ShapeKind::AutoShape,
         "pic" => ShapeKind::Picture,
-        "graphicFrame" => ShapeKind::GraphicFrame,
+        "graphicFrame" => graphic_frame_kind(element),
         "grpSp" => ShapeKind::Group,
         "cxnSp" => ShapeKind::Connector,
         _ => ShapeKind::Other,
+    }
+}
+
+fn graphic_frame_kind(element: &XmlElement) -> ShapeKind {
+    let Some(uri) = child(element, "graphic")
+        .and_then(|graphic| child(graphic, "graphicData"))
+        .and_then(|graphic_data| attr(graphic_data, "uri"))
+    else {
+        return ShapeKind::GraphicFrameOther;
+    };
+
+    match uri {
+        "http://schemas.openxmlformats.org/drawingml/2006/chart" => ShapeKind::GraphicFrameChart,
+        "http://schemas.openxmlformats.org/drawingml/2006/table" => ShapeKind::GraphicFrameTable,
+        "http://schemas.openxmlformats.org/drawingml/2006/diagram" => {
+            ShapeKind::GraphicFrameDiagram
+        }
+        "http://schemas.openxmlformats.org/presentationml/2006/ole" => ShapeKind::GraphicFrameOle,
+        uri if uri.ends_with("/ole") => ShapeKind::GraphicFrameOle,
+        _ => ShapeKind::GraphicFrameOther,
     }
 }
 
@@ -227,5 +251,72 @@ mod tests {
         assert!(shape.flip_v);
         assert_eq!(shape.alt_text.as_deref(), Some("Quarterly results title"));
         assert_eq!(shape.placeholder, Some(PlaceholderRole::Title));
+    }
+
+    #[test]
+    fn classifies_graphic_frames_by_graphic_data_uri() {
+        let cases = [
+            (
+                Some("http://schemas.openxmlformats.org/drawingml/2006/chart"),
+                ShapeKind::GraphicFrameChart,
+            ),
+            (
+                Some("http://schemas.openxmlformats.org/drawingml/2006/table"),
+                ShapeKind::GraphicFrameTable,
+            ),
+            (
+                Some("http://schemas.openxmlformats.org/drawingml/2006/diagram"),
+                ShapeKind::GraphicFrameDiagram,
+            ),
+            (
+                Some("http://schemas.openxmlformats.org/presentationml/2006/ole"),
+                ShapeKind::GraphicFrameOle,
+            ),
+            (
+                Some("http://schemas.example.test/custom/ole"),
+                ShapeKind::GraphicFrameOle,
+            ),
+            (
+                Some("http://schemas.example.test/custom/content"),
+                ShapeKind::GraphicFrameOther,
+            ),
+            (None, ShapeKind::GraphicFrameOther),
+        ];
+
+        for (uri, expected) in cases {
+            let raw = graphic_frame_xml(uri);
+            let document = parse_document(raw.as_bytes()).expect("graphic frame fixture parses");
+            let element = document.root_element().expect("fixture has root");
+            let shape = read_shape(
+                element,
+                SpTreePath {
+                    sp_tree_path: vec![0],
+                    group_path: Vec::new(),
+                },
+            );
+
+            assert_eq!(shape.kind, expected, "uri: {uri:?}");
+        }
+    }
+
+    fn graphic_frame_xml(uri: Option<&str>) -> String {
+        let graphic_data = uri.map_or_else(
+            || "<a:graphicData/>".to_owned(),
+            |uri| format!(r#"<a:graphicData uri="{uri}"/>"#),
+        );
+        format!(
+            r#"
+<p:graphicFrame xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+                xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:nvGraphicFramePr>
+    <p:cNvPr id="7" name="GraphicFrame 1"/>
+    <p:cNvGraphicFramePr/>
+    <p:nvPr/>
+  </p:nvGraphicFramePr>
+  <p:xfrm/>
+  <a:graphic>{graphic_data}</a:graphic>
+</p:graphicFrame>
+"#
+        )
     }
 }
