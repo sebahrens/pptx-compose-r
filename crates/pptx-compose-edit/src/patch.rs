@@ -401,6 +401,8 @@ pub struct AddImageOperation {
     pub fit: Option<ImageFit>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dedupe: Option<ImageDedupe>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insert: Option<InsertOptions>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
@@ -467,8 +469,16 @@ pub struct InsertOptions {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ZOrder {
+pub enum ZOrderKeyword {
     Front,
+    Back,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ZOrder {
+    Keyword(ZOrderKeyword),
+    Index(u32),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]

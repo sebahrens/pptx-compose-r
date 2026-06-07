@@ -20,8 +20,10 @@ use pptx_compose_json::schemas::OperationTarget;
 
 use crate::{
     media_inputs::MediaInputs,
-    operations::{ResolvedSlide, bounds::validate_bounds, ensure_slide_namespaces},
-    patch::{AddImageOperation, Bounds, ImageDedupe, ImageFit, PatchEffects},
+    operations::{
+        ResolvedSlide, bounds::validate_bounds, ensure_slide_namespaces, insert_shape_tree_child,
+    },
+    patch::{AddImageOperation, Bounds, ImageDedupe, ImageFit, InsertOptions, PatchEffects},
 };
 
 #[cfg(test)]
@@ -40,6 +42,7 @@ pub struct AddImage {
     pub alt_text: Option<String>,
     pub fit: ImageFit,
     pub dedupe: ImageDedupe,
+    pub insert: Option<InsertOptions>,
 }
 
 impl From<&AddImageOperation> for AddImage {
@@ -54,6 +57,7 @@ impl From<&AddImageOperation> for AddImage {
             alt_text: operation.alt_text.clone(),
             fit: operation.fit.unwrap_or(ImageFit::Stretch),
             dedupe: operation.dedupe.unwrap_or(ImageDedupe::Never),
+            insert: operation.insert.clone(),
         }
     }
 }
@@ -402,20 +406,8 @@ fn insert_picture_xml(
         &operation.bounds,
         rel_id,
     );
-    sp_tree.children.push(XmlNode::Element(picture));
-
-    let element_count = sp_tree
-        .children
-        .iter()
-        .filter_map(XmlNode::as_element)
-        .count();
-    let Ok(path_component) = u32::try_from(element_count) else {
-        return Err(Error::new(
-            ErrorCode::UnsupportedEdit,
-            "Shape tree has too many elements to assign an agent element id.",
-        )
-        .with_location(operation.location(None)));
-    };
+    let path_component = insert_shape_tree_child(sp_tree, picture, operation.insert.as_ref())
+        .map_err(|error| error.with_location(operation.location(None)))?;
     let path = SpTreePath {
         sp_tree_path: vec![path_component],
         group_path: Vec::new(),
@@ -673,6 +665,7 @@ fn rejects_bounds_above_emu_max_without_writing() {
         alt_text: None,
         fit: ImageFit::Stretch,
         dedupe: ImageDedupe::Never,
+        insert: None,
     };
     let target = ResolvedSlide {
         slide_id: "slide-1".to_owned(),
@@ -737,6 +730,7 @@ fn wires_part_rel_ctype() {
         alt_text: Some("Hero image".to_owned()),
         fit: ImageFit::Stretch,
         dedupe: ImageDedupe::Never,
+        insert: None,
     };
     let target = ResolvedSlide {
         slide_id: "slide-1".to_owned(),
@@ -893,6 +887,7 @@ fn reuses_existing_content_type_default_without_dirtying_content_types() {
         alt_text: None,
         fit: ImageFit::Stretch,
         dedupe: ImageDedupe::Never,
+        insert: None,
     };
     let target = ResolvedSlide {
         slide_id: "slide-1".to_owned(),
@@ -950,6 +945,7 @@ fn add_image_allocates_from_existing_rels_xml_without_graph_set() {
         alt_text: Some("Hero image".to_owned()),
         fit: ImageFit::Stretch,
         dedupe: ImageDedupe::Never,
+        insert: None,
     };
     let target = ResolvedSlide {
         slide_id: "slide-1".to_owned(),

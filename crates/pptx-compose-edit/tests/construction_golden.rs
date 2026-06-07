@@ -23,7 +23,10 @@ use pptx_compose_edit::{
         move_resize::MoveResize, replace_image::ReplaceImage, replace_text::ReplaceText,
         set_alt_text::SetAltText,
     },
-    patch::{Bounds, FormatPolicy, ImageDedupe, ImageFit, OverflowPolicy, ReplaceTextMode},
+    patch::{
+        Bounds, FormatPolicy, ImageDedupe, ImageFit, InsertOptions, OverflowPolicy,
+        ReplaceTextMode, ZOrder, ZOrderKeyword,
+    },
 };
 
 mod construction {
@@ -57,6 +60,7 @@ mod construction {
             alt_text: None,
             fit: ImageFit::Stretch,
             dedupe: ImageDedupe::Never,
+            insert: None,
         };
         image.apply(&mut picture_package, &slide, &media_inputs())?;
         assert_eq!(
@@ -94,6 +98,60 @@ mod construction {
             SP_EXPECTED
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn add_text_box_honors_z_order_front_back_and_index() -> Result<()> {
+        assert_text_box_insert_order(None, &["Back", "Front", "Inserted"], &[5])?;
+        assert_text_box_insert_order(
+            Some(InsertOptions {
+                z_order: Some(ZOrder::Keyword(ZOrderKeyword::Front)),
+            }),
+            &["Back", "Front", "Inserted"],
+            &[5],
+        )?;
+        assert_text_box_insert_order(
+            Some(InsertOptions {
+                z_order: Some(ZOrder::Keyword(ZOrderKeyword::Back)),
+            }),
+            &["Inserted", "Back", "Front"],
+            &[3],
+        )?;
+        assert_text_box_insert_order(
+            Some(InsertOptions {
+                z_order: Some(ZOrder::Index(4)),
+            }),
+            &["Back", "Inserted", "Front"],
+            &[4],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn add_image_honors_z_order_front_back_and_index() -> Result<()> {
+        assert_image_insert_order(None, &["Back", "Front", "Inserted"], &[5])?;
+        assert_image_insert_order(
+            Some(InsertOptions {
+                z_order: Some(ZOrder::Keyword(ZOrderKeyword::Front)),
+            }),
+            &["Back", "Front", "Inserted"],
+            &[5],
+        )?;
+        assert_image_insert_order(
+            Some(InsertOptions {
+                z_order: Some(ZOrder::Keyword(ZOrderKeyword::Back)),
+            }),
+            &["Inserted", "Back", "Front"],
+            &[3],
+        )?;
+        assert_image_insert_order(
+            Some(InsertOptions {
+                z_order: Some(ZOrder::Index(4)),
+            }),
+            &["Back", "Inserted", "Front"],
+            &[4],
+        )?;
         Ok(())
     }
 
@@ -291,6 +349,8 @@ mod construction {
 
     const PICTURE_RELS_XML: &str = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/></Relationships>"#;
 
+    const ORDER_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Back"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Back</a:t></a:r></a:p></p:txBody></p:sp><p:sp><p:nvSpPr><p:cNvPr id="10" name="Front"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Front</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
+
     fn minimal_package() -> Result<Package> {
         package_from_entries(&from_bytes(MINIMAL_PPTX)?)
     }
@@ -365,6 +425,103 @@ mod construction {
             "../media/image1.png",
         ));
         Ok(package)
+    }
+
+    fn assert_text_box_insert_order(
+        insert: Option<InsertOptions>,
+        expected_names: &[&str],
+        expected_path: &[u32],
+    ) -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(ORDER_SLIDE_XML)?;
+        let slide = minimal_slide()?;
+        let operation = AddTextBox {
+            operation_id: "op-order-text".to_owned(),
+            slide_id: slide.slide_id.clone(),
+            text: "Inserted".to_owned(),
+            bounds: fixed_bounds(),
+            name: Some("Inserted".to_owned()),
+            alt_text: None,
+            style: None,
+            insert,
+        };
+
+        let effects = operation.apply(&mut package, &slide)?;
+
+        assert_eq!(shape_tree_names(&package, &slide_part)?, expected_names);
+        assert_eq!(effects.created_element_ids, vec!["slide-1:shape-11"]);
+        assert_inserted_path(&package, &slide_part, expected_path)?;
+        Ok(())
+    }
+
+    fn assert_image_insert_order(
+        insert: Option<InsertOptions>,
+        expected_names: &[&str],
+        expected_path: &[u32],
+    ) -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(ORDER_SLIDE_XML)?;
+        let slide = minimal_slide()?;
+        let operation = AddImage {
+            operation_id: "op-order-image".to_owned(),
+            slide_id: slide.slide_id.clone(),
+            media_ref: "media-1".to_owned(),
+            content_type: "image/png".to_owned(),
+            bounds: fixed_bounds(),
+            name: Some("Inserted".to_owned()),
+            alt_text: None,
+            fit: ImageFit::Stretch,
+            dedupe: ImageDedupe::Never,
+            insert,
+        };
+
+        let effects = operation.apply(&mut package, &slide, &media_inputs())?;
+
+        assert_eq!(shape_tree_names(&package, &slide_part)?, expected_names);
+        assert_eq!(effects.created_element_ids, vec!["slide-1:pic-11"]);
+        assert_inserted_path(&package, &slide_part, expected_path)?;
+        Ok(())
+    }
+
+    fn assert_inserted_path(
+        package: &Package,
+        slide_part: &PartName,
+        expected_path: &[u32],
+    ) -> Result<()> {
+        let xml = element_xml_at_path(package, slide_part, expected_path)?;
+        assert!(xml.contains(r#"name="Inserted""#));
+        Ok(())
+    }
+
+    fn shape_tree_names(package: &Package, slide_part: &PartName) -> Result<Vec<String>> {
+        let part = package.parts().get(slide_part).ok_or_else(|| {
+            Error::unsupported_package(format!("Slide part {slide_part} was not found."))
+        })?;
+        let document = parse_document(part.bytes())?;
+        let root = document
+            .root_element()
+            .ok_or_else(|| Error::malformed_xml("Slide XML does not contain a root element."))?;
+        let sp_tree = first_descendant(root, "spTree").ok_or_else(|| {
+            Error::unsupported_package("Slide fixture does not contain p:spTree.")
+        })?;
+        Ok(sp_tree
+            .children
+            .iter()
+            .filter_map(XmlNode::as_element)
+            .filter(|element| matches!(element.name.local_name.as_str(), "sp" | "pic"))
+            .filter_map(shape_name)
+            .map(ToOwned::to_owned)
+            .collect())
+    }
+
+    fn shape_name(element: &XmlElement) -> Option<&str> {
+        first_descendant(element, "cNvPr").and_then(|cnv_pr| {
+            cnv_pr
+                .attributes
+                .iter()
+                .find(|attribute| attribute.name.local_name == "name")
+                .map(|attribute| attribute.value.as_str())
+        })
     }
 
     fn target(kind: ElementKind) -> ResolvedElement {

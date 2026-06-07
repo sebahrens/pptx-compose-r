@@ -11,7 +11,9 @@ use pptx_compose_core::{
 use pptx_compose_json::schemas::OperationTarget;
 
 use crate::{
-    operations::{ResolvedSlide, bounds::validate_bounds, ensure_slide_namespaces},
+    operations::{
+        ResolvedSlide, bounds::validate_bounds, ensure_slide_namespaces, insert_shape_tree_child,
+    },
     patch::{AddTextBoxOperation, Bounds, InsertOptions, PatchEffects, TextAlign, TextBoxStyle},
 };
 
@@ -153,20 +155,8 @@ fn insert_text_box(document: &mut XmlDocument, operation: &AddTextBox) -> Result
         .clone()
         .unwrap_or_else(|| format!("TextBox {id}"));
     let shape = text_box_shape(id, &name, operation);
-    sp_tree.children.push(XmlNode::Element(shape));
-
-    let element_count = sp_tree
-        .children
-        .iter()
-        .filter_map(XmlNode::as_element)
-        .count();
-    let Ok(path_component) = u32::try_from(element_count) else {
-        return Err(Error::new(
-            ErrorCode::UnsupportedEdit,
-            "Shape tree has too many elements to assign an agent element id.",
-        )
-        .with_location(operation.location(None)));
-    };
+    let path_component = insert_shape_tree_child(sp_tree, shape, operation.insert.as_ref())
+        .map_err(|error| error.with_location(operation.location(None)))?;
     let path = SpTreePath {
         sp_tree_path: vec![path_component],
         group_path: Vec::new(),
