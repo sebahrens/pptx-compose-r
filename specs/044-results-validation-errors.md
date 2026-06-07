@@ -55,6 +55,24 @@ Patch statuses: `dry_run_success`, `dry_run_failed`, `applied`, `failed`.
 
 Operation statuses: `validated`, `applied`, `skipped`, `failed`.
 
+### Patch Warnings
+
+Patch and operation reports use stable warning codes so agents can decide
+whether to proceed, retry with a different operation, or ask for confirmation.
+
+`formatting_simplified` is emitted by V1 `replace_text` when `mode:
+whole_element` performs its documented plain-text rewrite and the source text
+body contains formatting or rich text constructs that cannot be preserved. The
+warning is contractual, not cosmetic: it MUST be present whenever the original
+`a:txBody` has `run_count > 1` or contains `a:fld`, `a:hlinkClick`,
+`a:hlinkMouseOver`, or `a:br`. The rewrite collapses multi-run formatting to the
+first run's `a:rPr` when preserving formatting and drops those rich constructs
+while resynthesizing `a:p`/`a:r`/`a:t` from replacement plain text. V1 has no
+non-destructive run-scoped replacement mode, and WholeElement operations MUST
+NOT accept run-property override fields; those belong to the future run-scoped
+primitive described in [041](041-agent-edit-operations.md#phase-2--replace_text-run-scoped-mode-the-gate)
+and tracked by the deferred run-scoped primitive task.
+
 ## Validation Report
 
 Validation reports must include stable finding codes and machine-readable locations:

@@ -89,12 +89,24 @@ Optional fields:
 - `format_policy`: `preserve_existing_runs`, `preserve_first_run`, or `single_run_default_style`.
 - `overflow_policy`: `allow` by default. V1 does not guarantee rendered text fit unless an external renderer is configured.
 
-V1 `replace_text` is **whole-element and destructive**. The implementation filters the existing `a:txBody` down to `bodyPr`/`lstStyle`, clones the first run's `a:rPr` onto every rebuilt run, and resynthesizes `a:p`/`a:r`/`a:t` by splitting the new text. As a consequence:
+V1 `replace_text` supports only `mode: whole_element`; no paragraph-, run-, or
+span-scoped replacement mode exists in V1. Whole-element replacement is a
+plain-text, lossy rewrite of the selected text body. The implementation filters
+the existing `a:txBody` down to `bodyPr`/`lstStyle`, clones the first run's
+`a:rPr` onto every rebuilt run when the format policy preserves formatting, and
+resynthesizes `a:p`/`a:r`/`a:t` by splitting the new text. As a consequence:
 
 - Multi-run paragraphs collapse to a single run style.
 - `a:fld`, `a:hlinkClick`, `a:hlinkMouseOver`, and `a:br` are detected but **not** preserved through the rewrite; they survive only incidentally and are lost when paragraphs are rewritten.
 
-These losses are reported via the `formatting_simplified` warning, which is the documented V1 contract. Run-property overrides (size/bold/color) MUST NOT be added to this whole-element path; they are gated behind the post-V1 run-scoped mode below.
+These losses are reported via the `formatting_simplified` warning, which is the
+documented V1 contract. The warning MUST be emitted whenever the original
+`a:txBody` has `run_count > 1` or contains any detected rich construct
+(`a:fld`, `a:hlinkClick`, `a:hlinkMouseOver`, or `a:br`) that the rewrite cannot
+preserve. Run-property overrides (size/bold/italic/color/family/align) MUST NOT
+be added to this whole-element path; on `mode: whole_element` they fail
+validation. They are gated behind the future run-scoped mode specified in Phase
+2 and tracked separately from V1 by the deferred run-scoped primitive task.
 
 Newlines in replacement text must have a documented mapping. V1 maps `\n` to PowerPoint paragraphs (hard breaks), never soft `a:br` breaks, and reports the chosen mapping in the patch report. Targets that are not `text_box` or `shape` (graphic frames, groups, connectors) return `unsupported_edit`.
 
@@ -183,7 +195,7 @@ A new `mode: run_scoped` for `replace_text` (the only existing mode is `whole_el
 - Targets a single `a:r` (run) within a resolved element, not the whole `txBody`.
 - MUST mutate the run's `a:t` in place and preserve sibling runs, `a:hlinkClick`, `a:fld`, and `a:br`.
 - Selecting a run requires extending the selector model: the V1 `element_id` + `sp_tree_path` cannot address a run, so a run coordinate (paragraph index, run index) is a new selector field added under `selector.guards`/`selector` rather than a fuzzy match.
-- When `mode: whole_element` would lose rich constructs (`run_count > 1`, or any detected `a:fld`/`a:hlinkClick`/`a:br`), the implementation MUST harden `formatting_simplified` into a **refuse-or-confirm**: reject with `unsupported_edit` unless the patch explicitly opts into the lossy rewrite.
+- When `mode: whole_element` would lose rich constructs (`run_count > 1`, or any detected `a:fld`/`a:hlinkClick`/`a:hlinkMouseOver`/`a:br`), the implementation MUST harden `formatting_simplified` into a **refuse-or-confirm**: reject with `unsupported_edit` unless the patch explicitly opts into the lossy rewrite.
 
 ### Phase 3 — slide-model-independent edits
 
