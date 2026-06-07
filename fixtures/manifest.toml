@@ -114,6 +114,6 @@ consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_
 path = "malformed/broken-slide-xml.pptx"
 source_app = "synthetic"
 features = ["malformed", "malformed-xml"]
-expected_warnings = ["unsupported_package"]
+expected_warnings = ["malformed_xml"]
 invariants = ["malformed"]
 consuming_test = "fixture_manifest::corpus::malformed_fixture_is_rejected_when_slide_xml_is_parsed"

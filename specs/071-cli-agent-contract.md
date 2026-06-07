@@ -131,7 +131,7 @@ Exit codes are coarse buckets; agents should read the JSON `error.code` ([044](0
 | `1` | command-line usage error | (argument parsing; emitted before a structured envelope, or `invalid_input` for a bad flag value) |
 | `2` | input file not found/unreadable | `invalid_input` (missing/unreadable input path) |
 | `3` | unsafe path / permission violation | `unsafe_path`, `permission_denied` |
-| `10` | parse/open failure | `parse_error` |
+| `10` | parse/open failure | `parse_error`, `malformed_xml` |
 | `11` | unsupported/encrypted package | `unsupported_package` |
 | `12` | resource limit exceeded | `resource_limit_exceeded` |
 | `20` | patch invalid (schema or operation precondition) | `invalid_input` (patch fails schema), `invalid_bounds` |

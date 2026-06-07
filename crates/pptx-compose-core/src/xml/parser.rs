@@ -47,7 +47,7 @@ pub fn parse_document_with_limits(raw: &[u8], limits: &ResourceLimits) -> Result
             }
             Ok(Event::End(_)) => {
                 let Some(element) = stack.pop() else {
-                    return Err(Error::unsupported_package(
+                    return Err(Error::malformed_xml(
                         "XML end tag encountered without a matching start tag.",
                     ));
                 };
@@ -89,13 +89,18 @@ pub fn parse_document_with_limits(raw: &[u8], limits: &ResourceLimits) -> Result
                 XmlNode::GeneralRef(decode_bytes(event.as_ref())),
             ),
             Ok(Event::Eof) => break,
-            Err(source) => return Err(Error::parse_error("Could not parse XML part.", source)),
+            Err(source) => {
+                return Err(Error::malformed_xml_with_source(
+                    "XML part is not well formed.",
+                    source,
+                ));
+            }
         }
         buffer.clear();
     }
 
     if !stack.is_empty() {
-        return Err(Error::unsupported_package(
+        return Err(Error::malformed_xml(
             "XML document ended before all elements were closed.",
         ));
     }
@@ -226,6 +231,28 @@ fn rejects_xml_exceeding_node_count_limit() {
 
     assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
     assert!(error.message().contains("maximum node count"));
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_unmatched_xml_end_tag_as_malformed_xml() {
+    use crate::error::ErrorCode;
+
+    let error = parse_document(b"<a><b></a>").expect_err("unmatched end tag must reject");
+
+    assert_eq!(error.code(), ErrorCode::MalformedXml);
+    assert!(error.message().contains("not well formed"));
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_truncated_xml_as_malformed_xml() {
+    use crate::error::ErrorCode;
+
+    let error = parse_document(b"<a><b>").expect_err("truncated XML must reject");
+
+    assert_eq!(error.code(), ErrorCode::MalformedXml);
+    assert!(error.message().contains("before all elements were closed"));
 }
 
 #[cfg(test)]
