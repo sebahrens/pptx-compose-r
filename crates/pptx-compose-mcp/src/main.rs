@@ -18,8 +18,6 @@ struct Cli {
     #[arg(long, value_name = "DIR")]
     temp_dir: Option<PathBuf>,
     #[arg(long)]
-    enable_raw_xml_tools: bool,
-    #[arg(long)]
     allow_overwrite: bool,
 }
 
@@ -33,11 +31,7 @@ impl Cli {
             .temp_dir
             .or_else(|| env_path("PPTX_COMPOSE_MCP_TEMP_DIR"))
             .unwrap_or_else(std::env::temp_dir);
-        let config = ServerConfig {
-            enable_raw_xml_tools: self.enable_raw_xml_tools
-                || env_flag("PPTX_COMPOSE_MCP_ENABLE_RAW_XML"),
-            ..ServerConfig::default()
-        };
+        let config = ServerConfig::default();
         let permission_policy = PermissionPolicy::new(
             workspace,
             temp_dir,
@@ -96,13 +90,11 @@ mod tests {
             "/tmp/workspace",
             "--temp-dir",
             "/tmp/pptx-temp",
-            "--enable-raw-xml-tools",
             "--allow-overwrite",
         ])
         .expect("mcp args parse");
         let server = cli.into_server();
 
-        assert!(server.config().enable_raw_xml_tools);
         assert_eq!(
             server.permission_policy().workspace_root,
             PathBuf::from("/tmp/workspace")
@@ -112,23 +104,5 @@ mod tests {
             PathBuf::from("/tmp/pptx-temp")
         );
         assert!(server.permission_policy().allow_overwrite);
-    }
-
-    #[test]
-    fn raw_xml_tools_are_disabled_by_default() {
-        let cli = Cli::try_parse_from(["pptx-compose-mcp"]).expect("default args parse");
-        let server = cli.into_server();
-
-        assert!(!server.config().enable_raw_xml_tools);
-        assert!(
-            server
-                .tool_routes()
-                .list_all()
-                .into_iter()
-                .all(|route| !matches!(
-                    route.name.as_ref(),
-                    "pptx_get_part_xml" | "pptx_replace_part_xml"
-                ))
-        );
     }
 }

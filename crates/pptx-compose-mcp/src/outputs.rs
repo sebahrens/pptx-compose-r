@@ -34,8 +34,6 @@ result_output!(ApplyPatchOutput);
 result_output!(ValidateOutput);
 result_output!(ExportOutput);
 result_output!(CloseOutput);
-result_output!(RawPartXmlOutput);
-result_output!(ReplacePartXmlOutput);
 
 impl DocumentSummaryOutput {
     #[must_use]
@@ -70,8 +68,6 @@ impl_stub!(
     ValidateOutput,
     ExportOutput,
     CloseOutput,
-    RawPartXmlOutput,
-    ReplacePartXmlOutput,
 );
 
 impl OpenOutput {

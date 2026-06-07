@@ -102,6 +102,6 @@ Recommended MCP prompts:
 
 Prompts should teach agents to use scoped tools first, validate before apply, avoid raw XML tools, and report warnings.
 
-## Advanced Raw Tools
+## Raw XML Scope
 
-Optional raw package/XML tools such as `pptx_get_part_xml` and `pptx_replace_part_xml` are disabled by default. They must require explicit server configuration and must not be used for supported V1 edits.
+Raw package/XML inspection and mutation tools are out of scope for V1. Agents must use the bounded inspection, validation, patch, and export tools for supported edits.

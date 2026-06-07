@@ -12,7 +12,7 @@ use pptx_compose_mcp::{
     prompts::PromptRegistry,
     resources::{ResourceRegistry, ResourceUri},
     sessions::SessionStore,
-    tools::{DEFAULT_TOOL_NAMES, RAW_TOOL_NAMES},
+    tools::DEFAULT_TOOL_NAMES,
 };
 use rmcp::{
     ClientHandler, ServerHandler, ServiceExt,
@@ -232,12 +232,6 @@ async fn mcp_client_can_drive_protocol_tools_and_structured_errors() {
     assert_eq!(tool_names.len(), DEFAULT_TOOL_NAMES.len());
     for name in DEFAULT_TOOL_NAMES {
         assert!(tool_names.contains(*name), "missing default tool {name}");
-    }
-    for name in RAW_TOOL_NAMES {
-        assert!(
-            !tool_names.contains(*name),
-            "raw tool exposed by default: {name}"
-        );
     }
     for tool in tools.tools {
         assert!(

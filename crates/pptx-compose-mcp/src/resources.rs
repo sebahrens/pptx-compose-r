@@ -85,19 +85,12 @@ pub struct ResourceContent {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ResourceRegistry {
-    raw_xml_enabled: bool,
-}
+pub struct ResourceRegistry;
 
 impl ResourceRegistry {
     #[must_use]
     pub const fn new() -> Self {
-        Self::with_raw_xml_enabled(false)
-    }
-
-    #[must_use]
-    pub const fn with_raw_xml_enabled(raw_xml_enabled: bool) -> Self {
-        Self { raw_xml_enabled }
+        Self
     }
 
     #[must_use]
@@ -121,10 +114,10 @@ impl ResourceRegistry {
         sessions: &SessionStore,
     ) -> Result<ResourceContent, McpError> {
         let content = match uri {
-            ResourceUri::Capabilities => json!(capabilities(
-                CapabilitiesOptions::new("pptx-compose-mcp", env!("CARGO_PKG_VERSION"))
-                    .with_raw_xml_enabled(self.raw_xml_enabled),
-            )),
+            ResourceUri::Capabilities => json!(capabilities(CapabilitiesOptions::new(
+                "pptx-compose-mcp",
+                env!("CARGO_PKG_VERSION")
+            ),)),
             ResourceUri::SessionSummary { session_id } => session_view(
                 sessions,
                 session_id,
@@ -612,7 +605,7 @@ mod tests {
 
     #[test]
     fn lists_capabilities_resource() {
-        let resources = ResourceRegistry::default().list_resources(None);
+        let resources = ResourceRegistry::new().list_resources(None);
 
         assert!(resources.iter().any(|resource| {
             resource.uri == "pptx://capabilities/v1"
@@ -666,7 +659,7 @@ mod tests {
 
     #[test]
     fn lists_session_resource_templates_without_session() {
-        let templates = ResourceRegistry::default().list_resource_templates();
+        let templates = ResourceRegistry::new().list_resource_templates();
         let uri_templates = templates
             .iter()
             .map(|template| template.uri_template.as_str())
@@ -682,15 +675,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reads_capabilities_resource_with_raw_xml_flag() {
-        let content = ResourceRegistry::with_raw_xml_enabled(true)
+    async fn reads_capabilities_resource() {
+        let content = ResourceRegistry::new()
             .read_resource(&ResourceUri::Capabilities, &SessionStore::default())
             .await
             .expect("capabilities resource reads");
 
         assert_eq!(content.uri, "pptx://capabilities/v1");
         assert_eq!(content.content["schema"], "pptx-compose.capabilities.v1");
-        assert_eq!(content.content["raw_xml_enabled"], true);
         assert!(
             content.content["supported_operations"]
                 .as_array()

@@ -36,21 +36,17 @@ use prompts::PromptRegistry;
 use resources::{ResourceRegistry, ResourceUri};
 use sessions::SessionStore;
 
-const RAW_GET_PART_XML: &str = "pptx_get_part_xml";
-const RAW_REPLACE_PART_XML: &str = "pptx_replace_part_xml";
 const MAX_INLINE_MEDIA_BYTES: usize = 16 * 1024 * 1024;
 const DEFAULT_MAX_INLINE_EXPORT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ServerConfig {
-    pub enable_raw_xml_tools: bool,
     pub max_inline_export_bytes: usize,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            enable_raw_xml_tools: false,
             max_inline_export_bytes: DEFAULT_MAX_INLINE_EXPORT_BYTES,
         }
     }
@@ -106,19 +102,13 @@ impl PptxServer {
         config: ServerConfig,
         permission_policy: permissions::PermissionPolicy,
     ) -> Self {
-        let mut tool_router = Self::build_tool_router();
-        if !config.enable_raw_xml_tools {
-            tool_router.disable_route(RAW_GET_PART_XML);
-            tool_router.disable_route(RAW_REPLACE_PART_XML);
-        }
-
         Self {
             sessions,
             config,
             permission_policy,
-            resource_registry: ResourceRegistry::with_raw_xml_enabled(config.enable_raw_xml_tools),
+            resource_registry: ResourceRegistry::new(),
             prompt_registry: PromptRegistry::new(),
-            tool_router,
+            tool_router: Self::build_tool_router(),
         }
     }
 
@@ -428,52 +418,6 @@ pub struct FindTextInput {
         range(min = 1, max = 500)
     )]
     pub limit: Option<u32>,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RawGetPartXmlInput {
-    #[schemars(
-        description = "Session id returned by pptx_open.",
-        length(min = 1, max = 160)
-    )]
-    pub session_id: String,
-    #[schemars(description = "Current session revision. Stale values return stale_patch.")]
-    pub expected_revision: u64,
-    #[schemars(
-        description = "Canonical OPC XML part name to inspect, for example /ppt/slides/slide1.xml.",
-        regex(pattern = "^/[^\\0]*\\.xml$"),
-        length(min = 2, max = 1024)
-    )]
-    pub part_name: String,
-    #[schemars(
-        description = "Maximum XML text bytes to return.",
-        range(min = 1, max = 1048576)
-    )]
-    pub max_bytes: Option<u32>,
-}
-
-#[derive(Clone, Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RawReplacePartXmlInput {
-    #[schemars(
-        description = "Session id returned by pptx_open.",
-        length(min = 1, max = 160)
-    )]
-    pub session_id: String,
-    #[schemars(description = "Current session revision. Stale values return stale_patch.")]
-    pub expected_revision: u64,
-    #[schemars(
-        description = "Canonical OPC XML part name to replace, for example /ppt/slides/slide1.xml.",
-        regex(pattern = "^/[^\\0]*\\.xml$"),
-        length(min = 2, max = 1024)
-    )]
-    pub part_name: String,
-    #[schemars(
-        description = "Replacement XML bytes as UTF-8 text.",
-        length(min = 1, max = 1048576)
-    )]
-    pub xml: String,
 }
 
 fn decode_inline_media(inline: &InlineMediaInput) -> pptx_compose::core::error::Result<Vec<u8>> {
@@ -1105,60 +1049,6 @@ impl PptxServer {
             closed,
         )))
     }
-
-    /// Return raw XML for an OPC part.
-    #[tool(
-        name = "pptx_get_part_xml",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<outputs::RawPartXmlOutput>(),
-        annotations(
-            title = "Get Raw Part XML",
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn pptx_get_part_xml(
-        &self,
-        input: rmcp::handler::server::wrapper::Parameters<RawGetPartXmlInput>,
-    ) -> Result<Json<outputs::RawPartXmlOutput>, rmcp::model::CallToolResult> {
-        self.sessions
-            .check_revision(&input.0.session_id, input.0.expected_revision)
-            .map_err(outputs::map_error)?;
-        Err(raw_xml_unsupported())
-    }
-
-    /// Replace raw XML for an OPC part.
-    #[tool(
-        name = "pptx_replace_part_xml",
-        output_schema = rmcp::handler::server::tool::schema_for_type::<outputs::ReplacePartXmlOutput>(),
-        annotations(
-            title = "Replace Raw Part XML",
-            read_only_hint = false,
-            destructive_hint = true,
-            idempotent_hint = false,
-            open_world_hint = false
-        )
-    )]
-    pub async fn pptx_replace_part_xml(
-        &self,
-        input: rmcp::handler::server::wrapper::Parameters<RawReplacePartXmlInput>,
-    ) -> Result<Json<outputs::ReplacePartXmlOutput>, rmcp::model::CallToolResult> {
-        self.sessions
-            .check_revision(&input.0.session_id, input.0.expected_revision)
-            .map_err(outputs::map_error)?;
-        Err(raw_xml_unsupported())
-    }
-}
-
-fn raw_xml_unsupported() -> rmcp::model::CallToolResult {
-    outputs::map_error(
-        pptx_compose::core::error::Error::new(
-            pptx_compose::core::error::ErrorCode::UnsupportedEdit,
-            "Raw XML MCP tools are schema-exposed only for advanced clients and are not implemented in V1.",
-        )
-        .with_suggestion("Use supported V1 patch operations instead of raw XML mutation."),
-    )
 }
 
 #[tool_handler(router = self.tool_router)]

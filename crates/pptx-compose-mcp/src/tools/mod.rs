@@ -20,8 +20,6 @@ pub const DEFAULT_TOOL_NAMES: &[&str] = &[
     "pptx_close",
 ];
 
-pub const RAW_TOOL_NAMES: &[&str] = &["pptx_get_part_xml", "pptx_replace_part_xml"];
-
 pub fn exposed_tools(server: &PptxServer) -> Vec<Tool> {
     server.tool_routes().list_all()
 }
@@ -34,8 +32,8 @@ pub fn exposed_tool_names(server: &PptxServer) -> BTreeSet<String> {
 }
 
 #[cfg(test)]
-pub fn assert_raw_tools_disabled_by_default() {
-    use crate::{PptxServer, ServerConfig};
+pub fn assert_default_tools_exposed() {
+    use crate::PptxServer;
 
     let default_server = PptxServer::default();
     let default_tools = exposed_tool_names(&default_server);
@@ -44,34 +42,11 @@ pub fn assert_raw_tools_disabled_by_default() {
     for name in DEFAULT_TOOL_NAMES {
         assert!(default_tools.contains(*name), "missing default tool {name}");
     }
-    for name in RAW_TOOL_NAMES {
-        assert!(
-            !default_tools.contains(*name),
-            "raw tool exposed by default: {name}"
-        );
-    }
-
-    let raw_enabled_server = PptxServer::with_config(ServerConfig {
-        enable_raw_xml_tools: true,
-        ..ServerConfig::default()
-    });
-    let raw_enabled_tools = exposed_tool_names(&raw_enabled_server);
-
-    assert_eq!(
-        raw_enabled_tools.len(),
-        DEFAULT_TOOL_NAMES.len() + RAW_TOOL_NAMES.len()
-    );
-    for name in DEFAULT_TOOL_NAMES.iter().chain(RAW_TOOL_NAMES.iter()) {
-        assert!(
-            raw_enabled_tools.contains(*name),
-            "missing raw-enabled tool {name}"
-        );
-    }
 }
 
 #[test]
-fn raw_tools_disabled_by_default() {
-    assert_raw_tools_disabled_by_default();
+fn default_tools_are_exposed() {
+    assert_default_tools_exposed();
 }
 
 #[cfg(test)]
@@ -298,7 +273,6 @@ async fn export_requires_explicit_inline_opt_in_without_path() {
 async fn inline_export_enforces_configured_byte_limit() {
     let server = PptxServer::with_config(crate::ServerConfig {
         max_inline_export_bytes: 1,
-        ..crate::ServerConfig::default()
     });
     let opened = open_fixture(&server);
 
