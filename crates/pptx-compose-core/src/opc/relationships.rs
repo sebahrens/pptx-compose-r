@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    error::{Error, ErrorCode, Result},
+    error::{Error, ErrorCode, Result, control_part_parse_error_code},
     opc::part_name::PartName,
     xml::{
         document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
@@ -119,13 +119,8 @@ impl RelationshipSet {
         limits: &ResourceLimits,
     ) -> Result<Self> {
         let document = parse_document_with_limits(raw, limits).map_err(|source| {
-            let code = if source.code() == ErrorCode::ResourceLimitExceeded {
-                source.code()
-            } else {
-                ErrorCode::UnsupportedPackage
-            };
             Error::with_source(
-                code,
+                control_part_parse_error_code(source.code()),
                 format!("Could not parse relationship part for {source_part}."),
                 source,
             )
@@ -570,6 +565,36 @@ fn serializes_relationships_deterministically() {
     assert_eq!(reparsed.rels.len(), 2);
     assert_eq!(reparsed.rels[1].target, "https://example.test/?a=1&b=2");
     assert_eq!(reparsed.rels[1].target_mode, TargetMode::External);
+}
+
+#[cfg(test)]
+#[test]
+fn malformed_relationship_part_parse_failure_is_malformed_xml() {
+    let source = PartName::from_zip_entry("/ppt/presentation.xml").expect("valid source");
+    let error = RelationshipSet::parse(&source, b"<Relationships><")
+        .expect_err("malformed relationship part rejects");
+
+    assert_eq!(error.code(), ErrorCode::MalformedXml);
+}
+
+#[cfg(test)]
+#[test]
+fn relationship_parse_limits_stay_resource_limit_errors() {
+    use crate::zip::limits::ResourceLimits;
+
+    let source = PartName::from_zip_entry("/ppt/presentation.xml").expect("valid source");
+    let limits = ResourceLimits {
+        max_xml_node_count: 1,
+        ..ResourceLimits::default()
+    };
+    let error = RelationshipSet::parse_with_limits(
+        &source,
+        br#"<Relationships><Relationship Id="rId1" Type="type" Target="target"/></Relationships>"#,
+        &limits,
+    )
+    .expect_err("relationship part exceeding XML node limit rejects");
+
+    assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
 }
 
 #[cfg(test)]

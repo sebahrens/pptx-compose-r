@@ -8,6 +8,15 @@ pub use code::ErrorCode;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[must_use]
+pub const fn control_part_parse_error_code(source_code: ErrorCode) -> ErrorCode {
+    match source_code {
+        ErrorCode::ResourceLimitExceeded => ErrorCode::ResourceLimitExceeded,
+        ErrorCode::MalformedXml | ErrorCode::ParseError => ErrorCode::MalformedXml,
+        _ => ErrorCode::UnsupportedPackage,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorSeverity {

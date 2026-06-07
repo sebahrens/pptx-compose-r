@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    error::{Error, ErrorCode, Result},
+    error::{Error, Result, control_part_parse_error_code},
     opc::part_name::PartName,
     xml::{
         document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
@@ -38,12 +38,11 @@ impl ContentTypes {
         }
 
         let document = parse_document_with_limits(raw, limits).map_err(|source| {
-            let code = if source.code() == ErrorCode::ResourceLimitExceeded {
-                source.code()
-            } else {
-                ErrorCode::UnsupportedPackage
-            };
-            Error::with_source(code, "Could not parse [Content_Types].xml.", source)
+            Error::with_source(
+                control_part_parse_error_code(source.code()),
+                "Could not parse [Content_Types].xml.",
+                source,
+            )
         })?;
         let root = document.root_element().ok_or_else(|| {
             Error::malformed_package("[Content_Types].xml has no root Types element.")
@@ -360,4 +359,32 @@ fn removes_defaults_and_overrides() {
     assert!(!content_types.remove_override(&media));
     assert_eq!(content_types.default_for_ext("png"), None);
     assert_eq!(content_types.override_for(&media), None);
+}
+
+#[cfg(test)]
+#[test]
+fn malformed_content_types_parse_failure_is_malformed_xml() {
+    use crate::error::ErrorCode;
+
+    let error = ContentTypes::parse(b"<Types><").expect_err("malformed content types rejects");
+
+    assert_eq!(error.code(), ErrorCode::MalformedXml);
+}
+
+#[cfg(test)]
+#[test]
+fn content_types_parse_limits_stay_resource_limit_errors() {
+    use crate::{error::ErrorCode, zip::limits::ResourceLimits};
+
+    let limits = ResourceLimits {
+        max_xml_node_count: 1,
+        ..ResourceLimits::default()
+    };
+    let error = ContentTypes::parse_with_limits(
+        br#"<Types><Default Extension="xml" ContentType="application/xml"/></Types>"#,
+        &limits,
+    )
+    .expect_err("content types exceeding XML node limit rejects");
+
+    assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
 }

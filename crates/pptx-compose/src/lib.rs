@@ -32,6 +32,7 @@ pub mod json {
 }
 
 use pptx_compose_core::{
+    error::control_part_parse_error_code,
     opc::{
         content_types::ContentTypes,
         package::Package,
@@ -1222,12 +1223,11 @@ fn parse_root_relationships(
     resource_limits: &ResourceLimits,
 ) -> Result<Vec<Relationship>> {
     let document = parse_document_with_limits(bytes, resource_limits).map_err(|source| {
-        let code = if source.code() == ErrorCode::ResourceLimitExceeded {
-            source.code()
-        } else {
-            ErrorCode::UnsupportedPackage
-        };
-        Error::with_source(code, "Could not parse package root relationships.", source)
+        Error::with_source(
+            control_part_parse_error_code(source.code()),
+            "Could not parse package root relationships.",
+            source,
+        )
     })?;
     let root = document.root_element().ok_or_else(|| {
         Error::unsupported_package("Package root relationships part has no root element.")
@@ -1713,6 +1713,50 @@ mod tests {
                 .as_str(),
             "/ppt/presentation.xml"
         );
+    }
+
+    #[test]
+    fn malformed_content_types_parse_failure_is_malformed_xml() {
+        let bytes = zip_entries([
+            ("[Content_Types].xml", b"<Types><"),
+            ("_rels/.rels", ROOT_RELS.as_bytes()),
+            ("ppt/presentation.xml", PRESENTATION.as_bytes()),
+        ]);
+
+        let error =
+            PresentationDocument::from_bytes(&bytes).expect_err("malformed content types rejects");
+
+        assert_eq!(error.code(), ErrorCode::MalformedXml);
+    }
+
+    #[test]
+    fn malformed_root_relationships_parse_failure_is_malformed_xml() {
+        let bytes = zip_entries([
+            ("[Content_Types].xml", CONTENT_TYPES.as_bytes()),
+            ("_rels/.rels", b"<Relationships><"),
+            ("ppt/presentation.xml", PRESENTATION.as_bytes()),
+        ]);
+
+        let error =
+            PresentationDocument::from_bytes(&bytes).expect_err("malformed root rels rejects");
+
+        assert_eq!(error.code(), ErrorCode::MalformedXml);
+    }
+
+    #[test]
+    fn malformed_part_relationships_parse_failure_is_malformed_xml() {
+        let bytes = zip_entries([
+            ("[Content_Types].xml", CONTENT_TYPES_WITH_SLIDE.as_bytes()),
+            ("_rels/.rels", ROOT_RELS.as_bytes()),
+            ("ppt/presentation.xml", PRESENTATION_WITH_SLIDE.as_bytes()),
+            ("ppt/_rels/presentation.xml.rels", b"<Relationships><"),
+            ("ppt/slides/slide1.xml", SLIDE.as_bytes()),
+        ]);
+
+        let error =
+            PresentationDocument::from_bytes(&bytes).expect_err("malformed part rels rejects");
+
+        assert_eq!(error.code(), ErrorCode::MalformedXml);
     }
 
     #[test]
