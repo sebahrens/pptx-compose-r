@@ -55,6 +55,21 @@ impl ElementKind {
     pub const fn supports_replace_text(self) -> bool {
         matches!(self, Self::TextBox | Self::Shape)
     }
+
+    #[must_use]
+    pub const fn supports_move_resize(self) -> bool {
+        matches!(
+            self,
+            Self::TextBox
+                | Self::Shape
+                | Self::Picture
+                | Self::GraphicFrameChart
+                | Self::GraphicFrameTable
+                | Self::GraphicFrameDiagram
+                | Self::GraphicFrameOle
+                | Self::GraphicFrameOther
+        )
+    }
 }
 
 #[must_use]

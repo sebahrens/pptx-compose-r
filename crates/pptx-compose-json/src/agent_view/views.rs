@@ -888,6 +888,7 @@ fn project_element(
             },
         ),
         editable: editable(
+            core_kind,
             text.is_some() && core_kind.supports_replace_text(),
             image_support,
         ),
@@ -1236,13 +1237,18 @@ enum ImageEditSupport {
     Unresolved,
 }
 
-fn editable(has_text: bool, image_support: ImageEditSupport) -> Editable {
+fn editable(
+    core_kind: CoreElementKind,
+    has_text: bool,
+    image_support: ImageEditSupport,
+) -> Editable {
     let (image_supported, image_reason) = match image_support {
         ImageEditSupport::Embedded => (true, None),
         ImageEditSupport::ExternalLink => (false, Some("external_link".to_owned())),
         ImageEditSupport::NotPicture => (false, Some("not_picture".to_owned())),
         ImageEditSupport::Unresolved => (false, None),
     };
+    let (bounds_supported, bounds_reason) = bounds_edit_support(core_kind);
 
     Editable {
         text: EditableSupport {
@@ -1250,14 +1256,28 @@ fn editable(has_text: bool, image_support: ImageEditSupport) -> Editable {
             reason: (!has_text).then(|| "not_text".to_owned()),
         },
         bounds: EditableSupport {
-            supported: true,
-            reason: None,
+            supported: bounds_supported,
+            reason: bounds_reason.map(str::to_owned),
         },
         image: EditableSupport {
             supported: image_supported,
             reason: image_reason,
         },
     }
+}
+
+fn bounds_edit_support(kind: CoreElementKind) -> (bool, Option<&'static str>) {
+    if kind.supports_move_resize() {
+        return (true, None);
+    }
+
+    let reason = match kind {
+        CoreElementKind::Group => "group",
+        CoreElementKind::Connector => "connector",
+        CoreElementKind::Other => "unbounded",
+        _ => "unbounded",
+    };
+    (false, Some(reason))
 }
 
 fn xml_location(element: &XmlElement, shape: &Shape, path: &SpTreePath) -> XmlLocation {
@@ -1679,6 +1699,79 @@ fn graphic_frame_kinds_are_emitted_from_graphic_data_uri() {
 
 #[cfg(test)]
 #[test]
+fn bounds_editability_matches_move_resize_supported_kinds() {
+    use pptx_compose_core::{
+        opc::{
+            package::{OFFICE_DOCUMENT_REL_TYPE, Package},
+            part_name::PartName,
+            relationships::{Relationship, RelationshipSource},
+        },
+        pptx::presentation::PresentationDocument,
+    };
+
+    const SLIDE_REL_TYPE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+
+    let presentation_part = PartName::from_zip_entry("ppt/presentation.xml").expect("part name");
+
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("[Content_Types].xml", content_types_xml().to_vec())
+        .expect("content types part inserts");
+    package
+        .insert_zip_entry("ppt/presentation.xml", presentation_xml().to_vec())
+        .expect("presentation part inserts");
+    package
+        .insert_zip_entry(
+            "ppt/slides/slide1.xml",
+            group_connector_slide_xml().to_vec(),
+        )
+        .expect("slide part inserts");
+
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        OFFICE_DOCUMENT_REL_TYPE,
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlide",
+        SLIDE_REL_TYPE,
+        "slides/slide1.xml",
+    ));
+
+    let pkg = PresentationDocument::open(package).expect("presentation opens");
+    let value = build_view(&pkg, request_for(&pkg, ViewMode::SlideDetail, None))
+        .expect("slide detail builds");
+    let elements = value["slides"][0]["elements"]
+        .as_array()
+        .expect("elements array");
+
+    for (name, supported, reason) in [
+        ("Unsupported Group", false, Some("group")),
+        ("Unsupported Connector", false, Some("connector")),
+        ("Nested Shape", true, None),
+    ] {
+        let element = elements
+            .iter()
+            .find(|element| element["xml_location"]["cnvpr_name"] == name)
+            .unwrap_or_else(|| panic!("{name} should be projected"));
+        assert_eq!(element["editable"]["bounds"]["supported"], supported);
+        match reason {
+            Some(reason) => assert_eq!(element["editable"]["bounds"]["reason"], reason),
+            None => assert_eq!(element["editable"]["bounds"].get("reason"), None),
+        }
+    }
+
+    assert_eq!(
+        bounds_edit_support(CoreElementKind::Other),
+        (false, Some("unbounded"))
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn slide_detail_paginates_elements_with_working_cursor() {
     let slide = slide_projection_with_elements(3);
     let document_id = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -1776,6 +1869,11 @@ fn picture_slide_xml() -> &'static [u8] {
 #[cfg(test)]
 fn graphic_frame_slide_xml() -> &'static [u8] {
     br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="Chart Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="8" name="Table Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl/></a:graphicData></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="9" name="Diagram Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="10" name="OLE Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/presentationml/2006/ole"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="11" name="Unknown Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://example.invalid/customGraphic"/></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#
+}
+
+#[cfg(test)]
+fn group_connector_slide_xml() -> &'static [u8] {
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:grpSp><p:nvGrpSpPr><p:cNvPr id="12" name="Unsupported Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:grpSpPr><p:sp><p:nvSpPr><p:cNvPr id="13" name="Nested Shape"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:spPr></p:sp></p:grpSp><p:cxnSp><p:nvCxnSpPr><p:cNvPr id="14" name="Unsupported Connector"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:spPr></p:cxnSp></p:spTree></p:cSld></p:sld>"#
 }
 
 #[cfg(test)]

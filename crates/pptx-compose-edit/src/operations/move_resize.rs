@@ -1,7 +1,6 @@
 use pptx_compose_core::{
     error::{Error, ErrorCode, ErrorLocation, Result},
     opc::package::Package,
-    pptx::ids::ElementKind,
     xml::{
         document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
         parser::parse_document,
@@ -86,20 +85,14 @@ impl MoveResize {
 }
 
 fn ensure_movable(target: &ResolvedElement) -> Result<()> {
-    match target.kind {
-        ElementKind::TextBox
-        | ElementKind::Shape
-        | ElementKind::Picture
-        | ElementKind::GraphicFrameChart
-        | ElementKind::GraphicFrameTable
-        | ElementKind::GraphicFrameDiagram
-        | ElementKind::GraphicFrameOle
-        | ElementKind::GraphicFrameOther => Ok(()),
-        ElementKind::Group | ElementKind::Connector | ElementKind::Other => Err(Error::new(
+    if target.kind.supports_move_resize() {
+        Ok(())
+    } else {
+        Err(Error::new(
             ErrorCode::UnsupportedEdit,
             "Target element does not have movable DrawingML bounds.",
         )
-        .with_location(location(target))),
+        .with_location(location(target)))
     }
 }
 
@@ -289,6 +282,9 @@ fn location(target: &ResolvedElement) -> ErrorLocation {
         ..ErrorLocation::default()
     }
 }
+
+#[cfg(test)]
+use pptx_compose_core::pptx::ids::ElementKind;
 
 #[cfg(test)]
 #[test]
