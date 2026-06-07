@@ -15,6 +15,7 @@ pub use options::{AgentViewOptions, ApplyPatchOptions, OpenOptions, WriteOptions
 pub use pptx_compose_core::{
     error::{Error, ErrorCategory, ErrorCode, ErrorDetails, ErrorLocation, ErrorSeverity, Result},
     provenance::checksum::part_checksum,
+    validation::ValidationMode,
     zip::{limits::ResourceLimits, writer::WriteMode},
 };
 pub use pptx_compose_edit::{media_inputs::MediaInputs, patch::Patch};
@@ -570,15 +571,26 @@ impl PresentationDocument {
     }
 
     pub fn validate(&self) -> Result<ValidationReport> {
+        self.validate_with_mode(self.validation_mode_for_current_state())
+    }
+
+    pub fn validate_with_mode(&self, mode: ValidationMode) -> Result<ValidationReport> {
         let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
+        let mut package = package;
+        apply_dirty_parts(&mut package, &self.dirty_parts);
         pptx_compose_edit::reports::validation_report(
-            pptx_compose_core::validation::validate_package(
-                &package,
-                pptx_compose_core::validation::ValidationMode::Edited,
-            ),
+            pptx_compose_core::validation::validate_package(&package, mode),
             document_id_from_entries(&self.entries)?,
             self.current_revision()?,
         )
+    }
+
+    fn validation_mode_for_current_state(&self) -> ValidationMode {
+        if self.dirty_parts.is_empty() {
+            ValidationMode::NoEdit
+        } else {
+            ValidationMode::Edited
+        }
     }
 
     fn ensure_write_validation_passes(&self) -> Result<()> {
@@ -600,7 +612,7 @@ impl PresentationDocument {
         pptx_compose_edit::reports::validation_report(
             pptx_compose_core::validation::validate_package(
                 &package,
-                pptx_compose_core::validation::ValidationMode::Edited,
+                self.validation_mode_for_current_state(),
             ),
             document_id_from_entries(&self.entries)?,
             self.current_revision()?,

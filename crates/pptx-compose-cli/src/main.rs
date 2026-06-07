@@ -14,6 +14,7 @@ use output::{OutputDest, OutputSink};
 use permissions::{PathIntent, PermissionContext};
 use pptx_compose::{
     AgentViewOptions, MediaPartInfo, OpenOptions, PresentationDocument, ResourceLimits,
+    ValidationMode,
     capabilities::{SCHEMA_CAPABILITIES, capabilities_json_schema},
     core::error::{Error, ErrorCode, ErrorDetails, ErrorLocation},
     edit::{media_inputs::media_manifest_json_schema, patch::patch_json_schema},
@@ -24,9 +25,9 @@ use pptx_compose::{
             views::{FindTextRequest, ViewMode},
         },
         schemas::{
-            JsonError, ResultEnvelope, ResultStatus, Severity, ValidationReport,
-            agent_view_json_schema, error_json_schema, find_text_json_schema,
-            patch_report_json_schema, result_json_schema, validation_report_json_schema,
+            JsonError, ResultEnvelope, ResultStatus, ValidationReport, agent_view_json_schema,
+            error_json_schema, find_text_json_schema, patch_report_json_schema, result_json_schema,
+            validation_report_json_schema,
         },
     },
 };
@@ -194,7 +195,9 @@ fn inspect(
         .map_err(CliError::from_error)?;
     sink.emit_json_overwrite(&view, OutputDest::from(args.output), args.overwrite)?;
     if args.report.is_some() {
-        let report = document.validate().map_err(CliError::from_error)?;
+        let report = document
+            .validate_with_mode(ValidationMode::NoEdit)
+            .map_err(CliError::from_error)?;
         sink.emit_json_overwrite(&report, OutputDest::from(args.report), args.overwrite)?;
     }
     Ok(())
@@ -232,7 +235,9 @@ fn validate(
     }
     let document = PresentationDocument::open_path_with_options(&input, open_options)
         .map_err(CliError::from_error)?;
-    let report = document.validate().map_err(CliError::from_error)?;
+    let report = document
+        .validate_with_mode(ValidationMode::NoEdit)
+        .map_err(CliError::from_error)?;
     sink.emit_json_overwrite(&report, OutputDest::from(args.report), args.overwrite)?;
     if validation_report_has_blocking_findings(&report) {
         return Err(CliError::new(
@@ -244,9 +249,7 @@ fn validate(
 }
 
 fn validation_report_has_blocking_findings(report: &ValidationReport) -> bool {
-    report.findings.iter().any(|finding| {
-        matches!(finding.severity, Severity::Error | Severity::Fatal) || finding.blocking
-    })
+    report.findings.iter().any(|finding| finding.blocking)
 }
 
 fn media_list(

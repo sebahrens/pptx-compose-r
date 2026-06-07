@@ -8,7 +8,7 @@ use std::{
 
 use pptx_compose::{
     AgentViewOptions, ApplyPatchOptions, MediaInputs, OpenOptions, Patch, PresentationDocument,
-    ResourceLimits, WriteMode, WriteOptions,
+    ResourceLimits, ValidationMode, WriteMode, WriteOptions,
     edit::{
         media_inputs::{MediaBinding, MediaSource},
         patch::parse_patch,
@@ -62,6 +62,9 @@ fn exposes_required_070_api_and_defaults() {
         .expect("agent view builds with options");
     let _legacy_json = from_path.to_legacy_json().expect("legacy JSON builds");
     let _validation = from_path.validate().expect("validation report builds");
+    let _explicit_validation = from_path
+        .validate_with_mode(ValidationMode::NoEdit)
+        .expect("explicit validation report builds");
     let _bytes = from_path.write_vec().expect("default write vec succeeds");
     let _bytes_with_options = from_path
         .write_vec_with_options(WriteOptions::default())
@@ -296,7 +299,9 @@ fn validation_reports_duplicate_slide_ids_from_real_package() {
     let bytes = duplicate_slide_id_deck();
     let document = PresentationDocument::from_bytes(&bytes).expect("duplicate-id deck opens");
 
-    let validation = document.validate().expect("validation report builds");
+    let validation = document
+        .validate_with_mode(ValidationMode::Edited)
+        .expect("validation report builds");
 
     assert_eq!(
         validation.status,
@@ -310,6 +315,32 @@ fn validation_reports_duplicate_slide_ids_from_real_package() {
     assert_eq!(finding.location["slide_id"], "256");
     assert_eq!(finding.location["relationship_id"], "rId1");
     assert_eq!(finding.location["part"], "ppt/slides/slide1.xml");
+}
+
+#[test]
+fn no_edit_validation_reports_existing_errors_without_blocking() {
+    let bytes = duplicate_slide_id_deck();
+    let document = PresentationDocument::from_bytes(&bytes).expect("duplicate-id deck opens");
+
+    let no_edit = document
+        .validate_with_mode(ValidationMode::NoEdit)
+        .expect("no-edit validation report builds");
+    let edited = document
+        .validate_with_mode(ValidationMode::Edited)
+        .expect("edited validation report builds");
+
+    assert_eq!(
+        no_edit.status,
+        pptx_compose::json::schemas::ValidationStatus::Valid
+    );
+    assert_eq!(no_edit.summary.errors, 1);
+    assert!(no_edit.findings.iter().all(|finding| !finding.blocking));
+    assert_eq!(
+        edited.status,
+        pptx_compose::json::schemas::ValidationStatus::Invalid
+    );
+    assert_eq!(edited.summary.errors, 1);
+    assert!(edited.findings.iter().any(|finding| finding.blocking));
 }
 
 #[test]

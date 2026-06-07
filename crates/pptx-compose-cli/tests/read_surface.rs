@@ -161,6 +161,28 @@ fn validate_malformed_slide_xml_emits_report_and_exits_validation_failure() {
 }
 
 #[test]
+fn validate_reports_no_edit_errors_without_failing() {
+    let root = unique_dir();
+    let deck = root.join("duplicate-slide-id.pptx");
+    fs::write(&deck, duplicate_slide_id_deck()).expect("deck fixture writes");
+
+    let output = run_cli_owned(vec![
+        "validate".to_owned(),
+        deck.to_string_lossy().into_owned(),
+        "--report".to_owned(),
+        "-".to_owned(),
+    ]);
+
+    let report = parse_stdout(&output);
+    assert_eq!(report["status"], "valid");
+    assert_eq!(report["summary"]["errors"], 1);
+    assert_eq!(report["findings"][0]["severity"], "error");
+    assert_eq!(report["findings"][0]["blocking"], false);
+
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
 fn inspect_slides_accepts_single_range_and_list_scopes() {
     let root = unique_dir();
     let deck = root.join("three-slides.pptx");
@@ -552,6 +574,14 @@ fn unique_counter() -> u64 {
 }
 
 fn slide_deck(slide_count: usize) -> Vec<u8> {
+    deck_with_presentation(slide_count, presentation(slide_count))
+}
+
+fn duplicate_slide_id_deck() -> Vec<u8> {
+    deck_with_presentation(1, presentation_with_duplicate_slide_ids())
+}
+
+fn deck_with_presentation(slide_count: usize, presentation_xml: String) -> Vec<u8> {
     let mut bytes = Vec::new();
     {
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut bytes));
@@ -560,7 +590,7 @@ fn slide_deck(slide_count: usize) -> Vec<u8> {
         let mut entries = vec![
             ("[Content_Types].xml".to_owned(), content_types(slide_count)),
             ("_rels/.rels".to_owned(), root_rels()),
-            ("ppt/presentation.xml".to_owned(), presentation(slide_count)),
+            ("ppt/presentation.xml".to_owned(), presentation_xml),
             (
                 "ppt/_rels/presentation.xml.rels".to_owned(),
                 presentation_rels(slide_count),
@@ -625,6 +655,17 @@ fn presentation(slide_count: usize) -> String {
   </p:sldIdLst>
 </p:presentation>"#
     )
+}
+
+fn presentation_with_duplicate_slide_ids() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst>
+    <p:sldId id="256" r:id="rId1"/>
+    <p:sldId id="256" r:id="rId1"/>
+  </p:sldIdLst>
+</p:presentation>"#
+        .to_owned()
 }
 
 fn presentation_rels(slide_count: usize) -> String {

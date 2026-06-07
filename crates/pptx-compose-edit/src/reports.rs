@@ -42,9 +42,7 @@ pub const fn patch_validation_summary(report: &ValidationReport) -> PatchValidat
 
 #[must_use]
 pub fn has_blocking_findings(report: &ValidationReport) -> bool {
-    report.findings.iter().any(|finding| {
-        matches!(finding.severity, Severity::Error | Severity::Fatal) || finding.blocking
-    })
+    report.findings.iter().any(|finding| finding.blocking)
 }
 
 fn finding_view(finding: core_validation::Finding) -> FindingView {
