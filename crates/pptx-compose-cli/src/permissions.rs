@@ -70,10 +70,7 @@ impl PermissionContext {
         } else {
             Err(path_error(
                 ErrorCode::PermissionDenied,
-                format!(
-                    "{} path is outside the configured workspace or temp directory.",
-                    intent.label()
-                ),
+                self.outside_allowed_dirs_message(intent),
             ))
         }
     }
@@ -127,10 +124,7 @@ impl PermissionContext {
         } else {
             Err(path_error(
                 ErrorCode::PermissionDenied,
-                format!(
-                    "{} path is outside the configured workspace or temp directory.",
-                    intent.label()
-                ),
+                self.outside_allowed_dirs_message(intent),
             ))
         }
     }
@@ -165,6 +159,15 @@ impl PermissionContext {
 
     fn is_allowed(&self, path: &Path) -> bool {
         path.starts_with(&self.workspace) || path.starts_with(&self.temp_dir)
+    }
+
+    fn outside_allowed_dirs_message(&self, intent: PathIntent) -> String {
+        format!(
+            "{} path is outside the configured workspace or temp directory. Allowed directories: workspace={}, temp_dir={}. Pass --workspace or --temp-dir to allow a different directory.",
+            intent.label(),
+            self.workspace.display(),
+            self.temp_dir.display()
+        )
     }
 }
 
@@ -278,6 +281,10 @@ fn rejects_escape_and_cleans_temp() {
         err.code(),
         ErrorCode::PermissionDenied | ErrorCode::UnsafePath
     ));
+    let message = err.to_string();
+    assert!(message.contains(ctx.workspace.to_string_lossy().as_ref()));
+    assert!(message.contains(ctx.temp_dir.to_string_lossy().as_ref()));
+    assert!(message.contains("--workspace"));
 
     let symlink = workspace.join("escape.pptx");
     create_symlink(&outside_input, &symlink);
