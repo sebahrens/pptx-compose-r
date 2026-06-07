@@ -188,7 +188,9 @@ pub struct ImportMediaInput {
         length(min = 1, max = 160)
     )]
     pub session_id: String,
-    #[schemars(description = "Current session revision. Stale values return stale_patch.")]
+    #[schemars(
+        description = "Revision guard that must equal the current session revision returned by pptx_open or the last pptx_apply_patch result. Stale values return stale_patch."
+    )]
     pub expected_revision: u64,
     #[schemars(
         description = "Readable media file path. Mutually exclusive with inline.",
@@ -244,7 +246,7 @@ pub struct ApplyPatchInput {
     )]
     pub client_request_id: Option<String>,
     #[schemars(
-        description = "Bounded V1 patch whose document_id and base_revision must match the session."
+        description = "Bounded V1 patch whose document_id and base_revision must match the session. The revision guard lives in patch.base_revision; pptx_apply_patch has no separate expected_revision field."
     )]
     pub patch: Patch,
     #[serde(default)]
@@ -298,7 +300,9 @@ pub struct ExportInput {
         length(min = 1, max = 256)
     )]
     pub client_request_id: Option<String>,
-    #[schemars(description = "Current session revision. Stale values return stale_patch.")]
+    #[schemars(
+        description = "Revision guard that must equal the current session revision returned by pptx_open or the last pptx_apply_patch result. Stale values return stale_patch."
+    )]
     pub expected_revision: u64,
     #[schemars(
         description = "Writable output .pptx path. Required unless inline is true.",
@@ -1612,6 +1616,46 @@ mod tests {
             schema["$defs"]["InlineMediaInput"]["properties"]["data"]["maxLength"]
                 .as_u64()
                 .is_some_and(|value| value > 0)
+        );
+    }
+
+    #[test]
+    fn mutating_tool_input_schemas_name_revision_guards() {
+        let tools = crate::tools::exposed_tools(&PptxServer::default());
+
+        let import_media = tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == "pptx_import_media")
+            .expect("import media tool is exposed");
+        let import_media_schema = import_media.schema_as_json_value();
+        assert!(
+            import_media_schema["properties"]["expected_revision"]["description"]
+                .as_str()
+                .is_some_and(|value| value.contains("last pptx_apply_patch result")),
+            "pptx_import_media expected_revision explains the current-session guard"
+        );
+
+        let apply_patch = tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == "pptx_apply_patch")
+            .expect("apply patch tool is exposed");
+        let apply_patch_schema = apply_patch.schema_as_json_value();
+        let patch_description = apply_patch_schema["properties"]["patch"]["description"]
+            .as_str()
+            .expect("patch description is present");
+        assert!(patch_description.contains("patch.base_revision"));
+        assert!(patch_description.contains("no separate expected_revision"));
+
+        let export = tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == "pptx_export")
+            .expect("export tool is exposed");
+        let export_schema = export.schema_as_json_value();
+        assert!(
+            export_schema["properties"]["expected_revision"]["description"]
+                .as_str()
+                .is_some_and(|value| value.contains("last pptx_apply_patch result")),
+            "pptx_export expected_revision explains the current-session guard"
         );
     }
 

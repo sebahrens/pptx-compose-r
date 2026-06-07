@@ -190,6 +190,8 @@ Required fields:
 
 Each operation must include `operation_id` and `op`. Patches are atomic. Dry-run and apply must use the same report schema.
 
+`base_revision` is the revision field inside a patch document; `expected_revision` is the equivalent guard passed as a tool/CLI parameter for non-patch operations. They carry the same value and meaning.
+
 `replace_text` may include `run_style` only when `mode` is `run_scoped`:
 
 ```json

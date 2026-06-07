@@ -54,6 +54,7 @@ collection mode with its own stable ordering and cursor scope.
 Rules:
 
 - Every mutating tool requires `session_id` and `expected_revision` or a patch `base_revision`.
+- `base_revision` is the revision field inside a patch document; `expected_revision` is the equivalent guard passed as a tool/CLI parameter for non-patch operations. They carry the same value and meaning.
 - Successful non-dry-run patch application increments revision.
 - Stale revisions return `stale_patch` ([044](044-results-validation-errors.md#error-envelope) canonical code); no silent rebase.
 - Concurrent applies to one session must be serialized.

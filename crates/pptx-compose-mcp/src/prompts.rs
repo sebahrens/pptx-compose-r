@@ -80,7 +80,7 @@ const PROMPTS: &[PromptSpec] = &[
         name: "edit_deck_safely",
         title: "Edit deck safely",
         description: "Guide the inspect, guarded patch, dry-run, apply, validate, export workflow.",
-        text: "Inspect summary, slide, and element resources first. Build a patch with document_id, base_revision, client_request_id, operation_id values, selectors, and guard fields such as current text matches. Run pptx_validate_patch or dry-run apply before a real apply. Apply only after validation succeeds, validate the session again, then export. Prefer unsupported_edit over risky changes and avoid raw XML replacement as a V1 path.",
+        text: "Inspect summary, slide, and element resources first. Build a patch with document_id, base_revision, client_request_id, operation_id values, selectors, and guard fields such as current text matches. Use patch.base_revision as the apply revision guard; use expected_revision for non-patch mutating tools such as import_media and export. Run pptx_validate_patch or dry-run apply before a real apply. Apply only after validation succeeds, validate the session again, then export. Prefer unsupported_edit over risky changes and avoid raw XML replacement as a V1 path.",
     },
     PromptSpec {
         name: "replace_text_across_deck",
