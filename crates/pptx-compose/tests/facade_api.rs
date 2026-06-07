@@ -853,6 +853,57 @@ fn gif_image_edits_round_trip_with_gif_media_parts() {
 }
 
 #[test]
+fn external_link_image_view_flag_matches_replace_image_rejection() {
+    let bytes = linked_image_deck();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("linked image deck opens");
+    let view = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide_detail builds");
+    let linked = view["slides"][0]["elements"]
+        .as_array()
+        .expect("slide_detail exposes elements")
+        .iter()
+        .find(|element| element["id"] == "slide-1:pic-4")
+        .expect("linked picture is projected");
+
+    assert_eq!(linked["editable"]["image"]["supported"], false);
+    assert_eq!(linked["editable"]["image"]["reason"], "external_link");
+    assert_eq!(linked.get("image"), None);
+
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-linked-image",
+        vec![serde_json::json!({
+            "operation_id": "replace-linked",
+            "op": "replace_image",
+            "element_id": "slide-1:pic-4",
+            "media_ref": "replacement",
+            "content_type": "image/png"
+        })],
+    );
+    let error = document
+        .apply_patch(patch, media_inputs("replacement", "image/png", tiny_png()))
+        .expect_err("replace_image rejects externally linked images");
+
+    assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+    assert_eq!(
+        error.details().location.operation_id.as_deref(),
+        Some("replace-linked")
+    );
+    assert_eq!(
+        error.details().location.element_id.as_deref(),
+        Some("slide-1:pic-4")
+    );
+}
+
+#[test]
 fn failed_multi_operation_patch_leaves_package_byte_identical() {
     let bytes = text_deck_with_clean_extras();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
@@ -1368,6 +1419,26 @@ fn image_deck_with_clean_extras() -> Vec<u8> {
     )
 }
 
+fn linked_image_deck() -> Vec<u8> {
+    zip_entries(
+        [
+            ("[Content_Types].xml", content_types().as_bytes()),
+            ("_rels/.rels", root_rels().as_bytes()),
+            ("ppt/presentation.xml", presentation().as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", linked_image_slide().as_bytes()),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                linked_image_slide_rels().as_bytes(),
+            ),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
 fn duplicate_slide_id_deck() -> Vec<u8> {
     zip_entries(
         [
@@ -1493,6 +1564,14 @@ fn image_slide_rels() -> String {
         .to_owned()
 }
 
+fn linked_image_slide_rels() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdLink" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://example.test/image.png" TargetMode="External"/>
+</Relationships>"#
+        .to_owned()
+}
+
 fn text_slide() -> String {
     text_slide_with_text("Original title")
 }
@@ -1537,6 +1616,24 @@ fn image_slide() -> String {
         <p:nvPicPr><p:cNvPr id="5" name="Shared Hero"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>
         <p:blipFill><a:blip r:embed="rId3"/></p:blipFill>
         <p:spPr><a:xfrm><a:off x="914400" y="1828800"/><a:ext cx="914400" cy="914400"/></a:xfrm></p:spPr>
+      </p:pic>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+        .to_owned()
+}
+
+fn linked_image_slide() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:pic>
+        <p:nvPicPr><p:cNvPr id="4" name="Linked Hero"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>
+        <p:blipFill><a:blip r:link="rIdLink"/></p:blipFill>
+        <p:spPr><a:xfrm><a:off x="0" y="1828800"/><a:ext cx="914400" cy="914400"/></a:xfrm></p:spPr>
       </p:pic>
     </p:spTree>
   </p:cSld>
