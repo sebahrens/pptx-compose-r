@@ -538,7 +538,6 @@ mod construction {
             element_id: target.element_id.clone(),
             media_ref: "media-1".to_owned(),
             content_type: "image/png".to_owned(),
-            allow_shared_mutation: false,
         };
 
         operation.apply(&mut package, &target, &media_inputs())?;

@@ -589,8 +589,6 @@ pub struct ReplaceImageOperation {
     pub selector: Option<Selector>,
     pub media_ref: String,
     pub content_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allow_shared_mutation: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
@@ -1265,7 +1263,6 @@ fn all_op_names_matches_operation_variants() {
             selector: None,
             media_ref: "image-1".to_owned(),
             content_type: "image/png".to_owned(),
-            allow_shared_mutation: None,
         }),
     ];
     let variant_names = variants.map(|operation| operation.op_name());

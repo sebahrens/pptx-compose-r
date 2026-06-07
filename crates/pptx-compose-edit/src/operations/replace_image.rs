@@ -29,7 +29,6 @@ pub struct ReplaceImage {
     pub element_id: String,
     pub media_ref: String,
     pub content_type: String,
-    pub allow_shared_mutation: bool,
 }
 
 impl From<&ReplaceImageOperation> for ReplaceImage {
@@ -39,7 +38,6 @@ impl From<&ReplaceImageOperation> for ReplaceImage {
             element_id: operation.target_element_id().to_owned(),
             media_ref: operation.media_ref.clone(),
             content_type: operation.content_type.clone(),
-            allow_shared_mutation: operation.allow_shared_mutation.unwrap_or(false),
         }
     }
 }
@@ -624,7 +622,6 @@ pub mod retargets_not_shared {
             element_id: "slide-1:pic-1".to_owned(),
             media_ref: "replacement".to_owned(),
             content_type: "image/png".to_owned(),
-            allow_shared_mutation: true,
         };
         let effects = operation
             .apply(&mut package, &target(&slide1), &media_inputs())
@@ -658,7 +655,6 @@ pub mod retargets_not_shared {
             element_id: "slide-1:pic-1".to_owned(),
             media_ref: "replacement".to_owned(),
             content_type: "image/png".to_owned(),
-            allow_shared_mutation: false,
         };
         let mut linked_package = package.clone();
         *linked_package
@@ -700,7 +696,6 @@ pub mod retargets_not_shared {
             element_id: "slide-1:pic-1".to_owned(),
             media_ref: "replacement".to_owned(),
             content_type: "image/png".to_owned(),
-            allow_shared_mutation: false,
         };
         let effects = operation
             .apply(&mut package, &target(&slide), &media_inputs())
@@ -759,7 +754,6 @@ pub mod retargets_not_shared {
             element_id: "slide-1:pic-1".to_owned(),
             media_ref: "replacement".to_owned(),
             content_type: "image/jpeg".to_owned(),
-            allow_shared_mutation: false,
         };
         let effects = operation
             .apply(&mut package, &target(&slide), &jpeg_media_inputs())

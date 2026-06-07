@@ -195,9 +195,9 @@ Required fields:
 - `media_ref`: key for replacement bytes.
 - `content_type`
 
-The implementation should keep the existing picture element and relationship ID when possible; if retargeting is required, it must update content types and relationships atomically.
+The implementation keeps the existing picture element and relationship ID while retargeting that relationship to replacement media. It must update content types and relationships atomically.
 
-Default `replace_image` behavior is `retarget_picture`: create or reuse a media part and update only the selected picture relationship. Mutating the existing media part is allowed only when the media part is unshared or when `allow_shared_mutation: true` is explicit.
+V1 `replace_image` behavior is always `retarget_picture`: create a media part and update only the selected picture relationship. It never mutates existing media bytes in place, including when the old media part is unshared.
 
 `replace_image` rejects pictures backed by `a:blip@r:link` (external links) with `unsupported_edit`. The agent view MUST report such pictures as `editable.image.supported = false` with `reason = external_link` so agents do not attempt an edit that will be rejected at apply.
 
