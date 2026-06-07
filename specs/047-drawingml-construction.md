@@ -38,6 +38,21 @@ Both elements require a `cNvPr` with `id` and `name`:
 - `name` defaults to `"{Kind} {id}"` (`"Picture {id}"` or `"TextBox {id}"`) when the patch supplies no `name`; otherwise the patch `name` is used verbatim (XML-escaped).
 - `descr` / `title` are set only when the patch supplies `alt_text` / `title` (see set_alt_text mapping in 041); otherwise omitted.
 
+## Shape-Tree Insertion Order
+
+`add_image` and `add_text_box` insert one new top-level child into the target
+slide's `p:spTree`. V1 does not construct children inside an existing group.
+The optional `insert.z_order` field in 041 maps to `p:spTree` child placement:
+
+- omitted or `"front"` inserts immediately after the last real shape-tree child (`p:sp`, `p:pic`, `p:grpSp`, `p:graphicFrame`, or `p:cxnSp`).
+- `"back"` inserts immediately before the first real shape-tree child, while preserving required non-visual group properties (`p:nvGrpSpPr`) and group properties (`p:grpSpPr`) at the beginning of `p:spTree`.
+- integer `N` inserts at the 1-based agent element ordinal `N`, counting XML element children in `p:spTree`; `N` must fall between the current back insertion ordinal and the current front insertion ordinal, inclusive.
+
+The inserted element's agent id uses its resulting ordinal (`slide-N:shape-M`).
+Existing elements' raw XML bytes remain unchanged, but element ids derived from
+shape-tree ordinals can shift for elements after the insertion point. Agents
+must refresh the agent view before targeting those shifted elements.
+
 ## Relationship Type URIs
 
 | Purpose | Relationship `Type` |

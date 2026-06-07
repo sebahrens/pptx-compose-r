@@ -136,7 +136,18 @@ Optional fields:
 
 Supported V1 style fields must be explicit in implementation docs. Unknown style fields fail validation rather than being silently ignored.
 
-`insert.z_order` MUST NOT be a silently-ignored knob. V1 either honors it (front/back/index placement in `p:spTree`) for both `add_text_box` and `add_image`, or removes the field from the schema. A field that is accepted and dropped is a dishonest surface and is not permitted.
+`insert.z_order` is honored for V1 `add_text_box` and `add_image` by choosing
+the insertion position in the target slide's top-level `p:spTree`:
+
+- omitted or `"front"`: insert after the last real shape-tree child, so the new element is visually in front of existing shapes.
+- `"back"`: insert before the first real shape-tree child, after required shape-tree properties such as `p:nvGrpSpPr` and `p:grpSpPr`, so the new element is visually behind existing shapes.
+- integer `N`: insert at agent element ordinal `N`, using the same 1-based ordinal space as `slide-N:shape-N` element ids and `Element View.z_order`. `N` must be between the current back ordinal and the current front insertion ordinal, inclusive; out-of-range values fail validation with `invalid_input`.
+
+Insertion does not rewrite existing shape XML, but it can shift the ordinal
+component of later agent element ids in the same `p:spTree`. Agents that need to
+target pre-existing elements after an insertion must refresh the agent view or
+use selector guards; the inserted element's id is assigned from its resulting
+ordinal.
 
 ### `move_resize_element`
 
@@ -174,6 +185,7 @@ Optional fields:
 - `alt_text`
 - `fit`: `stretch` by default. `contain`, `cover`, and `original_size` are optional and must be rejected when unsupported.
 - `dedupe`: `never` by default. Checksum-based reuse is opt-in.
+- `insert`: same `z_order` semantics as `add_text_box`; omitted means `"front"`.
 
 ### `replace_image`
 
