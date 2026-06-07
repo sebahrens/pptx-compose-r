@@ -35,41 +35,6 @@ result_output!(ValidateOutput);
 result_output!(ExportOutput);
 result_output!(CloseOutput);
 
-impl DocumentSummaryOutput {
-    #[must_use]
-    pub fn stub(tool: &str) -> Self {
-        Self(stub_envelope(tool))
-    }
-}
-
-macro_rules! impl_stub {
-    ($($name:ident),+ $(,)?) => {
-        $(
-            impl $name {
-                #[must_use]
-                pub fn stub(tool: &str) -> Self {
-                    Self(stub_envelope(tool))
-                }
-            }
-        )+
-    };
-}
-
-impl_stub!(
-    OpenOutput,
-    ListSlidesOutput,
-    SlideOutput,
-    ListElementsOutput,
-    ElementOutput,
-    FindTextOutput,
-    ImportMediaOutput,
-    ValidatePatchOutput,
-    ApplyPatchOutput,
-    ValidateOutput,
-    ExportOutput,
-    CloseOutput,
-);
-
 impl OpenOutput {
     #[must_use]
     pub fn opened(session: crate::sessions::OpenSession) -> Self {
@@ -247,13 +212,6 @@ pub fn error_envelope(error: &CoreError) -> ErrorEnvelope {
     }
 }
 
-fn stub_envelope(tool: &str) -> ResultEnvelope {
-    success_envelope(json!({
-        "status": "stub",
-        "tool": tool,
-    }))
-}
-
 fn success_envelope(result: Value) -> ResultEnvelope {
     ResultEnvelope {
         schema: RESULT_SCHEMA.to_owned(),
@@ -341,13 +299,4 @@ fn error_envelope_uses_core_code_string() {
     let envelope = error_envelope(&error);
 
     assert_eq!(envelope.error.code, "malformed_xml");
-}
-
-#[cfg(test)]
-#[test]
-fn summary_stub_uses_result_envelope_schema() {
-    let output = DocumentSummaryOutput::stub("pptx_get_document_summary");
-
-    assert_eq!(output.0.schema, "pptx-compose.result.v1");
-    assert_eq!(output.0.version, 1);
 }
