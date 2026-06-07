@@ -639,7 +639,9 @@ mod test_support {
 
     use pptx_compose::{
         OpenOptions, PresentationDocument, WriteMode,
-        core::{error::ErrorCode, provenance::checksum::part_checksum, zip::reader::from_bytes},
+        core::error::ErrorCode,
+        json::agent_view::{FindTextScope, views::FindTextRequest},
+        part_checksum,
     };
     use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
@@ -1073,13 +1075,17 @@ mod test_support {
 
         let output_bytes = fs::read(&output).expect("output reads");
         assert_ne!(output_bytes, input_bytes);
-        let output_entries = from_bytes(&output_bytes).expect("output entries read");
-        let slide = output_entries
-            .iter()
-            .find(|entry| entry.name.zip_entry_name() == "ppt/slides/slide1.xml")
-            .expect("slide entry exists");
-        let slide_xml = std::str::from_utf8(&slide.bytes).expect("slide XML is UTF-8");
-        assert!(slide_xml.contains(">Updated title<"));
+        let output_document =
+            PresentationDocument::from_bytes(&output_bytes).expect("output deck opens");
+        let matches = output_document
+            .find_text(FindTextRequest {
+                query: "Updated title".to_owned(),
+                scope: FindTextScope::Deck,
+                cursor: None,
+                limit: None,
+            })
+            .expect("updated text is searchable");
+        assert_eq!(matches.matches.len(), 1);
 
         let report_json: serde_json::Value =
             serde_json::from_slice(&fs::read(&report).expect("report reads"))

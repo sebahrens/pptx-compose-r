@@ -8,10 +8,7 @@ use std::{
 
 use pptx_compose::{
     ApplyPatchOptions, PresentationDocument, WriteOptions,
-    core::{
-        error::{Error, ErrorCode, ErrorLocation, Result},
-        provenance::revision,
-    },
+    core::error::{Error, ErrorCode, ErrorLocation, Result},
     edit::{
         media_inputs::{MediaBinding, MediaInputs, MediaLimits, MediaSource},
         patch::Patch,
@@ -177,7 +174,7 @@ impl SessionStore {
             )
         })?;
         let session_id = unique_prefixed_id("sess");
-        let revision = revision::on_open().value();
+        let revision = package.revision();
         let session = Session {
             session_id: session_id.clone(),
             document_id: metadata.document_id.clone(),

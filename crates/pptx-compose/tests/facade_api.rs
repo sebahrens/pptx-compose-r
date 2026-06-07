@@ -8,14 +8,7 @@ use std::{
 
 use pptx_compose::{
     AgentViewOptions, ApplyPatchOptions, MediaInputs, OpenOptions, Patch, PresentationDocument,
-    WriteMode, WriteOptions,
-    core::{
-        error::ErrorCode,
-        provenance::checksum::part_checksum,
-        provenance::document_id::document_id as provenance_document_id,
-        zip::limits::ResourceLimits,
-        zip::reader::{RawEntry, from_bytes},
-    },
+    ResourceLimits, WriteMode, WriteOptions,
     edit::{
         media_inputs::{MediaBinding, MediaSource},
         patch::parse_patch,
@@ -25,6 +18,12 @@ use pptx_compose::{
         views::{FindTextRequest, ViewMode},
     },
     json::schemas::{OperationStatus, PatchStatus},
+    part_checksum,
+};
+use pptx_compose_core::{
+    error::ErrorCode,
+    provenance::document_id::document_id as provenance_document_id,
+    zip::reader::{RawEntry, from_bytes},
 };
 use serde_json::Value;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};

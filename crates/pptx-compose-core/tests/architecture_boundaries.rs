@@ -151,14 +151,45 @@ fn assert_no_forbidden_core_internal_imports(src_root: &Path) {
             .collect::<String>();
 
         for forbidden_module in ["opc", "xml", "zip", "validation"] {
-            let forbidden_import = format!("pptx_compose_core::{forbidden_module}");
+            let direct_import = format!("pptx_compose_core::{forbidden_module}");
             assert!(
-                !compact_source.contains(&forbidden_import),
-                "{} imports forbidden core internal module `{forbidden_import}`; specs/060 requires CLI and MCP surfaces to use facade/json/edit APIs",
+                !compact_source.contains(&direct_import),
+                "{} imports forbidden core internal module `{direct_import}`; specs/060 requires CLI and MCP surfaces to use facade/json/edit APIs",
+                path.display()
+            );
+
+            let facade_bypass = format!("pptx_compose::core::{forbidden_module}");
+            assert!(
+                !compact_source.contains(&facade_bypass),
+                "{} imports forbidden facade core internal module `{facade_bypass}`; specs/060 requires CLI and MCP surfaces to use safe facade/json/edit APIs",
+                path.display()
+            );
+
+            let grouped_facade_bypass = format!("core::{{...{forbidden_module}");
+            assert!(
+                !contains_grouped_core_import(&compact_source, forbidden_module),
+                "{} imports forbidden facade core internal module via grouped import `{grouped_facade_bypass}`; specs/060 requires CLI and MCP surfaces to use safe facade/json/edit APIs",
                 path.display()
             );
         }
     }
+}
+
+fn contains_grouped_core_import(source: &str, forbidden_module: &str) -> bool {
+    let mut remaining = source;
+    while let Some(start) = remaining.find("core::{") {
+        let group = &remaining[start + "core::{".len()..];
+        let Some(end) = group.find('}') else {
+            return false;
+        };
+        if group[..end].split(',').any(|import| {
+            import == forbidden_module || import.starts_with(&format!("{forbidden_module}::"))
+        }) {
+            return true;
+        }
+        remaining = &group[end + 1..];
+    }
+    false
 }
 
 fn rust_files(root: &Path) -> Vec<PathBuf> {

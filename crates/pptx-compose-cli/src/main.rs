@@ -14,12 +14,9 @@ use exit::exit_code_for;
 use output::{OutputDest, OutputSink};
 use permissions::{PathIntent, PermissionContext};
 use pptx_compose::{
-    AgentViewOptions, MediaPartInfo, OpenOptions, PresentationDocument,
+    AgentViewOptions, MediaPartInfo, OpenOptions, PresentationDocument, ResourceLimits,
     capabilities::{SCHEMA_CAPABILITIES, capabilities_json_schema},
-    core::{
-        error::{Error, ErrorCode, ErrorDetails, ErrorLocation},
-        zip::limits::ResourceLimits,
-    },
+    core::error::{Error, ErrorCode, ErrorDetails, ErrorLocation},
     edit::{media_inputs::media_manifest_json_schema, patch::patch_json_schema},
     json::{
         agent_view::{
@@ -504,7 +501,7 @@ fn media_info_from_bytes(package_path: &str, bytes: &[u8]) -> MediaPartInfo {
         package_path: normalized_media_path(package_path),
         content_type: None,
         byte_length: u64::try_from(bytes.len()).map_or(u64::MAX, |len| len),
-        checksum: pptx_compose::core::provenance::checksum::part_checksum(bytes),
+        checksum: pptx_compose::part_checksum(bytes),
     }
 }
 

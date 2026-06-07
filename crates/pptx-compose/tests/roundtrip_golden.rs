@@ -1,24 +1,23 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use pptx_compose::{
-    MediaInputs, PresentationDocument, WriteMode, WriteOptions,
-    core::{
-        error::{Error, Result},
-        opc::{
-            package::Package,
-            part_name::PartName,
-            relationships::{Relationship, RelationshipSource},
-        },
-        validation::{ValidationMode, ValidationStatus, validate_package},
-        xml::{document::XmlElement, parser::parse_document},
-        zip::reader::{RawEntry, from_bytes},
+use pptx_compose::{MediaInputs, PresentationDocument, WriteMode, WriteOptions};
+use pptx_compose_core::{
+    error::{Error, Result},
+    opc::{
+        package::Package,
+        part::Part,
+        part_name::PartName,
+        relationships::{Relationship, RelationshipSource},
     },
-    edit::{
-        media_inputs::{MediaBinding, MediaSource},
-        patch::parse_patch,
-    },
-    json::schemas::ValidationStatus as JsonValidationStatus,
+    validation::{ValidationMode, ValidationStatus, validate_package},
+    xml::{document::XmlElement, parser::parse_document},
+    zip::reader::{RawEntry, from_bytes},
 };
+use pptx_compose_edit::{
+    media_inputs::{MediaBinding, MediaSource},
+    patch::parse_patch,
+};
+use pptx_compose_json::schemas::ValidationStatus as JsonValidationStatus;
 
 #[path = "../../pptx-compose-core/tests/support/fixtures.rs"]
 mod fixtures;
@@ -167,7 +166,7 @@ fn assert_no_edit_roundtrip(relative_path: &str) -> Result<()> {
 fn package_from_entries(entries: &[RawEntry]) -> Result<Package> {
     let mut package = Package::new();
     for entry in entries {
-        package.insert_part(pptx_compose::core::opc::part::Part::from_zip_entry(
+        package.insert_part(Part::from_zip_entry(
             entry.meta.original_name.clone(),
             entry.bytes.clone(),
         )?)?;

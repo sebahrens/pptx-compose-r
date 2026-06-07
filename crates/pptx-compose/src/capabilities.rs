@@ -3,7 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::{
-    core::{error::ErrorCode, zip::limits::ResourceLimits},
+    ErrorCode, ResourceLimits,
     edit::{
         media_inputs::{MEDIA_MANIFEST_SCHEMA, MEDIA_MANIFEST_VERSION, limits::MediaLimits},
         patch::{ALL_OP_NAMES, PATCH_SCHEMA, PATCH_VERSION},

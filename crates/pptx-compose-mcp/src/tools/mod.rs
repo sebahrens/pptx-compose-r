@@ -227,13 +227,17 @@ async fn tools_read_apply_and_export_mutated_deck() {
         .as_str()
         .expect("inline export has base64 data");
     let bytes = crate::decode_base64(encoded).expect("export base64 decodes");
-    let entries = pptx_compose::core::zip::reader::from_bytes(&bytes).expect("export is a PPTX");
-    let slide = entries
-        .iter()
-        .find(|entry| entry.name.zip_entry_name() == "ppt/slides/slide1.xml")
-        .expect("slide entry exists");
-    let slide_xml = std::str::from_utf8(&slide.bytes).expect("slide XML is UTF-8");
-    assert!(slide_xml.contains(">Updated title<"));
+    let exported_document =
+        pptx_compose::PresentationDocument::from_bytes(&bytes).expect("export is a PPTX");
+    let matches = exported_document
+        .find_text(pptx_compose::json::agent_view::views::FindTextRequest {
+            query: "Updated title".to_owned(),
+            scope: pptx_compose::json::agent_view::FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("updated text is searchable");
+    assert_eq!(matches.matches.len(), 1);
 }
 
 #[tokio::test]

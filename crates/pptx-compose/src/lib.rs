@@ -12,14 +12,26 @@ mod options;
 pub mod capabilities;
 
 pub use options::{AgentViewOptions, ApplyPatchOptions, OpenOptions, WriteOptions};
-pub use pptx_compose_core as core;
-pub use pptx_compose_core::zip::writer::WriteMode;
-pub use pptx_compose_edit as edit;
+pub use pptx_compose_core::{
+    error::{Error, ErrorCategory, ErrorCode, ErrorDetails, ErrorLocation, ErrorSeverity, Result},
+    provenance::checksum::part_checksum,
+    zip::{limits::ResourceLimits, writer::WriteMode},
+};
 pub use pptx_compose_edit::{media_inputs::MediaInputs, patch::Patch};
-pub use pptx_compose_json as json;
 
-use core::{
-    error::{Error, ErrorCode, Result},
+pub mod core {
+    pub use pptx_compose_core::error;
+}
+
+pub mod edit {
+    pub use pptx_compose_edit::{media_inputs, patch};
+}
+
+pub mod json {
+    pub use pptx_compose_json::{agent_view, legacy_path_map, schema_versions, schemas};
+}
+
+use pptx_compose_core::{
     opc::{
         content_types::ContentTypes,
         package::Package,
@@ -30,13 +42,11 @@ use core::{
         },
     },
     pptx::presentation as core_presentation,
-    provenance::{
-        checksum::part_checksum, document_id::document_id as provenance_document_id, revision,
-    },
+    provenance::{document_id::document_id as provenance_document_id, revision},
     xml::{document::XmlElement, parser::parse_document_with_limits},
     zip::{
         ZipEntryMetadata,
-        limits::{OpenOptions as CoreOpenOptions, ResourceLimits},
+        limits::OpenOptions as CoreOpenOptions,
         reader::{RawEntry, from_bytes_with_options, open_reader_with_options},
         sniff::sniff_package,
         writer::{self as zip_writer, DirtyEntry, PackageZipWriter, WriteEntry},
@@ -197,6 +207,11 @@ impl PresentationDocument {
     #[must_use]
     pub fn compressed_package_bytes(&self) -> u64 {
         u64::try_from(self.source_bytes.len()).unwrap_or(u64::MAX)
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision.value()
     }
 
     pub fn document_id(&self) -> Result<String> {
@@ -553,7 +568,10 @@ impl PresentationDocument {
     pub fn validate(&self) -> Result<ValidationReport> {
         let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         pptx_compose_edit::reports::validation_report(
-            core::validation::validate_package(&package, core::validation::ValidationMode::Edited),
+            pptx_compose_core::validation::validate_package(
+                &package,
+                pptx_compose_core::validation::ValidationMode::Edited,
+            ),
             document_id_from_entries(&self.entries)?,
             self.current_revision()?,
         )
@@ -576,7 +594,10 @@ impl PresentationDocument {
         let mut package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         apply_dirty_parts(&mut package, &self.dirty_parts);
         pptx_compose_edit::reports::validation_report(
-            core::validation::validate_package(&package, core::validation::ValidationMode::Edited),
+            pptx_compose_core::validation::validate_package(
+                &package,
+                pptx_compose_core::validation::ValidationMode::Edited,
+            ),
             document_id_from_entries(&self.entries)?,
             self.current_revision()?,
         )
@@ -605,7 +626,7 @@ impl PresentationDocument {
                                 .resolve(&entry.name)
                                 .map(str::to_owned),
                             byte_length,
-                            checksum: core::provenance::checksum::part_checksum(&entry.bytes),
+                            checksum: part_checksum(&entry.bytes),
                         })
                     },
                 )

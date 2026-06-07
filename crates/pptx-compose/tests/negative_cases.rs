@@ -1,22 +1,23 @@
 use std::{collections::HashMap, io::Write};
 
 use pptx_compose::{
-    ApplyPatchOptions, PresentationDocument, WriteMode, WriteOptions,
-    core::{
-        error::{ErrorCode, Result},
-        opc::{
-            package::Package,
-            part_name::PartName,
-            relationships::{Relationship, RelationshipSource},
-        },
-        pptx::presentation as core_presentation,
-        provenance::document_id::document_id as provenance_document_id,
-        zip::reader::{RawEntry, from_bytes},
+    ApplyPatchOptions, PresentationDocument, WriteMode, WriteOptions, json::schemas::PatchStatus,
+};
+use pptx_compose_core::{
+    error::{ErrorCode, Result},
+    opc::{
+        package::Package,
+        part_name::PartName,
+        relationships::{Relationship, RelationshipSource},
     },
-    edit::media_inputs::{MediaBinding, MediaInputs, MediaSource},
-    edit::patch::parse_patch,
-    edit::selectors::{self, Selector},
-    json::schemas::PatchStatus,
+    pptx::presentation as core_presentation,
+    provenance::document_id::document_id as provenance_document_id,
+    zip::reader::{RawEntry, from_bytes},
+};
+use pptx_compose_edit::{
+    media_inputs::{MediaBinding, MediaInputs, MediaSource},
+    patch::parse_patch,
+    selectors::{self, Selector},
 };
 use serde_json::{Value, json};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
