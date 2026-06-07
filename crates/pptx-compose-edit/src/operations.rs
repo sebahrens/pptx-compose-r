@@ -23,6 +23,7 @@ pub mod set_document_metadata;
 pub enum ResolvedTarget {
     Slide(ResolvedSlide),
     Element(ResolvedElement),
+    TableCell(ResolvedTableCell),
     MediaPart(ResolvedMediaPart),
     CoreProperties(ResolvedCoreProperties),
 }
@@ -44,6 +45,13 @@ pub struct ResolvedElement {
     pub cnvpr_id: Option<i64>,
     pub text_hash: Option<String>,
     pub fingerprint: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedTableCell {
+    pub element: ResolvedElement,
+    pub row: u32,
+    pub col: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

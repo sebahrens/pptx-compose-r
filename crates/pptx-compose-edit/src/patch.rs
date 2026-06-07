@@ -57,6 +57,7 @@ pub struct Patch {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Operation {
     ReplaceText(ReplaceTextOperation),
+    ReplaceTableCellText(ReplaceTableCellTextOperation),
     AddTextBox(AddTextBoxOperation),
     MoveResizeElement(MoveResizeElementOperation),
     SetAltText(SetAltTextOperation),
@@ -70,6 +71,7 @@ impl Operation {
     pub fn operation_id(&self) -> &str {
         match self {
             Self::ReplaceText(operation) => &operation.operation_id,
+            Self::ReplaceTableCellText(operation) => &operation.operation_id,
             Self::AddTextBox(operation) => &operation.operation_id,
             Self::MoveResizeElement(operation) => &operation.operation_id,
             Self::SetAltText(operation) => &operation.operation_id,
@@ -83,6 +85,7 @@ impl Operation {
     pub const fn op_name(&self) -> &'static str {
         match self {
             Self::ReplaceText(_) => "replace_text",
+            Self::ReplaceTableCellText(_) => "replace_table_cell_text",
             Self::AddTextBox(_) => "add_text_box",
             Self::MoveResizeElement(_) => "move_resize_element",
             Self::SetAltText(_) => "set_alt_text",
@@ -94,6 +97,25 @@ impl Operation {
 }
 
 impl ReplaceTextOperation {
+    pub fn target_selector(&self) -> Result<Selector> {
+        element_target_selector(&self.operation_id, &self.element_id, self.selector.as_ref())
+    }
+
+    #[must_use]
+    pub fn run_selector(&self) -> Option<&RunSelector> {
+        match &self.selector {
+            Some(Selector::ElementId { run, .. }) => run.as_ref(),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn target_element_id(&self) -> &str {
+        target_element_id(&self.element_id, self.selector.as_ref()).unwrap_or(&self.element_id)
+    }
+}
+
+impl ReplaceTableCellTextOperation {
     pub fn target_selector(&self) -> Result<Selector> {
         element_target_selector(&self.operation_id, &self.element_id, self.selector.as_ref())
     }
@@ -323,6 +345,33 @@ pub struct ReplaceTextOperation {
     pub overflow_policy: Option<OverflowPolicy>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub allow_formatting_simplification: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReplaceTableCellTextOperation {
+    pub operation_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(
+        description = "Target table graphic-frame shorthand. Either element_id or selector is required; when both are present, they must identify the same element."
+    )]
+    pub element_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Canonical target selector with optional guards. For replace_table_cell_text this must be type element_id."
+    )]
+    pub selector: Option<Selector>,
+    pub cell: TableCellSelector,
+    pub text: String,
+    #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
+    pub current_text_match: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TableCellSelector {
+    pub row: u32,
+    pub col: u32,
 }
 
 fn is_false(value: &bool) -> bool {

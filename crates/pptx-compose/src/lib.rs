@@ -46,8 +46,13 @@ use pptx_compose_edit::{
     diffs::{ChangedPart, DiffChange, PartChangeKind, SemanticDiff},
     media_inputs::MediaInputReport,
     operations::{
-        ResolvedTarget, add_image::AddImage, add_text_box::AddTextBox, move_resize::MoveResize,
-        replace_image::ReplaceImage, replace_text::ReplaceText, set_alt_text::SetAltText,
+        ResolvedTarget,
+        add_image::AddImage,
+        add_text_box::AddTextBox,
+        move_resize::MoveResize,
+        replace_image::ReplaceImage,
+        replace_text::{ReplaceTableCellText, ReplaceText},
+        set_alt_text::SetAltText,
         set_document_metadata::SetDocumentMetadata,
     },
     patch::{DocumentState, Operation, OperationExecutor, PatchEffects, validate_envelope},
@@ -1243,6 +1248,16 @@ impl OperationExecutor for RealOperationExecutor<'_> {
                 )?;
                 ReplaceText::from(operation).apply(package, &target)
             }
+            Operation::ReplaceTableCellText(operation) => {
+                let target = resolve_table_cell(
+                    &model,
+                    operation.operation_id.as_str(),
+                    &operation.target_selector()?,
+                    operation.cell.row,
+                    operation.cell.col,
+                )?;
+                ReplaceTableCellText::from(operation).apply(package, &target)
+            }
             Operation::AddTextBox(operation) => {
                 let target = resolve_slide(
                     &model,
@@ -1330,6 +1345,7 @@ fn operation_media_ref(operation: &Operation) -> Option<&str> {
         Operation::AddImage(operation) => Some(operation.media_ref.as_str()),
         Operation::ReplaceImage(operation) => Some(operation.media_ref.as_str()),
         Operation::ReplaceText(_)
+        | Operation::ReplaceTableCellText(_)
         | Operation::AddTextBox(_)
         | Operation::MoveResizeElement(_)
         | Operation::SetAltText(_)
@@ -1351,6 +1367,16 @@ fn validate_operation(
                 &operation.target_selector()?,
             )?;
             ReplaceText::from(operation).validate(package, &target)
+        }
+        Operation::ReplaceTableCellText(operation) => {
+            let target = resolve_table_cell(
+                model,
+                operation.operation_id.as_str(),
+                &operation.target_selector()?,
+                operation.cell.row,
+                operation.cell.col,
+            )?;
+            ReplaceTableCellText::from(operation).validate(package, &target)
         }
         Operation::AddTextBox(operation) => {
             let _target = resolve_slide(
@@ -1413,12 +1439,24 @@ fn resolve_element(
     {
         ResolvedTarget::Element(target) => Ok(target),
         ResolvedTarget::Slide(_)
+        | ResolvedTarget::TableCell(_)
         | ResolvedTarget::MediaPart(_)
         | ResolvedTarget::CoreProperties(_) => Err(Error::new(
             ErrorCode::SelectorGuardFailed,
             "Selector did not resolve to an element.",
         )),
     }
+}
+
+fn resolve_table_cell(
+    model: &core_presentation::PresentationDocument,
+    operation_id: &str,
+    selector: &Selector,
+    row: u32,
+    col: u32,
+) -> Result<pptx_compose_edit::operations::ResolvedTableCell> {
+    let element = resolve_element(model, operation_id, selector)?;
+    Ok(pptx_compose_edit::operations::ResolvedTableCell { element, row, col })
 }
 
 fn resolve_slide(
@@ -1431,6 +1469,7 @@ fn resolve_slide(
     {
         ResolvedTarget::Slide(target) => Ok(target),
         ResolvedTarget::Element(_)
+        | ResolvedTarget::TableCell(_)
         | ResolvedTarget::MediaPart(_)
         | ResolvedTarget::CoreProperties(_) => Err(Error::new(
             ErrorCode::SelectorGuardFailed,
@@ -1448,12 +1487,13 @@ fn resolve_core_properties(
         .map_err(|error| with_operation_location(error, operation_id))?
     {
         ResolvedTarget::CoreProperties(target) => Ok(target),
-        ResolvedTarget::Element(_) | ResolvedTarget::Slide(_) | ResolvedTarget::MediaPart(_) => {
-            Err(Error::new(
-                ErrorCode::SelectorGuardFailed,
-                "Selector did not resolve to core properties.",
-            ))
-        }
+        ResolvedTarget::Element(_)
+        | ResolvedTarget::TableCell(_)
+        | ResolvedTarget::Slide(_)
+        | ResolvedTarget::MediaPart(_) => Err(Error::new(
+            ErrorCode::SelectorGuardFailed,
+            "Selector did not resolve to core properties.",
+        )),
     }
 }
 

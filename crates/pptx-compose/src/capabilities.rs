@@ -163,6 +163,7 @@ fn command_capabilities() -> Vec<CommandCapability> {
 fn operation_capabilities() -> Vec<OperationCapability> {
     [
         "replace_text",
+        "replace_table_cell_text",
         "add_text_box",
         "move_resize_element",
         "set_alt_text",

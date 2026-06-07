@@ -1293,6 +1293,95 @@ fn table_and_diagram_graphic_frames_accept_bounds_and_alt_text_edits() {
 }
 
 #[test]
+fn replace_table_cell_text_edits_non_merged_cell_preserving_run_formatting() {
+    let bytes = graphic_frame_deck_with_clean_extras();
+    let original_entries = from_bytes(&bytes).expect("original entries read");
+    let original_slide = entry_text(&original_entries, "ppt/slides/slide1.xml");
+    let original_tbl_grid = extract_between(&original_slide, "<a:tblGrid>", "</a:tblGrid>");
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-table-cell-text",
+        vec![serde_json::json!({
+            "operation_id": "replace-table-cell",
+            "op": "replace_table_cell_text",
+            "element_id": "slide-1:graphic-8",
+            "cell": { "row": 0, "col": 0 },
+            "text": "Northwest",
+            "match": "North"
+        })],
+    );
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("replace_table_cell_text applies");
+    assert_eq!(report.changed_parts, vec!["ppt/slides/slide1.xml"]);
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("edited deck writes");
+    let written_entries = from_bytes(&written).expect("written entries read");
+    assert_exact_part_deltas(
+        "replace_table_cell_text",
+        &original_entries,
+        &written_entries,
+        &["ppt/slides/slide1.xml"],
+        &[],
+    );
+    let written_slide = entry_text(&written_entries, "ppt/slides/slide1.xml");
+    assert!(
+        written_slide.contains(r#"<a:rPr b="1"/><a:t>Northwest</a:t>"#),
+        "cell run properties should be preserved without fabricated rPr"
+    );
+    assert!(
+        written_slide.contains("<a:t>East</a:t>")
+            && written_slide.contains("<a:t>South</a:t>")
+            && written_slide.contains("<a:t>West</a:t>"),
+        "sibling cells should be unchanged"
+    );
+    assert_eq!(
+        extract_between(&written_slide, "<a:tblGrid>", "</a:tblGrid>"),
+        original_tbl_grid,
+        "replace_table_cell_text must not modify a:tblGrid"
+    );
+}
+
+#[test]
+fn replace_table_cell_text_rejects_merged_or_spanned_cells() {
+    let slide =
+        graphic_frame_slide().replacen("<a:tc><a:txBody>", r#"<a:tc gridSpan="2"><a:txBody>"#, 1);
+    let bytes = text_deck_with_slide(&slide);
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-merged-table-cell-text",
+        vec![serde_json::json!({
+            "operation_id": "replace-merged-table-cell",
+            "op": "replace_table_cell_text",
+            "element_id": "slide-1:graphic-8",
+            "cell": { "row": 0, "col": 0 },
+            "text": "Merged"
+        })],
+    );
+
+    let error = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect_err("merged table cell edit fails");
+    assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("failed edit deck writes");
+    assert_eq!(written, bytes);
+}
+
+#[test]
 fn failed_multi_operation_patch_leaves_package_byte_identical() {
     let bytes = text_deck_with_clean_extras();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
@@ -1739,6 +1828,18 @@ fn entry_bytes<'a>(entries: &'a [RawEntry], zip_entry_name: &str) -> &'a [u8] {
         .as_slice()
 }
 
+fn extract_between(text: &str, start: &str, end: &str) -> String {
+    let start_index = text
+        .find(start)
+        .unwrap_or_else(|| panic!("{start} marker exists"));
+    let body_start = start_index + start.len();
+    let body_end = text[body_start..]
+        .find(end)
+        .map(|offset| body_start + offset)
+        .unwrap_or_else(|| panic!("{end} marker exists"));
+    text[body_start..body_end].to_owned()
+}
+
 fn unique_dir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2141,7 +2242,7 @@ fn graphic_frame_slide() -> String {
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="8" name="Table Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
         <p:xfrm><a:off x="1371600" y="457200"/><a:ext cx="1371600" cy="914400"/></p:xfrm>
-        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl/></a:graphicData></a:graphic>
+        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1"/><a:tblGrid><a:gridCol w="914400"/><a:gridCol w="914400"/></a:tblGrid><a:tr h="457200"><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr b="1"/><a:t>North</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>East</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc></a:tr><a:tr h="457200"><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>South</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>West</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc></a:tr></a:tbl></a:graphicData></a:graphic>
       </p:graphicFrame>
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="9" name="Diagram Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>

@@ -1,7 +1,11 @@
 use pptx_compose_core::{
     error::{Error, ErrorCode, ErrorLocation, Result},
     opc::package::Package,
-    pptx::text::read_text_body,
+    pptx::{
+        ids::ElementKind,
+        table_style::{TableProperties, TableStyleCatalog},
+        text::read_text_body,
+    },
     provenance::text_hash,
     xml::{
         document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
@@ -13,8 +17,11 @@ use pptx_compose_json::schemas::OperationTarget;
 use serde_json::json;
 
 use crate::{
-    operations::ResolvedElement,
-    patch::{FormatPolicy, OverflowPolicy, PatchEffects, ReplaceTextMode, ReplaceTextOperation},
+    operations::{ResolvedElement, ResolvedTableCell},
+    patch::{
+        FormatPolicy, OverflowPolicy, PatchEffects, ReplaceTableCellTextOperation, ReplaceTextMode,
+        ReplaceTextOperation,
+    },
     selectors::RunSelector,
 };
 
@@ -44,6 +51,31 @@ impl From<&ReplaceTextOperation> for ReplaceText {
                 .unwrap_or(FormatPolicy::PreserveExistingRuns),
             overflow_policy: operation.overflow_policy.unwrap_or(OverflowPolicy::Allow),
             allow_formatting_simplification: operation.allow_formatting_simplification,
+            run: operation.run_selector().cloned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplaceTableCellText {
+    pub operation_id: String,
+    pub element_id: String,
+    pub row: u32,
+    pub col: u32,
+    pub text: String,
+    pub current_text_match: Option<String>,
+    pub run: Option<RunSelector>,
+}
+
+impl From<&ReplaceTableCellTextOperation> for ReplaceTableCellText {
+    fn from(operation: &ReplaceTableCellTextOperation) -> Self {
+        Self {
+            operation_id: operation.operation_id.clone(),
+            element_id: operation.target_element_id().to_owned(),
+            row: operation.cell.row,
+            col: operation.cell.col,
+            text: operation.text.clone(),
+            current_text_match: operation.current_text_match.clone(),
             run: operation.run_selector().cloned(),
         }
     }
@@ -157,7 +189,7 @@ impl ReplaceText {
                 self.validate_whole_element_text_body(target, tx_body)?;
                 self.validate_whole_element_match(target, tx_body)
             }
-            ReplaceTextMode::RunScoped => self.validate_run_scoped_text_body(target, tx_body),
+            ReplaceTextMode::RunScoped => validate_run_scoped_text_body(self, target, tx_body),
         }
     }
 
@@ -203,44 +235,169 @@ impl ReplaceText {
         Ok(())
     }
 
-    fn validate_run_scoped_text_body(
-        &self,
-        target: &ResolvedElement,
-        tx_body: &XmlElement,
-    ) -> Result<()> {
-        if self.text.contains('\n') {
-            return Err(Error::new(
-                ErrorCode::InvalidInput,
-                "run_scoped replace_text text must not contain newline characters.",
-            )
-            .with_location(self.location(Some(target))));
+    fn not_found(&self, message: impl Into<String>) -> Error {
+        Error::new(ErrorCode::SelectorNotFound, message).with_location(self.location(None))
+    }
+
+    fn location(&self, target: Option<&ResolvedElement>) -> ErrorLocation {
+        ErrorLocation {
+            part: target.map(|target| target.part.zip_entry_name().to_owned()),
+            slide_id: target.map(|target| target.slide_id.clone()),
+            element_id: Some(
+                target
+                    .map(|target| target.element_id.clone())
+                    .unwrap_or_else(|| self.element_id.clone()),
+            ),
+            operation_id: Some(self.operation_id.clone()),
+            operation: Some("replace_text".to_owned()),
+            ..ErrorLocation::default()
         }
-        let run = self.run.as_ref().ok_or_else(|| {
+    }
+}
+
+impl ReplaceTableCellText {
+    pub fn validate(&self, package: &Package, target: &ResolvedTableCell) -> Result<()> {
+        self.validate_target(target)?;
+        let part_name = target.element.part.clone();
+        let part = package.parts().get(&part_name).ok_or_else(|| {
             Error::new(
-                ErrorCode::InvalidInput,
-                "run_scoped replace_text requires selector.run.",
+                ErrorCode::SelectorNotFound,
+                format!("Target slide part {part_name} was not found."),
             )
-            .with_location(self.location(Some(target)))
+            .with_location(self.location(Some(&target.element)))
         })?;
-        let current = selected_run_text(tx_body, run, self, target)?;
-        if let Some(expected) = &self.current_text_match
-            && current != *expected
-        {
+        let document = parse_document(part.bytes()).map_err(|source| {
+            Error::with_source(
+                source.code(),
+                format!("Could not parse target slide part {part_name}."),
+                source,
+            )
+            .with_location(self.location(Some(&target.element)))
+        })?;
+        let element = target_element(&document, &target.element)
+            .ok_or_else(|| self.not_found("Target table path no longer resolves."))?;
+        let table = first_descendant(element, "tbl").ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Target table frame does not contain a DrawingML table.",
+            )
+            .with_location(self.location(Some(&target.element)))
+        })?;
+        consult_table_style_read_model(package, table, target);
+        let cell = table_cell(table, self.row, self.col, self, &target.element)?;
+        reject_merged_cell(cell, self, &target.element)?;
+        let tx_body = child_element(cell, "txBody").ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Target table cell does not contain a text body.",
+            )
+            .with_location(self.location(Some(&target.element)))
+        })?;
+        validate_run_scoped_text_body(self, &target.element, tx_body)
+    }
+
+    pub fn apply(&self, package: &mut Package, target: &ResolvedTableCell) -> Result<PatchEffects> {
+        self.validate_target(target)?;
+
+        let part_name = target.element.part.clone();
+        let catalog = TableStyleCatalog::from_package(package);
+        let part = package.parts_mut().get_mut(&part_name).ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                format!("Target slide part {part_name} was not found."),
+            )
+            .with_location(self.location(Some(&target.element)))
+        })?;
+
+        let mut document = parse_document(part.bytes()).map_err(|source| {
+            Error::with_source(
+                source.code(),
+                format!("Could not parse target slide part {part_name}."),
+                source,
+            )
+            .with_location(self.location(Some(&target.element)))
+        })?;
+
+        let root = root_element_mut(&mut document).ok_or_else(|| {
+            Error::malformed_xml("Slide XML does not contain a root element.")
+                .with_location(self.location(Some(&target.element)))
+        })?;
+        let sp_tree = first_descendant_mut(root, "spTree").ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                "Target slide does not contain a shape tree.",
+            )
+            .with_location(self.location(Some(&target.element)))
+        })?;
+        let element =
+            element_at_path_mut(sp_tree, &target.element.sp_tree_path).ok_or_else(|| {
+                Error::new(
+                    ErrorCode::SelectorNotFound,
+                    "Target table path no longer resolves in the slide shape tree.",
+                )
+                .with_location(self.location(Some(&target.element)))
+            })?;
+        let table = first_descendant_mut(element, "tbl").ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Target table frame does not contain a DrawingML table.",
+            )
+            .with_location(self.location(Some(&target.element)))
+        })?;
+        consult_table_style_catalog(catalog.as_ref(), table, target);
+        let cell = table_cell_mut(table, self.row, self.col, self, &target.element)?;
+        reject_merged_cell(cell, self, &target.element)?;
+        let tx_body = child_element_mut(cell, "txBody").ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Target table cell does not contain a text body.",
+            )
+            .with_location(self.location(Some(&target.element)))
+        })?;
+        validate_run_scoped_text_body(self, &target.element, tx_body)?;
+        replace_run_scoped_text(tx_body, self, &target.element)?;
+
+        *part.bytes_mut() = write_document(
+            &document,
+            &WriteOptions {
+                mode: WriteMode::Preserve,
+            },
+        )?;
+        package.mark_dirty(part_name.clone());
+
+        Ok(PatchEffects {
+            changed_parts: vec![part_name.zip_entry_name().to_owned()],
+            target: Some(OperationTarget {
+                slide_id: target.element.slide_id.clone(),
+                element_id: target.element.element_id.clone(),
+                part: part_name.zip_entry_name().to_owned(),
+            }),
+            created_element_ids: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn validate_target(&self, target: &ResolvedTableCell) -> Result<()> {
+        if target.element.element_id != self.element_id {
             return Err(Error::new(
                 ErrorCode::SelectorGuardFailed,
-                "replace_text match guard did not match current run text.",
+                "Resolved element does not match replace_table_cell_text element_id.",
             )
-            .with_location(self.location(Some(target))));
+            .with_location(self.location(Some(&target.element))));
         }
-        if let Some(expected_hash) = &run.text_hash {
-            let actual_hash = text_hash::text_hash(&current);
-            if actual_hash != *expected_hash {
-                return Err(Error::new(
-                    ErrorCode::SelectorGuardFailed,
-                    "selector.run text_hash guard did not match current run text.",
-                )
-                .with_location(self.location(Some(target))));
-            }
+        if target.element.kind != ElementKind::GraphicFrameTable {
+            return Err(Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Target element is not a table graphic frame.",
+            )
+            .with_location(self.location(Some(&target.element))));
+        }
+        if target.row != self.row || target.col != self.col {
+            return Err(Error::new(
+                ErrorCode::SelectorGuardFailed,
+                "Resolved table cell does not match replace_table_cell_text cell coordinates.",
+            )
+            .with_location(self.location(Some(&target.element))));
         }
         Ok(())
     }
@@ -259,9 +416,88 @@ impl ReplaceText {
                     .unwrap_or_else(|| self.element_id.clone()),
             ),
             operation_id: Some(self.operation_id.clone()),
-            operation: Some("replace_text".to_owned()),
+            operation: Some("replace_table_cell_text".to_owned()),
             ..ErrorLocation::default()
         }
+    }
+}
+
+trait RunScopedTextOperation {
+    fn text(&self) -> &str;
+    fn current_text_match(&self) -> Option<&str>;
+    fn run_selector(&self) -> Option<&RunSelector>;
+    fn location(&self, target: Option<&ResolvedElement>) -> ErrorLocation;
+    fn missing_run_message(&self) -> &'static str;
+    fn newline_message(&self) -> &'static str;
+    fn match_guard_message(&self) -> &'static str;
+    fn allow_default_run(&self) -> bool;
+}
+
+impl RunScopedTextOperation for ReplaceText {
+    fn text(&self) -> &str {
+        &self.text
+    }
+
+    fn current_text_match(&self) -> Option<&str> {
+        self.current_text_match.as_deref()
+    }
+
+    fn run_selector(&self) -> Option<&RunSelector> {
+        self.run.as_ref()
+    }
+
+    fn location(&self, target: Option<&ResolvedElement>) -> ErrorLocation {
+        ReplaceText::location(self, target)
+    }
+
+    fn missing_run_message(&self) -> &'static str {
+        "run_scoped replace_text requires selector.run."
+    }
+
+    fn newline_message(&self) -> &'static str {
+        "run_scoped replace_text text must not contain newline characters."
+    }
+
+    fn match_guard_message(&self) -> &'static str {
+        "replace_text match guard did not match current run text."
+    }
+
+    fn allow_default_run(&self) -> bool {
+        false
+    }
+}
+
+impl RunScopedTextOperation for ReplaceTableCellText {
+    fn text(&self) -> &str {
+        &self.text
+    }
+
+    fn current_text_match(&self) -> Option<&str> {
+        self.current_text_match.as_deref()
+    }
+
+    fn run_selector(&self) -> Option<&RunSelector> {
+        self.run.as_ref()
+    }
+
+    fn location(&self, target: Option<&ResolvedElement>) -> ErrorLocation {
+        ReplaceTableCellText::location(self, target)
+    }
+
+    fn missing_run_message(&self) -> &'static str {
+        "replace_table_cell_text requires selector.run when the default first run is not selected."
+    }
+
+    fn newline_message(&self) -> &'static str {
+        "replace_table_cell_text text must not contain newline characters."
+    }
+
+    fn match_guard_message(&self) -> &'static str {
+        "replace_table_cell_text match guard did not match current run text."
+    }
+
+    fn allow_default_run(&self) -> bool {
+        true
     }
 }
 
@@ -344,7 +580,7 @@ struct RewriteResult {
 fn selected_run_text(
     tx_body: &XmlElement,
     run: &RunSelector,
-    operation: &ReplaceText,
+    operation: &impl RunScopedTextOperation,
     target: &ResolvedElement,
 ) -> Result<String> {
     let indices = run_indices(tx_body, run, operation, target)?;
@@ -361,22 +597,28 @@ fn selected_run_text(
 
 fn replace_run_scoped_text(
     tx_body: &mut XmlElement,
-    operation: &ReplaceText,
+    operation: &impl RunScopedTextOperation,
     target: &ResolvedElement,
 ) -> Result<()> {
-    let run = operation.run.as_ref().ok_or_else(|| {
-        Error::new(
-            ErrorCode::InvalidInput,
-            "run_scoped replace_text requires selector.run.",
-        )
-        .with_location(operation.location(Some(target)))
-    })?;
+    let default_run = RunSelector {
+        paragraph_index: 0,
+        run_index: 0,
+        run_end_index: None,
+        text_hash: None,
+    };
+    let run = operation
+        .run_selector()
+        .or_else(|| operation.allow_default_run().then_some(&default_run))
+        .ok_or_else(|| {
+            Error::new(ErrorCode::InvalidInput, operation.missing_run_message())
+                .with_location(operation.location(Some(target)))
+        })?;
     let indices = run_indices(tx_body, run, operation, target)?;
     let first_index = indices[0];
     let paragraph = paragraph_at_mut(tx_body, run.paragraph_index, operation, target)?;
     let first_run = node_element_mut(&mut paragraph.children[first_index])
         .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run node is not an element."))?;
-    replace_run_text(first_run, &operation.text, operation, target)?;
+    replace_run_text(first_run, operation.text(), operation, target)?;
     for remove_index in indices.iter().skip(1).rev() {
         paragraph.children.remove(*remove_index);
     }
@@ -386,7 +628,7 @@ fn replace_run_scoped_text(
 fn run_indices(
     tx_body: &XmlElement,
     run: &RunSelector,
-    operation: &ReplaceText,
+    operation: &impl RunScopedTextOperation,
     target: &ResolvedElement,
 ) -> Result<Vec<usize>> {
     let end_index = run.run_end_index.unwrap_or(run.run_index);
@@ -435,7 +677,7 @@ fn run_indices(
 fn paragraph_at<'a>(
     tx_body: &'a XmlElement,
     paragraph_index: u32,
-    operation: &ReplaceText,
+    operation: &impl RunScopedTextOperation,
     target: &ResolvedElement,
 ) -> Result<&'a XmlElement> {
     let index = usize::try_from(paragraph_index).map_err(|_| {
@@ -463,7 +705,7 @@ fn paragraph_at<'a>(
 fn paragraph_at_mut<'a>(
     tx_body: &'a mut XmlElement,
     paragraph_index: u32,
-    operation: &ReplaceText,
+    operation: &impl RunScopedTextOperation,
     target: &ResolvedElement,
 ) -> Result<&'a mut XmlElement> {
     let index = usize::try_from(paragraph_index).map_err(|_| {
@@ -504,7 +746,7 @@ fn run_text(run: &XmlElement) -> String {
 fn replace_run_text(
     run: &mut XmlElement,
     text: &str,
-    operation: &ReplaceText,
+    operation: &impl RunScopedTextOperation,
     target: &ResolvedElement,
 ) -> Result<()> {
     let text_element = run
@@ -521,6 +763,236 @@ fn replace_run_text(
         })?;
     text_element.children = vec![XmlNode::Text(text.to_owned())];
     Ok(())
+}
+
+fn validate_run_scoped_text_body(
+    operation: &impl RunScopedTextOperation,
+    target: &ResolvedElement,
+    tx_body: &XmlElement,
+) -> Result<()> {
+    if operation.text().contains('\n') {
+        return Err(
+            Error::new(ErrorCode::InvalidInput, operation.newline_message())
+                .with_location(operation.location(Some(target))),
+        );
+    }
+    let default_run = RunSelector {
+        paragraph_index: 0,
+        run_index: 0,
+        run_end_index: None,
+        text_hash: None,
+    };
+    let run = operation
+        .run_selector()
+        .or_else(|| operation.allow_default_run().then_some(&default_run))
+        .ok_or_else(|| {
+            Error::new(ErrorCode::InvalidInput, operation.missing_run_message())
+                .with_location(operation.location(Some(target)))
+        })?;
+    let current = selected_run_text(tx_body, run, operation, target)?;
+    if let Some(expected) = operation.current_text_match()
+        && current != expected
+    {
+        return Err(Error::new(
+            ErrorCode::SelectorGuardFailed,
+            operation.match_guard_message(),
+        )
+        .with_location(operation.location(Some(target))));
+    }
+    if let Some(expected_hash) = &run.text_hash {
+        let actual_hash = text_hash::text_hash(&current);
+        if actual_hash != *expected_hash {
+            return Err(Error::new(
+                ErrorCode::SelectorGuardFailed,
+                "selector.run text_hash guard did not match current run text.",
+            )
+            .with_location(operation.location(Some(target))));
+        }
+    }
+    Ok(())
+}
+
+fn table_cell<'a>(
+    table: &'a XmlElement,
+    row: u32,
+    col: u32,
+    operation: &ReplaceTableCellText,
+    target: &ResolvedElement,
+) -> Result<&'a XmlElement> {
+    let row_index = usize::try_from(row).map_err(|_| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "replace_table_cell_text cell.row is too large for this platform.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let col_index = usize::try_from(col).map_err(|_| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "replace_table_cell_text cell.col is too large for this platform.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let row_element = table
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .filter(|child| child.name.local_name == "tr")
+        .nth(row_index)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                "replace_table_cell_text cell.row resolved to a missing table row.",
+            )
+            .with_location(operation.location(Some(target)))
+        })?;
+    row_element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .filter(|child| child.name.local_name == "tc")
+        .nth(col_index)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                "replace_table_cell_text cell.col resolved to a missing table cell.",
+            )
+            .with_location(operation.location(Some(target)))
+        })
+}
+
+fn table_cell_mut<'a>(
+    table: &'a mut XmlElement,
+    row: u32,
+    col: u32,
+    operation: &ReplaceTableCellText,
+    target: &ResolvedElement,
+) -> Result<&'a mut XmlElement> {
+    let row_index = usize::try_from(row).map_err(|_| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "replace_table_cell_text cell.row is too large for this platform.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let col_index = usize::try_from(col).map_err(|_| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "replace_table_cell_text cell.col is too large for this platform.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let row_element = table
+        .children
+        .iter_mut()
+        .filter_map(node_element_mut)
+        .filter(|child| child.name.local_name == "tr")
+        .nth(row_index)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                "replace_table_cell_text cell.row resolved to a missing table row.",
+            )
+            .with_location(operation.location(Some(target)))
+        })?;
+    row_element
+        .children
+        .iter_mut()
+        .filter_map(node_element_mut)
+        .filter(|child| child.name.local_name == "tc")
+        .nth(col_index)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                "replace_table_cell_text cell.col resolved to a missing table cell.",
+            )
+            .with_location(operation.location(Some(target)))
+        })
+}
+
+fn reject_merged_cell(
+    cell: &XmlElement,
+    operation: &ReplaceTableCellText,
+    target: &ResolvedElement,
+) -> Result<()> {
+    if attr_u32_gt_one(cell, "gridSpan")
+        || attr_u32_gt_one(cell, "rowSpan")
+        || attr_present(cell, "vMerge")
+        || child_element(cell, "vMerge").is_some()
+    {
+        return Err(Error::new(
+            ErrorCode::UnsupportedEdit,
+            "replace_table_cell_text does not support merged or spanned table cells.",
+        )
+        .with_location(operation.location(Some(target))));
+    }
+    Ok(())
+}
+
+fn consult_table_style_read_model(
+    package: &Package,
+    table: &XmlElement,
+    target: &ResolvedTableCell,
+) {
+    let catalog = TableStyleCatalog::from_package(package);
+    consult_table_style_catalog(catalog.as_ref(), table, target);
+}
+
+fn consult_table_style_catalog(
+    catalog: Option<&TableStyleCatalog>,
+    table: &XmlElement,
+    target: &ResolvedTableCell,
+) {
+    let Some(catalog) = catalog else {
+        return;
+    };
+    let Some(tbl_pr) = child_element(table, "tblPr") else {
+        return;
+    };
+    let properties = TableProperties::from_tbl_pr(tbl_pr);
+    let row_count = child_elements(table, "tr").count();
+    let col_count = child_element(table, "tblGrid")
+        .map(|tbl_grid| child_elements(tbl_grid, "gridCol").count())
+        .unwrap_or_else(|| {
+            child_elements(table, "tr")
+                .next()
+                .map(|row| child_elements(row, "tc").count())
+                .unwrap_or_default()
+        });
+    let Ok(row) = usize::try_from(target.row) else {
+        return;
+    };
+    let Ok(col) = usize::try_from(target.col) else {
+        return;
+    };
+    let _defaults = catalog.resolve_cell_defaults(&properties, row, col, row_count, col_count);
+}
+
+fn attr_present(element: &XmlElement, local_name: &str) -> bool {
+    element
+        .attributes
+        .iter()
+        .any(|attr| attr.name.local_name == local_name)
+}
+
+fn attr_u32_gt_one(element: &XmlElement, local_name: &str) -> bool {
+    element
+        .attributes
+        .iter()
+        .find(|attr| attr.name.local_name == local_name)
+        .and_then(|attr| attr.value.parse::<u32>().ok())
+        .is_some_and(|value| value > 1)
+}
+
+fn child_elements<'a>(
+    element: &'a XmlElement,
+    local_name: &'a str,
+) -> impl Iterator<Item = &'a XmlElement> {
+    element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .filter(move |child| child.name.local_name == local_name)
 }
 
 fn replacement_text_body(existing: &XmlElement, operation: &ReplaceText) -> XmlElement {
@@ -733,6 +1205,17 @@ fn child_element<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a Xm
         .children
         .iter()
         .filter_map(XmlNode::as_element)
+        .find(|child| child.name.local_name == local_name)
+}
+
+fn child_element_mut<'a>(
+    element: &'a mut XmlElement,
+    local_name: &str,
+) -> Option<&'a mut XmlElement> {
+    element
+        .children
+        .iter_mut()
+        .filter_map(node_element_mut)
         .find(|child| child.name.local_name == local_name)
 }
 
