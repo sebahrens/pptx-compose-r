@@ -73,6 +73,14 @@ NOT accept run-property override fields; those belong to the future run-scoped
 primitive described in [041](041-agent-edit-operations.md#phase-2--replace_text-run-scoped-mode-the-gate)
 and tracked by the deferred run-scoped primitive task.
 
+After the run-scoped primitive is implemented, `formatting_simplified` becomes a
+refuse-or-confirm condition for `mode: whole_element`. If the operation would
+drop multi-run formatting or rich constructs (`a:fld`, `a:hlinkClick`,
+`a:hlinkMouseOver`, or `a:br`), validation MUST fail with `unsupported_edit`
+unless the patch explicitly sets `allow_formatting_simplification: true`. A
+confirmed lossy rewrite still MUST emit `formatting_simplified`; confirmation is
+not a waiver of the warning.
+
 ## Validation Report
 
 Validation reports must include stable finding codes and machine-readable locations:
@@ -177,3 +185,10 @@ Minimum stable error codes:
 - `internal_error`
 
 Error messages must be written for an agent deciding the next tool call, not only for a human reading logs.
+
+Run-scoped `replace_text` guard failures use `selector_guard_failed` for both
+whole-element `selector.guards.text_hash` mismatches and run-level
+`selector.run.text_hash` mismatches. Missing run coordinates use
+`selector_not_found`; malformed run ranges, such as `run_end_index` before
+`run_index`, use `invalid_input`. Unsupported target kinds for run-scoped text
+replacement use `unsupported_edit`.

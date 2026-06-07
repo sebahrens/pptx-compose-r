@@ -88,6 +88,10 @@ Optional fields:
   replacement mode exists yet.
 - `format_policy`: `preserve_existing_runs`, `preserve_first_run`, or `single_run_default_style`.
 - `overflow_policy`: `allow` by default. V1 does not guarantee rendered text fit unless an external renderer is configured.
+- `allow_formatting_simplification`: explicit confirmation for lossy
+  whole-element rewrites after the run-scoped mode is implemented. This field is
+  ignored by V1 implementations that only warn, but Phase 2 implementations MUST
+  reject lossy `whole_element` rewrites unless it is `true`.
 
 V1 `replace_text` supports only `mode: whole_element`; no paragraph-, run-, or
 span-scoped replacement mode exists in V1. Whole-element replacement is a
@@ -190,12 +194,77 @@ The hard rule: no text-bearing breadth (notes, table cells, run-property overrid
 
 ### Phase 2 — `replace_text` run-scoped mode (the gate)
 
-A new `mode: run_scoped` for `replace_text` (the only existing mode is `whole_element`).
+A new `mode: run_scoped` for `replace_text` (the only existing V1 mode is
+`whole_element`). This supersedes and refines the deferred implementation task
+`pptx-compose-z5hj`; do not define a separate run-preserving replacement mode.
 
-- Targets a single `a:r` (run) within a resolved element, not the whole `txBody`.
-- MUST mutate the run's `a:t` in place and preserve sibling runs, `a:hlinkClick`, `a:fld`, and `a:br`.
-- Selecting a run requires extending the selector model: the V1 `element_id` + `sp_tree_path` cannot address a run, so a run coordinate (paragraph index, run index) is a new selector field added under `selector.guards`/`selector` rather than a fuzzy match.
-- When `mode: whole_element` would lose rich constructs (`run_count > 1`, or any detected `a:fld`/`a:hlinkClick`/`a:hlinkMouseOver`/`a:br`), the implementation MUST harden `formatting_simplified` into a **refuse-or-confirm**: reject with `unsupported_edit` unless the patch explicitly opts into the lossy rewrite.
+Scope:
+
+- Applies only to `text_box` and generic `shape` elements whose text is stored
+  in an `a:txBody` inside the resolved presentation shape. Notes text, table
+  cells, SmartArt, charts, groups, and graphic frames remain unsupported until
+  their own phase gates.
+- Targets one `a:r` or an inclusive range of adjacent `a:r` children within one
+  `a:p`, not the whole `a:txBody`. A range is allowed only when all addressed
+  runs are in the same paragraph.
+
+Selector addressing:
+
+- Run-scoped replacement extends the resolved element model with a stable run
+  coordinate:
+  `{ "paragraph_index": u32, "run_index": u32 }` for a single run, or
+  `{ "paragraph_index": u32, "run_index": u32, "run_end_index": u32 }` for an
+  inclusive run range.
+- The coordinate lives in the canonical selector as `selector.run`, not as a
+  fuzzy text query. `selector.type` remains `element_id`, and the element-level
+  guards (`slide_id`, `kind`, `part`, `fingerprint`) still identify the owning
+  shape.
+- `selector.run` indexes only literal `a:r` children. `a:br`, `a:fld`, and other
+  paragraph children are not counted as runs. A coordinate that names a missing
+  paragraph or run returns `selector_not_found`; a range with `run_end_index <
+  run_index` returns `invalid_input`.
+
+Mutation contract:
+
+- A single-run replacement MUST mutate only that run's `a:t` text in place.
+  Existing `a:rPr` and other children of the selected `a:r`, including
+  `a:hlinkClick` and `a:hlinkMouseOver`, MUST remain unchanged in the XML tree;
+  serialization may only change escaping required inside the dirty `a:t` text
+  node.
+- A range replacement MUST replace the first selected run's `a:t` text with the
+  full replacement text and remove only the additional selected `a:r` siblings
+  in that range. It MUST preserve the first run's `a:rPr` and link children and
+  MUST leave all non-selected siblings untouched.
+- The operation MUST preserve sibling runs and their `a:rPr`, sibling
+  `a:hlinkClick`/`a:hlinkMouseOver`, sibling `a:fld`, and sibling `a:br`
+  untouched. It MUST NOT rewrite `a:p`, `a:txBody`, `bodyPr`, `lstStyle`, or
+  unrelated paragraph children.
+- Replacement text in `run_scoped` mode is literal run text. `\n` is invalid
+  unless a later spec adds a soft-break operation; it MUST NOT be mapped to
+  paragraphs or `a:br` by this mode.
+
+Guard semantics:
+
+- `selector.guards.text_hash` remains an element-level guard over the normalized
+  text projection for the whole text body.
+- Run-scoped patches MAY instead use `selector.run.text_hash`, computed over the
+  normalized text of exactly the selected run or selected run range before
+  mutation. When both element-level and run-level hashes are present, both MUST
+  match or validation fails with `selector_guard_failed`.
+- The legacy operation-level `match` field guards the whole element text in
+  `whole_element` mode. In `run_scoped` mode it guards the selected run or run
+  range text, not the whole element; mismatch returns `selector_guard_failed`.
+
+Whole-element refusal after Phase 2:
+
+- Once `run_scoped` is implemented, `mode: whole_element` remains available only
+  for intentionally plain-text rewrites. If the source `a:txBody` has
+  `run_count > 1` or contains `a:fld`, `a:hlinkClick`, `a:hlinkMouseOver`, or
+  `a:br`, validation MUST reject the operation with `unsupported_edit` unless
+  `allow_formatting_simplification: true` is present.
+- When explicitly confirmed, the operation still emits the
+  `formatting_simplified` warning and performs the documented lossy
+  whole-element rewrite. Confirmation is not allowed to silence the warning.
 
 ### Phase 3 — slide-model-independent edits
 

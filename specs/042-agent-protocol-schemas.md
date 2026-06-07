@@ -97,11 +97,14 @@ Flat `text` is convenient but insufficient for safe targeting. Text-capable elem
     "normalized": "Quarterly Results",
     "paragraphs": [
       {
+        "index": 0,
         "text": "Quarterly Results",
         "runs": [
           {
+            "index": 0,
             "text": "Quarterly Results",
-            "style_summary": { "font_size_pt": 32, "bold": false }
+            "style_summary": { "font_size_pt": 32, "bold": false },
+            "text_hash": "sha256:..."
           }
         ]
       }
@@ -171,3 +174,31 @@ Supported selector types in V1:
 - `media_part`
 
 Query/fuzzy selectors are post-V1 unless a later spec defines ambiguity handling.
+
+Phase 2 run-scoped text replacement extends only `element_id` selectors. The
+owning element is still selected by `type: "element_id"` and `id`, while the run
+coordinate is carried in `run`:
+
+```json
+{
+  "type": "element_id",
+  "id": "slide-1:shape-4",
+  "run": {
+    "paragraph_index": 0,
+    "run_index": 1,
+    "text_hash": "sha256:..."
+  },
+  "guards": {
+    "slide_id": "slide-1",
+    "kind": "shape",
+    "part": "ppt/slides/slide1.xml",
+    "text_hash": "sha256:...",
+    "fingerprint": "sha256:..."
+  }
+}
+```
+
+For a run range, add `run_end_index`; it is inclusive and MUST be in the same
+paragraph as `run_index`. `run.text_hash` guards exactly the selected run or run
+range. `guards.text_hash` remains the whole-element text hash. When both are
+present, both must match.
