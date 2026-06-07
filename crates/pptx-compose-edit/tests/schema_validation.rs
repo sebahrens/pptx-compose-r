@@ -143,6 +143,25 @@ fn parse_patch_rejects_unknown_text_box_style_keys_as_invalid_input() {
 }
 
 #[test]
+fn parse_patch_rejects_removed_replace_text_policy_as_invalid_input() {
+    let mut operation = json!({
+        "operation_id": "op-1",
+        "op": "replace_text",
+        "element_id": "slide-1:shape-4",
+        "text": "Updated title"
+    });
+    operation[concat!("overflow_", "policy")] = json!("allow");
+
+    let error = parse_patch(patch_with_operation(operation))
+        .expect_err("removed replace_text policy is rejected");
+
+    assert_eq!(
+        error.code(),
+        pptx_compose_core::error::ErrorCode::InvalidInput
+    );
+}
+
+#[test]
 fn parse_patch_rejects_set_alt_text_alt_text_alias_as_invalid_input() {
     let error = parse_patch(patch_with_operation(json!({
         "operation_id": "op-1",
@@ -351,7 +370,6 @@ fn patch() -> Patch {
             current_text_match: None,
             mode: None,
             format_policy: None,
-            overflow_policy: None,
             allow_formatting_simplification: false,
             run_style: None,
             run: None,

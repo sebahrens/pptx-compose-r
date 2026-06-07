@@ -28,8 +28,8 @@ use pptx_compose_edit::{
         set_alt_text::SetAltText,
     },
     patch::{
-        Bounds, FormatPolicy, ImageDedupe, ImageFit, InsertOptions, OverflowPolicy,
-        ReplaceTextMode, TextAlign, TextBoxStyle, ZOrder, ZOrderKeyword,
+        Bounds, FormatPolicy, ImageDedupe, ImageFit, InsertOptions, ReplaceTextMode, TextAlign,
+        TextBoxStyle, ZOrder, ZOrderKeyword,
     },
     selectors::RunSelector,
 };
@@ -172,7 +172,6 @@ mod construction {
             current_text_match: Some("Old copy".to_owned()),
             mode: ReplaceTextMode::WholeElement,
             format_policy: FormatPolicy::PreserveFirstRun,
-            overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: false,
             run: None,
             run_style: None,
@@ -199,7 +198,6 @@ mod construction {
             current_text_match: Some("FirstSecond".to_owned()),
             mode: ReplaceTextMode::WholeElement,
             format_policy: FormatPolicy::PreserveExistingRuns,
-            overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: true,
             run: None,
             run_style: None,
@@ -228,7 +226,6 @@ mod construction {
             current_text_match: None,
             mode: ReplaceTextMode::WholeElement,
             format_policy: FormatPolicy::PreserveExistingRuns,
-            overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: true,
             run: None,
             run_style: None,
@@ -257,7 +254,6 @@ mod construction {
             current_text_match: Some("Linked".to_owned()),
             mode: ReplaceTextMode::RunScoped,
             format_policy: FormatPolicy::PreserveExistingRuns,
-            overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: false,
             run: Some(RunSelector {
                 paragraph_index: 0,
@@ -297,7 +293,6 @@ mod construction {
             current_text_match: Some("First".to_owned()),
             mode: ReplaceTextMode::RunScoped,
             format_policy: FormatPolicy::PreserveExistingRuns,
-            overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: false,
             run: Some(RunSelector {
                 paragraph_index: 0,
@@ -416,7 +411,6 @@ mod construction {
             current_text_match: None,
             mode: ReplaceTextMode::WholeElement,
             format_policy: FormatPolicy::PreserveExistingRuns,
-            overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: true,
             run: None,
             run_style: Some(TextBoxStyle {
@@ -451,7 +445,6 @@ mod construction {
             current_text_match: None,
             mode: ReplaceTextMode::WholeElement,
             format_policy: FormatPolicy::PreserveExistingRuns,
-            overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: false,
             run: None,
             run_style: None,
@@ -479,7 +472,6 @@ mod construction {
             current_text_match: Some("FirstSecond".to_owned()),
             mode: ReplaceTextMode::RunScoped,
             format_policy: FormatPolicy::PreserveExistingRuns,
-            overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: false,
             run: Some(RunSelector {
                 paragraph_index: 0,
@@ -512,7 +504,6 @@ mod construction {
             current_text_match: Some("Old copy".to_owned()),
             mode: ReplaceTextMode::WholeElement,
             format_policy: FormatPolicy::PreserveExistingRuns,
-            overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: false,
             run: None,
             run_style: None,

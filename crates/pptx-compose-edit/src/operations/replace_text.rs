@@ -22,8 +22,7 @@ use crate::{
         is_real_shape_tree_child,
     },
     patch::{
-        FormatPolicy, OverflowPolicy, PatchEffects, ReplaceTextMode, ReplaceTextOperation,
-        TextAlign, TextBoxStyle,
+        FormatPolicy, PatchEffects, ReplaceTextMode, ReplaceTextOperation, TextAlign, TextBoxStyle,
     },
     selectors::RunSelector,
 };
@@ -36,7 +35,6 @@ pub struct ReplaceText {
     pub current_text_match: Option<String>,
     pub mode: ReplaceTextMode,
     pub format_policy: FormatPolicy,
-    pub overflow_policy: OverflowPolicy,
     pub allow_formatting_simplification: bool,
     pub run: Option<RunSelector>,
     pub run_style: Option<TextBoxStyle>,
@@ -53,7 +51,6 @@ impl From<&ReplaceTextOperation> for ReplaceText {
             format_policy: operation
                 .format_policy
                 .unwrap_or(FormatPolicy::PreserveExistingRuns),
-            overflow_policy: operation.overflow_policy.unwrap_or(OverflowPolicy::Allow),
             allow_formatting_simplification: operation.allow_formatting_simplification,
             run: operation.run_selector().cloned(),
             run_style: operation.run_style.clone(),
@@ -1655,7 +1652,6 @@ fn replaces_and_maps_newlines() {
         current_text_match: Some("old".to_owned()),
         mode: ReplaceTextMode::WholeElement,
         format_policy: FormatPolicy::PreserveFirstRun,
-        overflow_policy: OverflowPolicy::Allow,
         allow_formatting_simplification: false,
         run: None,
         run_style: None,

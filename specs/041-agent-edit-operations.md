@@ -91,7 +91,6 @@ Optional fields:
   for context only; it must not emit paragraph/run IDs because no paragraph/run
   replacement mode exists yet.
 - `format_policy`: `preserve_existing_runs`, `preserve_first_run`, or `single_run_default_style`.
-- `overflow_policy`: `allow` by default. V1 does not guarantee rendered text fit unless an external renderer is configured.
 - `allow_formatting_simplification`: explicit confirmation for lossy
   whole-element rewrites after the run-scoped mode is implemented. This field is
   ignored by V1 implementations that only warn, but Phase 2 implementations MUST
@@ -349,8 +348,8 @@ Example:
 `replace_text` with a slide selector (needs Phase 2):
 
 - Required: `slide_id` or `selector: { "type": "slide_id", ... }`, `text`, `run`.
-  Optional: `match`, `mode`, `format_policy`, `overflow_policy` (same semantics
-  as element-targeted `replace_text`).
+  Optional: `match`, `mode`, `format_policy` (same semantics as
+  element-targeted `replace_text`).
 - Resolution adds a new target variant: `slide_id` → slide rels → `ppt/notesSlides/notesSlideN.xml`. The notes body reuses the `p:sp/a:txBody` shape, so it reuses the run-scoped path.
 - Newline mapping and the `formatting_simplified` contract are identical to `replace_text`.
 

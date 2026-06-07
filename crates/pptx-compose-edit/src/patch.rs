@@ -397,8 +397,6 @@ pub struct ReplaceTextOperation {
     pub mode: Option<ReplaceTextMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format_policy: Option<FormatPolicy>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub overflow_policy: Option<OverflowPolicy>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub allow_formatting_simplification: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -437,12 +435,6 @@ pub enum FormatPolicy {
     PreserveExistingRuns,
     PreserveFirstRun,
     SingleRunDefaultStyle,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OverflowPolicy {
-    Allow,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
@@ -1199,7 +1191,6 @@ fn all_op_names_matches_operation_variants() {
             current_text_match: None,
             mode: None,
             format_policy: None,
-            overflow_policy: None,
             allow_formatting_simplification: false,
             run_style: None,
             run: None,
