@@ -100,7 +100,7 @@ Recommended MCP prompts:
 - `add_image_to_slide`: stage media and produce add-image patches.
 - `explain_validation_errors`: turn validation reports into next safe actions.
 
-Prompts should teach agents to use scoped tools first, validate before apply, avoid raw XML tools, and report warnings.
+Prompts should teach agents to use scoped tools first, validate before apply, refuse unsupported raw package/XML mutation, and report warnings.
 
 ## Raw XML Scope
 

@@ -69,8 +69,9 @@ The MCP flow is `pptx_open` -> scoped inspection tools such as
 `pptx_validate_patch` -> `pptx_apply_patch` -> `pptx_export` -> `pptx_close`.
 Mutating MCP tools require `session_id` plus `expected_revision` or a patch
 `base_revision`; stale revisions return the `stale_patch` error code. Stage
-media through `pptx_import_media` handles, and keep raw XML tools disabled unless
-explicitly debugging unsupported content.
+media through `pptx_import_media` handles. Unsupported raw package/XML mutation
+is outside the V1 agent surface; refuse unsupported edits rather than modifying
+package internals directly.
 
 ## Non-Interactive Shell Commands
 

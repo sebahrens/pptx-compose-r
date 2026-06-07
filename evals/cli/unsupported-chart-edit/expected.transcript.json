@@ -20,7 +20,7 @@
         "operation_id": "op-edit-chart",
         "operation": "edit_chart"
       },
-      "suggestions": ["Leave chart parts unchanged or use raw XML tools when explicitly enabled."]
+      "suggestions": ["Leave chart parts unchanged; chart editing is unsupported in V1 patch operations."]
     }
   }
 }

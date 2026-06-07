@@ -74,7 +74,7 @@ For any Rust rewrite, CLI, or MCP work, QA should verify:
 - Patches include document/revision guards and operation IDs.
 - Dry-run, apply, validation, diff, and error outputs follow the schemas in `specs/042` through `specs/045`.
 - CLI behavior follows `specs/071-cli-agent-contract.md`: JSON stdout discipline, JSON errors, no prompts, atomic writes, no implicit overwrite.
-- MCP behavior follows `specs/072-mcp-server-contract.md`: scoped tools, sessions/revisions, media handles, structured outputs, raw XML tools disabled by default.
+- MCP behavior follows `specs/072-mcp-server-contract.md`: scoped tools, sessions/revisions, media handles, structured outputs, and no raw package/XML mutation surface in V1.
 - Negative cases fail safely: stale revision, hallucinated element ID, missing media ref, media checksum mismatch, unsupported chart edit, unsafe path, encrypted deck, signed/macro-containing deck warnings.
 
 Do not accept a QA result that only says “the TypeScript tests pass.” That is legacy smoke coverage, not proof that agents can round-trip PPTX safely.

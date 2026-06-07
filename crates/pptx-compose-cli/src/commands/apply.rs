@@ -305,7 +305,7 @@ fn reject_known_unsupported_operations(patch: &serde_json::Value) -> Result<(), 
                 ..ErrorLocation::default()
             })
             .with_suggestion(
-                "Leave chart parts unchanged or use raw XML tools when explicitly enabled.",
+                "Leave chart parts unchanged; chart editing is unsupported in V1 patch operations.",
             ));
         }
     }
