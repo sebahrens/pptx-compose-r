@@ -41,6 +41,8 @@ pub(crate) fn apply(
     if let Some(diff) = &args.diff {
         permissions.authorize_write(diff, PathIntent::DiffOutput)?;
     }
+    let sink = OutputSink::default()
+        .with_atomic_temp_dir(permissions.temp_dir.clone(), permissions.keep_temp);
 
     let patch = read_patch(&patch)?;
     let media_inputs = read_media_inputs(
@@ -65,7 +67,6 @@ pub(crate) fn apply(
                 },
             )
             .map_err(apply_error)?;
-        let sink = OutputSink::default();
         sink.emit_patch_report(&output.report, args.report, args.overwrite)?;
         sink.emit_diff(&output.diff, args.diff, args.overwrite)?;
         if output.report.status == PatchStatus::DryRunFailed {
@@ -90,7 +91,6 @@ pub(crate) fn apply(
         )
         .map_err(apply_error)?;
     if apply_output.report.status == PatchStatus::Failed {
-        let sink = OutputSink::default();
         sink.emit_patch_report(&apply_output.report, args.report, args.overwrite)?;
         sink.emit_diff(&apply_output.diff, args.diff, args.overwrite)?;
         let error = output_operation_error(&apply_output.report, false);
@@ -117,7 +117,6 @@ pub(crate) fn apply(
         }
         return Err(CliError::from_error(error));
     }
-    let sink = OutputSink::default();
     sink.emit_optional_patch_report(&apply_output.report, args.report, args.overwrite)?;
     sink.emit_diff(&apply_output.diff, args.diff, args.overwrite)?;
 

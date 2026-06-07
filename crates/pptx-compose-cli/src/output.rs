@@ -5,6 +5,7 @@ use std::{
 };
 
 use pptx_compose::core::error::ErrorDetails;
+use pptx_compose::temp_output_path;
 use serde::Serialize;
 
 use crate::{CliError, cli::GlobalArgs};
@@ -25,12 +26,14 @@ pub(crate) enum OutputDest {
     Path(PathBuf),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OutputSink {
     quiet: bool,
     verbose: bool,
     color: bool,
     json_errors: bool,
+    atomic_temp_dir: Option<PathBuf>,
+    keep_temp: bool,
 }
 
 impl Default for OutputSink {
@@ -64,6 +67,8 @@ impl OutputSink {
             verbose,
             color: !no_color && stderr_is_terminal,
             json_errors,
+            atomic_temp_dir: None,
+            keep_temp: false,
         }
     }
 
@@ -75,6 +80,12 @@ impl OutputSink {
             args.json_errors,
             io::stderr().is_terminal(),
         )
+    }
+
+    pub(crate) fn with_atomic_temp_dir(mut self, temp_dir: PathBuf, keep_temp: bool) -> Self {
+        self.atomic_temp_dir = Some(temp_dir);
+        self.keep_temp = keep_temp;
+        self
     }
 
     #[allow(dead_code)]
@@ -105,9 +116,13 @@ impl OutputSink {
             OutputDest::Path(path) if path == Path::new("-") => {
                 self.emit_json(doc, OutputDest::Path(path))
             }
-            OutputDest::Path(path) => write_atomic(&path, overwrite, |writer| {
-                self.emit_json_to_writer(doc, writer)
-            }),
+            OutputDest::Path(path) => write_atomic(
+                &path,
+                overwrite,
+                self.atomic_temp_dir.as_deref(),
+                self.keep_temp,
+                |writer| self.emit_json_to_writer(doc, writer),
+            ),
         }
     }
 
@@ -204,7 +219,7 @@ impl OutputSink {
             .map_err(|source| CliError::write_with_source("Could not write error output.", source))
     }
 
-    const fn log_prefix(self, level: LogLevel) -> &'static str {
+    const fn log_prefix(&self, level: LogLevel) -> &'static str {
         match (self.color, level) {
             (false, LogLevel::Error) => "error",
             (false, LogLevel::Warn) => "warning",
@@ -222,8 +237,10 @@ pub(crate) fn write_bytes_atomic(
     path: &Path,
     bytes: &[u8],
     overwrite: bool,
+    temp_dir: Option<&Path>,
+    keep_temp: bool,
 ) -> Result<(), CliError> {
-    write_atomic(path, overwrite, |writer| {
+    write_atomic(path, overwrite, temp_dir, keep_temp, |writer| {
         writer
             .write_all(bytes)
             .map_err(|source| CliError::write_with_source("Could not write output bytes.", source))
@@ -253,13 +270,15 @@ fn create_file_atomic(path: &Path, overwrite: bool) -> Result<File, CliError> {
 fn write_atomic(
     path: &Path,
     overwrite: bool,
+    temp_dir: Option<&Path>,
+    keep_temp: bool,
     write: impl FnOnce(&mut File) -> Result<(), CliError>,
 ) -> Result<(), CliError> {
     if path.exists() && !overwrite {
         return Err(output_exists_error(path));
     }
     let parent = output_parent(path);
-    let temp_path = temp_sibling_path(path);
+    let temp_path = temp_output_path(path, temp_dir);
     let result = (|| {
         let mut temp = create_file_atomic(&temp_path, false)?;
         write(&mut temp)?;
@@ -305,7 +324,7 @@ fn write_atomic(
         fsync_dir(parent)?;
         Ok(())
     })();
-    if result.is_err() {
+    if result.is_err() && !keep_temp {
         let _ = fs::remove_file(&temp_path);
     }
     result
@@ -328,18 +347,7 @@ fn output_parent(path: &Path) -> &Path {
     }
 }
 
-fn temp_sibling_path(path: &Path) -> PathBuf {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("output");
-    path.with_file_name(format!(
-        ".{file_name}.{}.{}.tmp",
-        std::process::id(),
-        unique_counter()
-    ))
-}
-
+#[cfg(test)]
 fn unique_counter() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -382,8 +390,14 @@ fn write_bytes_atomic_accepts_bare_relative_output() {
     let previous_dir = std::env::current_dir().expect("current dir reads");
     std::env::set_current_dir(&root).expect("current dir changes to test root");
 
-    write_bytes_atomic(Path::new("bare-output.pptx"), b"pptx bytes", false)
-        .expect("bare relative atomic output succeeds");
+    write_bytes_atomic(
+        Path::new("bare-output.pptx"),
+        b"pptx bytes",
+        false,
+        None,
+        false,
+    )
+    .expect("bare relative atomic output succeeds");
 
     let output = root.join("bare-output.pptx");
     assert_eq!(
@@ -405,6 +419,88 @@ fn write_bytes_atomic_accepts_bare_relative_output() {
 
     std::env::set_current_dir(previous_dir).expect("current dir restores");
     fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[cfg(test)]
+#[test]
+fn write_bytes_atomic_uses_configured_temp_dir() {
+    let root = unique_dir();
+    let temp_dir = unique_dir();
+    let output = root.join("media.bin");
+
+    write_bytes_atomic(&output, b"media bytes", false, Some(&temp_dir), false)
+        .expect("atomic output with configured temp dir succeeds");
+
+    assert_eq!(
+        fs::read(&output).expect("output reads"),
+        b"media bytes",
+        "output file is published at requested path"
+    );
+    let output_temp_prefix = ".media.bin.";
+    let sibling_temp_remains = fs::read_dir(&root).expect("output dir reads").any(|entry| {
+        entry
+            .expect("output dir entry reads")
+            .file_name()
+            .to_string_lossy()
+            .starts_with(output_temp_prefix)
+    });
+    assert!(
+        !sibling_temp_remains,
+        "atomic write must not create sibling temps next to the output"
+    );
+    let configured_temp_remains = fs::read_dir(&temp_dir)
+        .expect("temp dir reads")
+        .next()
+        .is_some();
+    assert!(
+        !configured_temp_remains,
+        "successful atomic write removes configured temp file"
+    );
+
+    fs::remove_dir_all(root).expect("output test dir removes");
+    fs::remove_dir_all(temp_dir).expect("temp test dir removes");
+}
+
+#[cfg(test)]
+#[test]
+fn emit_json_overwrite_uses_configured_temp_dir() {
+    let root = unique_dir();
+    let temp_dir = unique_dir();
+    let output = root.join("report.json");
+    let sink = OutputSink::default().with_atomic_temp_dir(temp_dir.clone(), false);
+
+    sink.emit_json_overwrite(
+        &serde_json::json!({"status": "ok"}),
+        OutputDest::Path(output.clone()),
+        false,
+    )
+    .expect("JSON output with configured temp dir succeeds");
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&output).expect("JSON output reads"))
+            .expect("JSON output parses");
+    assert_eq!(value, serde_json::json!({"status": "ok"}));
+    let sibling_temp_remains = fs::read_dir(&root).expect("output dir reads").any(|entry| {
+        entry
+            .expect("output dir entry reads")
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".report.json.")
+    });
+    assert!(
+        !sibling_temp_remains,
+        "JSON atomic write must not create sibling temps next to the output"
+    );
+    assert!(
+        fs::read_dir(&temp_dir)
+            .expect("temp dir reads")
+            .next()
+            .is_none(),
+        "successful JSON atomic write removes configured temp file"
+    );
+
+    fs::remove_dir_all(root).expect("output test dir removes");
+    fs::remove_dir_all(temp_dir).expect("temp test dir removes");
 }
 
 #[cfg(test)]
