@@ -11,7 +11,7 @@ use pptx_compose_core::{
 use pptx_compose_json::{
     schema_versions::{PATCH_REPORT_SCHEMA, PATCH_REPORT_VERSION},
     schemas::{
-        OperationReport, OperationStatus, OperationTarget, PatchReport, PatchStatus,
+        ErrorView, OperationReport, OperationStatus, OperationTarget, PatchReport, PatchStatus,
         ValidationReport,
     },
 };
@@ -806,10 +806,26 @@ where
     let mut staged = package.clone();
     let mut operation_reports = Vec::with_capacity(patch.operations.len());
     let mut changed_parts = Vec::new();
+    let mut failed = false;
 
     for operation in &patch.operations {
-        let _validation_effects = executor.validate(&staged, operation)?;
-        let effects = executor.apply(&mut staged, operation)?;
+        let effects = match executor.validate(&staged, operation) {
+            Ok(_validation_effects) => match executor.apply(&mut staged, operation) {
+                Ok(effects) => effects,
+                Err(error) if dry_run => {
+                    failed = true;
+                    operation_reports.push(failed_operation_report(operation, &error)?);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            },
+            Err(error) if dry_run => {
+                failed = true;
+                operation_reports.push(failed_operation_report(operation, &error)?);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
 
         changed_parts.extend(effects.changed_parts.iter().cloned());
         operation_reports.push(operation_report(
@@ -846,7 +862,9 @@ where
             client_request_id: Some(patch.client_request_id.clone()),
             request_id: None,
             transaction_id: None,
-            status: if dry_run {
+            status: if failed {
+                PatchStatus::DryRunFailed
+            } else if dry_run {
                 PatchStatus::DryRunSuccess
             } else {
                 PatchStatus::Applied
@@ -877,6 +895,108 @@ fn operation_report(
         changed_parts: effects.changed_parts,
         created_element_ids: effects.created_element_ids,
         warnings: effects.warnings,
+        error: None,
+    }
+}
+
+fn failed_operation_report(operation: &Operation, error: &Error) -> Result<OperationReport> {
+    Ok(OperationReport {
+        operation_id: operation.operation_id().to_owned(),
+        op: operation.op_name().to_owned(),
+        status: OperationStatus::Failed,
+        target: target_from_error(error),
+        changed_parts: Vec::new(),
+        created_element_ids: Vec::new(),
+        warnings: Vec::new(),
+        error: Some(error_view(error)?),
+    })
+}
+
+fn target_from_error(error: &Error) -> OperationTarget {
+    let location = &error.details().location;
+    OperationTarget {
+        slide_id: location.slide_id.clone().unwrap_or_default(),
+        element_id: location.element_id.clone().unwrap_or_default(),
+        part: location.part.clone().unwrap_or_default(),
+    }
+}
+
+fn error_view(error: &Error) -> Result<ErrorView> {
+    let details = error.details();
+    Ok(ErrorView {
+        code: error_code(details.code),
+        message: details.message.clone(),
+        severity: error_severity(details.severity),
+        category: serde_json::to_value(details.category)
+            .map_err(|source| {
+                Error::with_source(
+                    ErrorCode::InternalError,
+                    "Could not serialize operation error category.",
+                    source,
+                )
+            })?
+            .as_str()
+            .unwrap_or("internal")
+            .to_owned(),
+        retryable: details.retryable,
+        state_changed: details.state_changed,
+        location: serde_json::to_value(&details.location).map_err(|source| {
+            Error::with_source(
+                ErrorCode::InternalError,
+                "Could not serialize operation error location.",
+                source,
+            )
+        })?,
+        suggestions: details.suggestions.clone(),
+    })
+}
+
+const fn error_code(code: ErrorCode) -> pptx_compose_json::schemas::ErrorCode {
+    match code {
+        ErrorCode::InvalidInput => pptx_compose_json::schemas::ErrorCode::InvalidInput,
+        ErrorCode::UnsafePath => pptx_compose_json::schemas::ErrorCode::UnsafePath,
+        ErrorCode::ResourceLimitExceeded => {
+            pptx_compose_json::schemas::ErrorCode::ResourceLimitExceeded
+        }
+        ErrorCode::UnsupportedPackage => pptx_compose_json::schemas::ErrorCode::UnsupportedPackage,
+        ErrorCode::UnsupportedEdit => pptx_compose_json::schemas::ErrorCode::UnsupportedEdit,
+        ErrorCode::UnsupportedMediaType => {
+            pptx_compose_json::schemas::ErrorCode::UnsupportedMediaType
+        }
+        ErrorCode::InvalidBounds => pptx_compose_json::schemas::ErrorCode::InvalidBounds,
+        ErrorCode::ParseError => pptx_compose_json::schemas::ErrorCode::ParseError,
+        ErrorCode::MalformedXml => pptx_compose_json::schemas::ErrorCode::MalformedXml,
+        ErrorCode::ValidationFailed => pptx_compose_json::schemas::ErrorCode::ValidationFailed,
+        ErrorCode::StalePatch => pptx_compose_json::schemas::ErrorCode::StalePatch,
+        ErrorCode::SelectorNotFound => pptx_compose_json::schemas::ErrorCode::SelectorNotFound,
+        ErrorCode::SelectorAmbiguous => pptx_compose_json::schemas::ErrorCode::SelectorAmbiguous,
+        ErrorCode::SelectorGuardFailed => {
+            pptx_compose_json::schemas::ErrorCode::SelectorGuardFailed
+        }
+        ErrorCode::MissingMediaRef => pptx_compose_json::schemas::ErrorCode::MissingMediaRef,
+        ErrorCode::MediaChecksumMismatch => {
+            pptx_compose_json::schemas::ErrorCode::MediaChecksumMismatch
+        }
+        ErrorCode::PermissionDenied => pptx_compose_json::schemas::ErrorCode::PermissionDenied,
+        ErrorCode::WriteFailed => pptx_compose_json::schemas::ErrorCode::WriteFailed,
+        ErrorCode::InternalError => pptx_compose_json::schemas::ErrorCode::InternalError,
+    }
+}
+
+const fn error_severity(
+    severity: pptx_compose_core::error::ErrorSeverity,
+) -> pptx_compose_json::schemas::Severity {
+    match severity {
+        pptx_compose_core::error::ErrorSeverity::Info => pptx_compose_json::schemas::Severity::Info,
+        pptx_compose_core::error::ErrorSeverity::Warning => {
+            pptx_compose_json::schemas::Severity::Warning
+        }
+        pptx_compose_core::error::ErrorSeverity::Error => {
+            pptx_compose_json::schemas::Severity::Error
+        }
+        pptx_compose_core::error::ErrorSeverity::Fatal => {
+            pptx_compose_json::schemas::Severity::Fatal
+        }
     }
 }
 
@@ -1048,6 +1168,12 @@ fn apply_is_atomic() {
 }
 
 #[cfg(test)]
+#[test]
+fn dry_run_reports_all_failed_operations() {
+    test_support::dry_run_reports_all_failed_operations();
+}
+
+#[cfg(test)]
 mod test_support {
     use pptx_compose_core::{
         error::{Error, ErrorCode, Result},
@@ -1163,6 +1289,40 @@ mod test_support {
         assert_ne!(package, original);
     }
 
+    pub fn dry_run_reports_all_failed_operations() {
+        let mut package = base_package();
+        let original = package.clone();
+        let patch = two_op_patch();
+        let mut executor = FailingAllOps;
+
+        let report = super::apply_patch(&mut package, context(), &patch, true, &mut executor)
+            .expect("dry-run returns a failure report");
+
+        assert_eq!(
+            report.status,
+            pptx_compose_json::schemas::PatchStatus::DryRunFailed
+        );
+        assert_eq!(report.operation_reports.len(), 2);
+        assert!(
+            report
+                .operation_reports
+                .iter()
+                .all(|operation| operation.status == OperationStatus::Failed)
+        );
+        assert_eq!(
+            report
+                .operation_reports
+                .iter()
+                .filter_map(|operation| operation.error.as_ref())
+                .filter(|error| {
+                    error.code == pptx_compose_json::schemas::ErrorCode::UnsupportedEdit
+                })
+                .count(),
+            2
+        );
+        assert_eq!(package, original);
+    }
+
     struct FailingSecondOp;
 
     impl OperationExecutor for FailingSecondOp {
@@ -1180,6 +1340,28 @@ mod test_support {
         fn apply(&mut self, package: &mut Package, operation: &Operation) -> Result<PatchEffects> {
             package.mark_dirty(part("ppt/slides/slide1.xml"));
             Ok(effects(operation.operation_id()))
+        }
+    }
+
+    struct FailingAllOps;
+
+    impl OperationExecutor for FailingAllOps {
+        fn validate(&mut self, _package: &Package, operation: &Operation) -> Result<PatchEffects> {
+            Err(Error::new(
+                ErrorCode::UnsupportedEdit,
+                format!(
+                    "Test operation {} is unsupported.",
+                    operation.operation_id()
+                ),
+            ))
+        }
+
+        fn apply(
+            &mut self,
+            _package: &mut Package,
+            _operation: &Operation,
+        ) -> Result<PatchEffects> {
+            unreachable!("failed validation prevents apply")
         }
     }
 

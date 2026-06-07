@@ -12,6 +12,7 @@ use pptx_compose::{
         media_inputs::{MediaInputs, MediaLimits, MediaManifest},
         patch::{Patch, parse_patch},
     },
+    json::schemas::{ErrorView, PatchStatus},
     temp_output_path,
 };
 
@@ -67,6 +68,22 @@ pub(crate) fn apply(
         let sink = OutputSink::default();
         sink.emit_patch_report(&output.report, args.report, args.overwrite)?;
         sink.emit_diff(&output.diff, args.diff, args.overwrite)?;
+        if output.report.status == PatchStatus::DryRunFailed {
+            let error = output
+                .report
+                .operation_reports
+                .iter()
+                .filter_map(|operation| operation.error.as_ref())
+                .next()
+                .map(dry_run_operation_error)
+                .unwrap_or_else(|| {
+                    Error::new(
+                        ErrorCode::ValidationFailed,
+                        "Dry-run patch validation failed; inspect the patch report for per-operation errors.",
+                    )
+                });
+            return Err(apply_error(error));
+        }
         return Ok(());
     }
 
@@ -313,6 +330,79 @@ fn apply_error(error: Error) -> CliError {
     }
 }
 
+fn dry_run_operation_error(error: &ErrorView) -> Error {
+    Error::new(core_error_code(error.code), error.message.clone())
+        .with_location(error_location(&error.location))
+}
+
+const fn core_error_code(code: pptx_compose::json::schemas::ErrorCode) -> ErrorCode {
+    match code {
+        pptx_compose::json::schemas::ErrorCode::InvalidInput => ErrorCode::InvalidInput,
+        pptx_compose::json::schemas::ErrorCode::UnsafePath => ErrorCode::UnsafePath,
+        pptx_compose::json::schemas::ErrorCode::ResourceLimitExceeded => {
+            ErrorCode::ResourceLimitExceeded
+        }
+        pptx_compose::json::schemas::ErrorCode::UnsupportedPackage => ErrorCode::UnsupportedPackage,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit => ErrorCode::UnsupportedEdit,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedMediaType => {
+            ErrorCode::UnsupportedMediaType
+        }
+        pptx_compose::json::schemas::ErrorCode::InvalidBounds => ErrorCode::InvalidBounds,
+        pptx_compose::json::schemas::ErrorCode::ParseError => ErrorCode::ParseError,
+        pptx_compose::json::schemas::ErrorCode::MalformedXml => ErrorCode::MalformedXml,
+        pptx_compose::json::schemas::ErrorCode::ValidationFailed => ErrorCode::ValidationFailed,
+        pptx_compose::json::schemas::ErrorCode::StalePatch => ErrorCode::StalePatch,
+        pptx_compose::json::schemas::ErrorCode::SelectorNotFound => ErrorCode::SelectorNotFound,
+        pptx_compose::json::schemas::ErrorCode::SelectorAmbiguous => ErrorCode::SelectorAmbiguous,
+        pptx_compose::json::schemas::ErrorCode::SelectorGuardFailed => {
+            ErrorCode::SelectorGuardFailed
+        }
+        pptx_compose::json::schemas::ErrorCode::MissingMediaRef => ErrorCode::MissingMediaRef,
+        pptx_compose::json::schemas::ErrorCode::MediaChecksumMismatch => {
+            ErrorCode::MediaChecksumMismatch
+        }
+        pptx_compose::json::schemas::ErrorCode::PermissionDenied => ErrorCode::PermissionDenied,
+        pptx_compose::json::schemas::ErrorCode::WriteFailed => ErrorCode::WriteFailed,
+        pptx_compose::json::schemas::ErrorCode::InternalError => ErrorCode::InternalError,
+    }
+}
+
+fn error_location(location: &serde_json::Value) -> ErrorLocation {
+    ErrorLocation {
+        current_revision: location
+            .get("current_revision")
+            .and_then(serde_json::Value::as_u64),
+        io_path: location_string(location, "io_path"),
+        zip_entry: location_string(location, "zip_entry"),
+        part: location_string(location, "part"),
+        relationship_id: location_string(location, "relationship_id"),
+        slide_id: location_string(location, "slide_id"),
+        element_id: location_string(location, "element_id"),
+        operation_id: location_string(location, "operation_id"),
+        operation: location_string(location, "operation"),
+        expected: location_string(location, "expected"),
+        actual: location_string(location, "actual"),
+        candidates: location
+            .get("candidates")
+            .and_then(serde_json::Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn location_string(location: &serde_json::Value, key: &str) -> Option<String> {
+    location
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
 fn enforce_apply_write_guards(
     input: &Path,
     output: &Path,
@@ -448,6 +538,12 @@ fn apply_uses_configured_temp_dir_for_atomic_write() {
 #[test]
 fn dry_run_writes_no_pptx() {
     test_support::dry_run_writes_no_pptx();
+}
+
+#[cfg(test)]
+#[test]
+fn dry_run_writes_report_for_all_failed_operations() {
+    test_support::dry_run_writes_report_for_all_failed_operations();
 }
 
 #[cfg(test)]
@@ -776,6 +872,41 @@ mod test_support {
         assert_eq!(diff_json["schema"], "pptx-compose.semantic_diff.v1");
         assert_eq!(diff_json["version"], 1);
         assert_eq!(diff_json["changes"], serde_json::json!([]));
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn dry_run_writes_report_for_all_failed_operations() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let output = root.join("output.pptx");
+        let report = root.join("report.json");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, invalid_multi_op_patch(&input_bytes)).expect("patch fixture writes");
+
+        let mut args = args(&input, &patch, &output, false, false);
+        args.dry_run = true;
+        args.output = None;
+        args.report = Some(report.clone());
+
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("dry-run with invalid operations exits nonzero");
+        assert_eq!(err.code(), ErrorCode::SelectorNotFound);
+        assert!(!output.exists(), "dry-run must not create a PPTX output");
+
+        let report_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report).expect("report reads"))
+                .expect("report is JSON");
+        assert_eq!(report_json["status"], "dry_run_failed");
+        let operation_reports = report_json["operation_reports"]
+            .as_array()
+            .expect("operation reports is an array");
+        assert_eq!(operation_reports.len(), 2);
+        assert!(operation_reports.iter().all(|operation| {
+            operation["status"] == "failed" && operation["error"]["code"] == "selector_not_found"
+        }));
 
         fs::remove_dir_all(root).expect("test dir removes");
     }
@@ -1184,6 +1315,38 @@ mod test_support {
                 "element_id": "slide-1:shape-3",
                 "text": "Updated title"
             }}]
+        }}"#
+        )
+        .into_bytes()
+    }
+
+    fn invalid_multi_op_patch(bytes: &[u8]) -> Vec<u8> {
+        let document_id = PresentationDocument::from_bytes(bytes)
+            .expect("fixture opens")
+            .validate()
+            .expect("fixture validates")
+            .document_id;
+        format!(
+            r#"{{
+            "schema": "pptx-compose.patch.v1",
+            "version": 1,
+            "document_id": "{document_id}",
+            "base_revision": 1,
+            "client_request_id": "apply-test-invalid-multi-op",
+            "operations": [
+                {{
+                    "operation_id": "bad-1",
+                    "op": "replace_text",
+                    "element_id": "slide-1:missing-1",
+                    "text": "Updated title"
+                }},
+                {{
+                    "operation_id": "bad-2",
+                    "op": "replace_text",
+                    "element_id": "slide-1:missing-2",
+                    "text": "Updated subtitle"
+                }}
+            ]
         }}"#
         )
         .into_bytes()

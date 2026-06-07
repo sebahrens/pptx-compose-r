@@ -313,7 +313,14 @@ impl PresentationDocument {
         validate_envelope(&patch, &DocumentState::new(document_id.clone(), revision))?;
         let original_package =
             package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
-        let media_report = validate_patch_operations(&original_package, &patch.operations, &media)?;
+        let media_report = if options.dry_run {
+            media.check_references(
+                patch.operations.iter().filter_map(operation_media_ref),
+                pptx_compose_edit::media_inputs::ExtraBindingPolicy::Warn,
+            )?
+        } else {
+            validate_patch_operations(&original_package, &patch.operations, &media)?
+        };
 
         let package = original_package.clone();
         let mut executor = RealOperationExecutor {

@@ -1449,7 +1449,7 @@ fn assert_add_image_dry_run_failure(
     .expect("add_image patch parses");
 
     let mut document = PresentationDocument::from_bytes(bytes).expect("text deck opens");
-    let error = document
+    let report = document
         .apply_patch_with_options(
             patch,
             media,
@@ -1458,16 +1458,25 @@ fn assert_add_image_dry_run_failure(
                 validate: true,
             },
         )
-        .expect_err("dry-run validation must fail");
-    assert_eq!(error.code(), expected_code, "{error}");
+        .expect("dry-run validation returns a failed report");
     assert_eq!(
-        error.details().location.operation_id.as_deref(),
-        Some(operation_id)
+        report.status,
+        pptx_compose::json::schemas::PatchStatus::DryRunFailed
+    );
+    assert_eq!(report.operation_reports.len(), 1);
+    let operation_error = report.operation_reports[0]
+        .error
+        .as_ref()
+        .expect("failed operation reports an error");
+    assert_eq!(
+        serde_json::to_value(operation_error.code).expect("error code serializes"),
+        serde_json::to_value(expected_code).expect("expected error code serializes")
     );
     assert_eq!(
-        error.details().location.operation.as_deref(),
-        Some("add_image")
+        operation_error.location["operation_id"],
+        serde_json::json!(operation_id)
     );
+    assert_eq!(operation_error.location["operation"], "add_image");
 }
 
 fn merge_object(target: &mut serde_json::Value, patch: serde_json::Value) {

@@ -257,6 +257,7 @@ fn patch_report() -> PatchReport {
             changed_parts: vec!["ppt/slides/slide1.xml".to_owned()],
             created_element_ids: Vec::new(),
             warnings: Vec::new(),
+            error: None,
         }],
         changed_parts: vec!["ppt/slides/slide1.xml".to_owned()],
         warnings: Vec::new(),

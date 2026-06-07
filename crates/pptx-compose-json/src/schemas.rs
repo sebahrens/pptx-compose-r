@@ -72,6 +72,8 @@ pub struct OperationReport {
     pub changed_parts: Vec<String>,
     pub created_element_ids: Vec<String>,
     pub warnings: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ErrorView>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
