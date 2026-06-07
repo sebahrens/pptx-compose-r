@@ -28,7 +28,7 @@ pub struct PermissionError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PermissionDeniedReason {
     HomeAlias,
-    RelativePath,
+    ParentDir,
     EmptyPath,
     OutsideAllowedRoots,
     MissingParent,
@@ -83,8 +83,8 @@ impl PermissionPolicy {
         resolved_path: PathBuf,
         operation: PermissionOperation,
     ) -> Result<PathBuf, PermissionError> {
-        let workspace_root = self.resolve_existing(&self.workspace_root, operation)?;
-        let temp_dir = self.resolve_existing(&self.temp_dir, operation)?;
+        let workspace_root = canonicalize_configured_root(&self.workspace_root, operation)?;
+        let temp_dir = canonicalize_configured_root(&self.temp_dir, operation)?;
 
         if resolved_path.starts_with(&workspace_root) || resolved_path.starts_with(&temp_dir) {
             return Ok(resolved_path);
@@ -102,8 +102,8 @@ impl PermissionPolicy {
         path: &Path,
         operation: PermissionOperation,
     ) -> Result<PathBuf, PermissionError> {
-        reject_unsafe_syntax(path, operation)?;
-        fs::canonicalize(path).map_err(|error| {
+        let anchored_path = self.anchor_path(path, operation)?;
+        fs::canonicalize(&anchored_path).map_err(|error| {
             PermissionError::new(
                 operation,
                 path,
@@ -113,10 +113,10 @@ impl PermissionPolicy {
     }
 
     fn resolve_for_write(&self, path: &Path) -> Result<PathBuf, PermissionError> {
-        reject_unsafe_syntax(path, PermissionOperation::Write)?;
+        let anchored_path = self.anchor_path(path, PermissionOperation::Write)?;
 
-        if path.exists() {
-            return fs::canonicalize(path).map_err(|error| {
+        if anchored_path.exists() {
+            return fs::canonicalize(&anchored_path).map_err(|error| {
                 PermissionError::new(
                     PermissionOperation::Write,
                     path,
@@ -125,7 +125,7 @@ impl PermissionPolicy {
             });
         }
 
-        let Some(parent) = path
+        let Some(parent) = anchored_path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
         else {
@@ -153,6 +153,20 @@ impl PermissionPolicy {
         })?;
 
         Ok(resolved_parent.join(file_name))
+    }
+
+    fn anchor_path(
+        &self,
+        path: &Path,
+        operation: PermissionOperation,
+    ) -> Result<PathBuf, PermissionError> {
+        reject_unsafe_syntax(path, operation)?;
+
+        if path.is_absolute() {
+            Ok(path.to_path_buf())
+        } else {
+            Ok(self.workspace_root.join(path))
+        }
     }
 }
 
@@ -210,8 +224,8 @@ impl fmt::Display for PermissionError {
             PermissionDeniedReason::HomeAlias => {
                 "home-directory aliases are not allowed in MCP file paths".to_owned()
             }
-            PermissionDeniedReason::RelativePath => {
-                "relative paths are not allowed in MCP file paths".to_owned()
+            PermissionDeniedReason::ParentDir => {
+                "parent-directory segments are not allowed in MCP file paths".to_owned()
             }
             PermissionDeniedReason::EmptyPath => "empty paths are not allowed".to_owned(),
             PermissionDeniedReason::OutsideAllowedRoots => {
@@ -238,6 +252,20 @@ impl fmt::Display for PermissionError {
 
 impl std::error::Error for PermissionError {}
 
+fn canonicalize_configured_root(
+    path: &Path,
+    operation: PermissionOperation,
+) -> Result<PathBuf, PermissionError> {
+    reject_unsafe_syntax(path, operation)?;
+    fs::canonicalize(path).map_err(|error| {
+        PermissionError::new(
+            operation,
+            path,
+            PermissionDeniedReason::Io(error.to_string()),
+        )
+    })
+}
+
 fn reject_unsafe_syntax(
     path: &Path,
     operation: PermissionOperation,
@@ -250,14 +278,6 @@ fn reject_unsafe_syntax(
         ));
     }
 
-    if !path.is_absolute() {
-        return Err(PermissionError::new(
-            operation,
-            path,
-            PermissionDeniedReason::RelativePath,
-        ));
-    }
-
     if path
         .components()
         .any(|component| matches!(component, Component::ParentDir))
@@ -265,7 +285,7 @@ fn reject_unsafe_syntax(
         return Err(PermissionError::new(
             operation,
             path,
-            PermissionDeniedReason::RelativePath,
+            PermissionDeniedReason::ParentDir,
         ));
     }
 
@@ -285,6 +305,46 @@ fn reject_unsafe_syntax(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relative_paths_resolve_under_workspace() {
+        let fixture = TestDirs::new("relative_paths_resolve_under_workspace");
+        let deck = fixture.workspace.join("deck.pptx");
+        let output_dir = fixture.workspace.join("out");
+        fs::write(&deck, b"pptx").expect("write deck fixture");
+        fs::create_dir_all(&output_dir).expect("create output dir");
+
+        let policy = PermissionPolicy::new(fixture.workspace.clone(), fixture.temp.clone(), false);
+
+        assert_eq!(
+            policy.check_read("deck.pptx").expect("relative read"),
+            fs::canonicalize(&deck).expect("canonical deck")
+        );
+        assert_eq!(
+            policy
+                .check_write("out/edited.pptx")
+                .expect("relative write"),
+            fs::canonicalize(&output_dir)
+                .expect("canonical output dir")
+                .join("edited.pptx")
+        );
+    }
+
+    #[test]
+    fn relative_paths_reject_parent_dir_escapes() {
+        let fixture = TestDirs::new("relative_paths_reject_parent_dir_escapes");
+        let policy = PermissionPolicy::new(fixture.workspace.clone(), fixture.temp.clone(), false);
+
+        let read_error = policy
+            .check_read("../deck.pptx")
+            .expect_err("relative read escape is rejected");
+        let write_error = policy
+            .check_write("out/../deck.pptx")
+            .expect_err("relative write escape is rejected");
+
+        assert_eq!(read_error.operation(), PermissionOperation::Read);
+        assert_eq!(write_error.operation(), PermissionOperation::Write);
+    }
 
     #[test]
     fn rejects_path_outside_workspace() {
