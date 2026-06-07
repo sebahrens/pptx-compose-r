@@ -1311,6 +1311,7 @@ fn graphic_frame_kind_view_and_no_edit_round_trip_are_stable() {
         ("slide-1:graphic-8", "table"),
         ("slide-1:graphic-9", "diagram"),
         ("slide-1:graphic-10", "ole"),
+        ("slide-1:graphic-11", "shape"),
     ] {
         let element = elements
             .iter()
@@ -2390,6 +2391,11 @@ fn graphic_frame_slide() -> String {
         <p:nvGraphicFramePr><p:cNvPr id="10" name="OLE Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
         <p:xfrm><a:off x="4114800" y="457200"/><a:ext cx="1371600" cy="914400"/></p:xfrm>
         <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/presentationml/2006/ole"/></a:graphic>
+      </p:graphicFrame>
+      <p:graphicFrame>
+        <p:nvGraphicFramePr><p:cNvPr id="11" name="Unknown Graphic Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+        <p:xfrm><a:off x="5486400" y="457200"/><a:ext cx="1371600" cy="914400"/></p:xfrm>
+        <a:graphic><a:graphicData uri="http://example.invalid/customGraphic"/></a:graphic>
       </p:graphicFrame>
     </p:spTree>
   </p:cSld>

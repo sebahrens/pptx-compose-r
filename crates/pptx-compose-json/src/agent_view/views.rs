@@ -1304,15 +1304,14 @@ const fn json_element_kind(kind: CoreElementKind) -> ElementKind {
         CoreElementKind::TextBox => ElementKind::TextBox,
         CoreElementKind::Picture => ElementKind::Image,
         CoreElementKind::Group => ElementKind::Group,
-        CoreElementKind::GraphicFrameChart | CoreElementKind::GraphicFrameOther => {
-            ElementKind::Chart
-        }
+        CoreElementKind::GraphicFrameChart => ElementKind::Chart,
         CoreElementKind::GraphicFrameTable => ElementKind::Table,
         CoreElementKind::GraphicFrameDiagram => ElementKind::Diagram,
         CoreElementKind::GraphicFrameOle => ElementKind::Ole,
-        CoreElementKind::Shape | CoreElementKind::Connector | CoreElementKind::Other => {
-            ElementKind::Shape
-        }
+        CoreElementKind::Shape
+        | CoreElementKind::GraphicFrameOther
+        | CoreElementKind::Connector
+        | CoreElementKind::Other => ElementKind::Shape,
     }
 }
 
@@ -1670,6 +1669,7 @@ fn graphic_frame_kinds_are_emitted_from_graphic_data_uri() {
         ("Table Frame", "table"),
         ("Diagram Frame", "diagram"),
         ("OLE Frame", "ole"),
+        ("Unknown Frame", "shape"),
     ] {
         let element = elements
             .iter()
@@ -1777,7 +1777,7 @@ fn picture_slide_xml() -> &'static [u8] {
 
 #[cfg(test)]
 fn graphic_frame_slide_xml() -> &'static [u8] {
-    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="Chart Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="8" name="Table Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl/></a:graphicData></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="9" name="Diagram Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="10" name="OLE Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/presentationml/2006/ole"/></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="Chart Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="8" name="Table Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl/></a:graphicData></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="9" name="Diagram Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="10" name="OLE Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/presentationml/2006/ole"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="11" name="Unknown Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://example.invalid/customGraphic"/></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#
 }
 
 #[cfg(test)]
