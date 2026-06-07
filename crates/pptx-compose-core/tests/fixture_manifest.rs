@@ -26,7 +26,12 @@ mod manifest {
 mod corpus {
     use std::collections::BTreeSet;
 
-    use pptx_compose_core::{xml::parser::parse_document, zip::reader::from_bytes};
+    use pptx_compose_core::{
+        opc::package::Package,
+        validation::{FindingCode, Severity, ValidationMode, ValidationStatus, validate_package},
+        xml::parser::parse_document,
+        zip::reader::from_bytes,
+    };
 
     use super::fixtures::{SourceApp, fixture_path, load_manifest};
 
@@ -82,6 +87,27 @@ mod corpus {
             "malformed fixture expected one of {:?}, got {}",
             malformed.expected_warnings,
             error.code().as_str()
+        );
+
+        let mut package = Package::new();
+        for entry in entries {
+            package
+                .insert_zip_entry(entry.name.zip_entry_name(), entry.bytes)
+                .expect("malformed fixture entries are valid OPC part names");
+        }
+
+        let outcome = validate_package(&package, ValidationMode::NoEdit);
+
+        assert_eq!(outcome.status, ValidationStatus::Invalid);
+        let malformed_xml = outcome
+            .findings
+            .iter()
+            .find(|finding| finding.code == FindingCode::MalformedXml)
+            .expect("validate reports malformed_xml for the malformed fixture");
+        assert_eq!(malformed_xml.severity, Severity::Fatal);
+        assert!(
+            malformed_xml.blocking,
+            "fatal malformed_xml blocks no-edit validation"
         );
     }
 }
