@@ -107,6 +107,51 @@ fn exposes_required_070_api_and_defaults() {
 }
 
 #[test]
+fn atomic_write_path_accepts_bare_relative_output() {
+    use std::sync::{Mutex, OnceLock};
+
+    static CURRENT_DIR_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    let _guard = CURRENT_DIR_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("current-dir test lock acquired");
+    let bytes = include_bytes!("../../../fixtures/minimal.pptx");
+    let document = PresentationDocument::from_bytes(bytes).expect("fixture opens");
+    let root = unique_dir();
+    let previous_dir = std::env::current_dir().expect("current dir reads");
+    std::env::set_current_dir(&root).expect("current dir changes to test root");
+
+    document
+        .write_path_with_options(
+            Path::new("bare-output.pptx"),
+            WriteOptions {
+                overwrite: false,
+                ..WriteOptions::default()
+            },
+        )
+        .expect("bare relative atomic output succeeds");
+
+    let output = root.join("bare-output.pptx");
+    assert!(output.exists(), "bare relative output is published");
+    let temp_prefix = ".bare-output.pptx.";
+    let temp_remains = fs::read_dir(&root).expect("test root reads").any(|entry| {
+        entry
+            .expect("test root entry reads")
+            .file_name()
+            .to_string_lossy()
+            .starts_with(temp_prefix)
+    });
+    assert!(
+        !temp_remains,
+        "successful atomic write removes temp sibling"
+    );
+
+    std::env::set_current_dir(previous_dir).expect("current dir restores");
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
 fn open_options_apply_resource_limits_at_facade_boundary() {
     let bytes = include_bytes!("../../../fixtures/minimal.pptx");
     let options = OpenOptions::with_resource_limits(ResourceLimits {

@@ -258,12 +258,7 @@ fn write_atomic(
     if path.exists() && !overwrite {
         return Err(output_exists_error(path));
     }
-    let parent = path.parent().ok_or_else(|| {
-        CliError::new(
-            pptx_compose::core::error::ErrorCode::WriteFailed,
-            format!("Output path {} has no parent directory.", path.display()),
-        )
-    })?;
+    let parent = output_parent(path);
     let temp_path = temp_sibling_path(path);
     let result = (|| {
         let mut temp = create_file_atomic(&temp_path, false)?;
@@ -326,6 +321,13 @@ fn output_exists_error(path: &Path) -> CliError {
     )
 }
 
+fn output_parent(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
 fn temp_sibling_path(path: &Path) -> PathBuf {
     let file_name = path
         .file_name()
@@ -363,6 +365,57 @@ impl From<Option<PathBuf>> for OutputDest {
             None => Self::Stdout,
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn write_bytes_atomic_accepts_bare_relative_output() {
+    use std::sync::{Mutex, OnceLock};
+
+    static CURRENT_DIR_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    let _guard = CURRENT_DIR_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("current-dir test lock acquired");
+    let root = unique_dir();
+    let previous_dir = std::env::current_dir().expect("current dir reads");
+    std::env::set_current_dir(&root).expect("current dir changes to test root");
+
+    write_bytes_atomic(Path::new("bare-output.pptx"), b"pptx bytes", false)
+        .expect("bare relative atomic output succeeds");
+
+    let output = root.join("bare-output.pptx");
+    assert_eq!(
+        fs::read(&output).expect("bare relative output reads"),
+        b"pptx bytes"
+    );
+    let temp_prefix = ".bare-output.pptx.";
+    let temp_remains = fs::read_dir(&root).expect("test root reads").any(|entry| {
+        entry
+            .expect("test root entry reads")
+            .file_name()
+            .to_string_lossy()
+            .starts_with(temp_prefix)
+    });
+    assert!(
+        !temp_remains,
+        "successful atomic write removes temp sibling"
+    );
+
+    std::env::set_current_dir(previous_dir).expect("current dir restores");
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[cfg(test)]
+fn unique_dir() -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "pptx-compose-cli-output-{}-{}",
+        std::process::id(),
+        unique_counter()
+    ));
+    fs::create_dir_all(&root).expect("test dir creates");
+    root
 }
 
 #[cfg(test)]

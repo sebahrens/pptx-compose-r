@@ -435,15 +435,7 @@ impl PresentationDocument {
     }
 
     fn write_path_atomic(&self, output_path: &Path, options: WriteOptions) -> Result<()> {
-        let parent = output_path.parent().ok_or_else(|| {
-            Error::new(
-                ErrorCode::WriteFailed,
-                format!(
-                    "Output path {} has no parent directory.",
-                    output_path.display()
-                ),
-            )
-        })?;
+        let parent = output_parent(output_path);
         let temp_path = options
             .atomic_temp_path
             .clone()
@@ -767,6 +759,13 @@ fn output_exists_error(output_path: &Path) -> Error {
             output_path.display()
         ),
     )
+}
+
+fn output_parent(output_path: &Path) -> &Path {
+    match output_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
 }
 
 fn unique_counter() -> u64 {
