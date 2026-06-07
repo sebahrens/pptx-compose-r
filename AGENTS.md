@@ -36,6 +36,7 @@ For CLI edits, use the bounded V1 agent flow:
 ```bash
 pptx-compose --version
 pptx-compose inspect INPUT.pptx --format agent-json --output deck.view.json --report inspect.report.json --json-errors
+pptx-compose find-text INPUT.pptx "QUERY" --slide-id slide-N --limit N --json-errors
 pptx-compose apply INPUT.pptx PATCH.json --dry-run --media-manifest media.json --report dry-run.report.json --diff diff.json --json-errors
 pptx-compose apply INPUT.pptx PATCH.json --media-manifest media.json --output OUTPUT.pptx --report apply.report.json --json-errors
 pptx-compose validate OUTPUT.pptx --report validation.json --json-errors
@@ -44,8 +45,11 @@ pptx-compose validate OUTPUT.pptx --report validation.json --json-errors
 `inspect`, `validate`, and `apply --dry-run` are read-only. `apply --output`
 is the CLI export/write step; it must validate edited output before the final
 write by default and must not overwrite existing files unless `--overwrite` is
-explicit. Agents performing V1 edits must use `inspect`/`apply`, not the legacy
-`to-json`, `to-pptx`, or `convert` compatibility commands.
+explicit. `find-text` may be scoped with `--slide-id slide-N`; its matches carry
+selector guards (`slide_id`, `kind`, `part`, `text_hash`, `fingerprint`) that
+paste directly into a `replace_text` operation. Agents performing V1 edits must
+use `inspect`/`apply`, not the legacy `to-json`, `to-pptx`, or `convert`
+compatibility commands.
 
 CLI discipline: primary machine JSON goes to stdout or the explicit output path;
 human progress and logs go to stderr; commands must not mix prose into JSON
@@ -60,7 +64,8 @@ pptx-compose-mcp --workspace DIR --temp-dir DIR
 ```
 
 The MCP flow is `pptx_open` -> scoped inspection tools such as
-`pptx_get_document_summary`, `pptx_list_slides`, and `pptx_get_slide` ->
+`pptx_get_document_summary`, `pptx_list_slides`, `pptx_get_slide`,
+`pptx_find_text`, `pptx_list_elements`, and `pptx_get_element` ->
 `pptx_validate_patch` -> `pptx_apply_patch` -> `pptx_export` -> `pptx_close`.
 Mutating MCP tools require `session_id` plus `expected_revision` or a patch
 `base_revision`; stale revisions return the `stale_patch` error code. Stage
