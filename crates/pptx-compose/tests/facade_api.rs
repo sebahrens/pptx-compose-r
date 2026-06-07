@@ -904,6 +904,110 @@ fn external_link_image_view_flag_matches_replace_image_rejection() {
 }
 
 #[test]
+fn graphic_frame_kind_view_and_no_edit_round_trip_are_stable() {
+    let bytes = graphic_frame_deck();
+    let document = PresentationDocument::from_bytes(&bytes).expect("graphic frame deck opens");
+    let view = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide_detail builds");
+    let elements = view["slides"][0]["elements"]
+        .as_array()
+        .expect("slide_detail exposes elements");
+
+    for (element_id, kind) in [
+        ("slide-1:graphic-7", "chart"),
+        ("slide-1:graphic-8", "table"),
+        ("slide-1:graphic-9", "diagram"),
+        ("slide-1:graphic-10", "ole"),
+    ] {
+        let element = elements
+            .iter()
+            .find(|element| element["id"] == element_id)
+            .unwrap_or_else(|| panic!("{element_id} should be projected"));
+        assert_eq!(element["kind"], kind);
+    }
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("no-edit graphic frame deck writes");
+    let original_entries = from_bytes(&bytes).expect("original entries read");
+    let written_entries = from_bytes(&written).expect("written entries read");
+    assert_eq!(
+        entry_bytes(&written_entries, "ppt/slides/slide1.xml"),
+        entry_bytes(&original_entries, "ppt/slides/slide1.xml"),
+        "read-only graphic frame reclassification must not dirty slide XML"
+    );
+}
+
+#[test]
+fn table_and_diagram_graphic_frames_accept_bounds_and_alt_text_edits() {
+    for (operation_name, element_id, operation) in [
+        (
+            "move_resize_table_frame",
+            "slide-1:graphic-8",
+            serde_json::json!({
+                "operation_id": "move-table",
+                "op": "move_resize_element",
+                "element_id": "slide-1:graphic-8",
+                "bounds": { "x": 457200, "y": 457200, "cx": 1828800, "cy": 914400 }
+            }),
+        ),
+        (
+            "move_resize_diagram_frame",
+            "slide-1:graphic-9",
+            serde_json::json!({
+                "operation_id": "move-diagram",
+                "op": "move_resize_element",
+                "element_id": "slide-1:graphic-9",
+                "bounds": { "x": 2286000, "y": 457200, "cx": 1828800, "cy": 914400 }
+            }),
+        ),
+        (
+            "set_alt_text_table_frame",
+            "slide-1:graphic-8",
+            serde_json::json!({
+                "operation_id": "alt-table",
+                "op": "set_alt_text",
+                "element_id": "slide-1:graphic-8",
+                "title": "Table frame",
+                "description": "Accessible table frame"
+            }),
+        ),
+        (
+            "set_alt_text_diagram_frame",
+            "slide-1:graphic-9",
+            serde_json::json!({
+                "operation_id": "alt-diagram",
+                "op": "set_alt_text",
+                "element_id": "slide-1:graphic-9",
+                "title": "Diagram frame",
+                "description": "Accessible diagram frame"
+            }),
+        ),
+    ] {
+        assert_eq!(operation["element_id"], element_id);
+        assert_successful_edit_round_trip(
+            operation_name,
+            graphic_frame_deck_with_clean_extras(),
+            operation,
+            MediaInputs::default(),
+            &["ppt/slides/slide1.xml"],
+            &[],
+        );
+    }
+}
+
+#[test]
 fn failed_multi_operation_patch_leaves_package_byte_identical() {
     let bytes = text_deck_with_clean_extras();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
@@ -1318,6 +1422,15 @@ fn entry_text(entries: &[RawEntry], zip_entry_name: &str) -> String {
         .to_owned()
 }
 
+fn entry_bytes<'a>(entries: &'a [RawEntry], zip_entry_name: &str) -> &'a [u8] {
+    entries
+        .iter()
+        .find(|entry| entry.name.zip_entry_name() == zip_entry_name)
+        .unwrap_or_else(|| panic!("{zip_entry_name} entry exists"))
+        .bytes
+        .as_slice()
+}
+
 fn unique_dir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1412,6 +1525,31 @@ fn image_deck_with_clean_extras() -> Vec<u8> {
                 "ppt/slides/_rels/slide1.xml.rels",
                 image_slide_rels().as_bytes(),
             ),
+            ("ppt/media/image1.png", &tiny_png()),
+            ("custom/unknown.bin", b"unknown payload"),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
+fn graphic_frame_deck() -> Vec<u8> {
+    text_deck_with_slide(&graphic_frame_slide())
+}
+
+fn graphic_frame_deck_with_clean_extras() -> Vec<u8> {
+    zip_entries(
+        [
+            (
+                "[Content_Types].xml",
+                content_types_with_png_and_unknown().as_bytes(),
+            ),
+            ("_rels/.rels", root_rels().as_bytes()),
+            ("ppt/presentation.xml", presentation().as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", graphic_frame_slide().as_bytes()),
             ("ppt/media/image1.png", &tiny_png()),
             ("custom/unknown.bin", b"unknown payload"),
         ],
@@ -1617,6 +1755,39 @@ fn image_slide() -> String {
         <p:blipFill><a:blip r:embed="rId3"/></p:blipFill>
         <p:spPr><a:xfrm><a:off x="914400" y="1828800"/><a:ext cx="914400" cy="914400"/></a:xfrm></p:spPr>
       </p:pic>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+        .to_owned()
+}
+
+fn graphic_frame_slide() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:graphicFrame>
+        <p:nvGraphicFramePr><p:cNvPr id="7" name="Chart Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+        <p:xfrm><a:off x="0" y="457200"/><a:ext cx="1371600" cy="914400"/></p:xfrm>
+        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"/></a:graphic>
+      </p:graphicFrame>
+      <p:graphicFrame>
+        <p:nvGraphicFramePr><p:cNvPr id="8" name="Table Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+        <p:xfrm><a:off x="1371600" y="457200"/><a:ext cx="1371600" cy="914400"/></p:xfrm>
+        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl/></a:graphicData></a:graphic>
+      </p:graphicFrame>
+      <p:graphicFrame>
+        <p:nvGraphicFramePr><p:cNvPr id="9" name="Diagram Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+        <p:xfrm><a:off x="2743200" y="457200"/><a:ext cx="1371600" cy="914400"/></p:xfrm>
+        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:graphic>
+      </p:graphicFrame>
+      <p:graphicFrame>
+        <p:nvGraphicFramePr><p:cNvPr id="10" name="OLE Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+        <p:xfrm><a:off x="4114800" y="457200"/><a:ext cx="1371600" cy="914400"/></p:xfrm>
+        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/presentationml/2006/ole"/></a:graphic>
+      </p:graphicFrame>
     </p:spTree>
   </p:cSld>
 </p:sld>"#
