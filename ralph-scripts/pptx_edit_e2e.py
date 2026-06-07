@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """PPTX EDIT round-trip E2E checker.
 
-This complements ``pptx_roundtrip_e2e.py`` (which only exercises the no-edit
-PPTX -> JSON -> PPTX conversion path). Here we drive the *real* V1 agent edit
+This complements ``pptx_roundtrip_e2e.py`` (which exercises the no-edit V1
+agent apply path). Here we drive the *real* V1 agent edit
 surface through the CLI:
 
     pptx-compose inspect <input> --format agent-json --detail full --slides N

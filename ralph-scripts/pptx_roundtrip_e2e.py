@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Legacy PPTX -> JSON -> PPTX E2E round-trip checker for loop.sh.
+"""PPTX no-edit V1 E2E round-trip checker for loop.sh.
 
-The runner exercises the compatibility conversion path, compares input/output at
-the package/XML/media level, optionally performs a visual render comparison when
+The runner exercises the V1 agent CLI path, compares input/output at the
+package/XML/media level, optionally performs a visual render comparison when
 LibreOffice + pdftoppm + Pillow are installed, and files consolidated Beads for
 detected defects.
 """
@@ -41,7 +41,9 @@ class FixtureReport:
     visual: ComparisonResult
     validation: ComparisonResult
     output_pptx: str
-    json_path: str
+    view_path: str
+    patch_path: str
+    dry_run_report_path: str
     log_path: str
 
 
@@ -150,39 +152,66 @@ def run_fixture(
         shutil.rmtree(fixture_dir)
     fixture_dir.mkdir(parents=True)
 
-    json_path = fixture_dir / "roundtrip.json"
+    view_path = fixture_dir / "inspect.json"
+    patch_path = fixture_dir / "noop.patch.json"
+    dry_run_report_path = fixture_dir / "dry-run.report.json"
+    apply_report_path = fixture_dir / "apply.report.json"
     output_path = fixture_dir / "roundtrip.pptx"
     validation_path = fixture_dir / "validation.json"
     log_path = log_dir / f"{fixture_key}.log"
     commands = [
-        f"{cli} to-json {input_path} {json_path} --compat-json",
-        f"{cli} to-pptx {json_path} {output_path} --compat-json",
-        f"{cli} --json-errors validate {output_path} --report {validation_path}",
+        f"{cli} --json-errors --temp-dir {work_dir} inspect {input_path} --format agent-json --output {view_path}",
+        f"{cli} --json-errors --temp-dir {work_dir} apply {input_path} {patch_path} --dry-run --report {dry_run_report_path}",
+        f"{cli} --json-errors --temp-dir {work_dir} apply {input_path} {patch_path} --output {output_path} --report {apply_report_path}",
+        f"{cli} --json-errors --temp-dir {work_dir} validate {output_path} --report {validation_path}",
     ]
 
     with log_path.open("w") as log:
         log.write(f"fixture={fixture}\ninput={input_path}\noutput={output_path}\n")
 
-    conversion = run_command(project_dir, [str(cli), "to-json", str(input_path), str(json_path), "--compat-json"], log_path)
-    if conversion.returncode == 0:
-        conversion = run_command(project_dir, [str(cli), "to-pptx", str(json_path), str(output_path), "--compat-json"], log_path)
+    conversion = prepare_no_edit_patch(project_dir, cli, work_dir, input_path, view_path, patch_path, log_path)
+    if conversion.status == "pass":
+        dry_run = run_command(
+            project_dir,
+            [
+                str(cli), "--json-errors", "--temp-dir", str(work_dir),
+                "apply", str(input_path), str(patch_path),
+                "--dry-run", "--report", str(dry_run_report_path),
+            ],
+            log_path,
+        )
+        if dry_run.returncode != 0:
+            conversion = ComparisonResult("fail", [f"dry-run apply command failed; see {log_path}"])
+    if conversion.status == "pass":
+        apply = run_command(
+            project_dir,
+            [
+                str(cli), "--json-errors", "--temp-dir", str(work_dir),
+                "apply", str(input_path), str(patch_path),
+                "--output", str(output_path), "--report", str(apply_report_path),
+            ],
+            log_path,
+        )
+        if apply.returncode != 0:
+            conversion = ComparisonResult("fail", [f"apply command failed; see {log_path}"])
 
-    if conversion.returncode != 0:
-        failed = ComparisonResult("fail", [f"conversion command failed; see {log_path}"])
+    if conversion.status == "fail":
         return FixtureReport(
             fixture=fixture,
             status="fail",
             commands=commands,
-            xml=failed,
-            media=ComparisonResult("skipped", ["conversion failed"]),
-            visual=ComparisonResult("skipped", ["conversion failed"]),
-            validation=ComparisonResult("skipped", ["conversion failed"]),
+            xml=conversion,
+            media=ComparisonResult("skipped", ["V1 no-edit write failed"]),
+            visual=ComparisonResult("skipped", ["V1 no-edit write failed"]),
+            validation=ComparisonResult("skipped", ["V1 no-edit write failed"]),
             output_pptx=str(output_path),
-            json_path=str(json_path),
+            view_path=str(view_path),
+            patch_path=str(patch_path),
+            dry_run_report_path=str(dry_run_report_path),
             log_path=str(log_path),
         )
 
-    validation = validate_output(project_dir, cli, output_path, validation_path, log_path)
+    validation = validate_output(project_dir, cli, work_dir, output_path, validation_path, log_path)
     xml = compare_xml_and_package(input_path, output_path)
     media = compare_media(input_path, output_path)
     visual = compare_visual(input_path, output_path, fixture_dir / "visual", visual_threshold, log_path)
@@ -197,15 +226,59 @@ def run_fixture(
         visual=visual,
         validation=validation,
         output_pptx=str(output_path),
-        json_path=str(json_path),
+        view_path=str(view_path),
+        patch_path=str(patch_path),
+        dry_run_report_path=str(dry_run_report_path),
         log_path=str(log_path),
     )
 
 
-def validate_output(project_dir: Path, cli: Path, output_path: Path, validation_path: Path, log_path: Path) -> ComparisonResult:
+def prepare_no_edit_patch(
+    project_dir: Path,
+    cli: Path,
+    work_dir: Path,
+    input_path: Path,
+    view_path: Path,
+    patch_path: Path,
+    log_path: Path,
+) -> ComparisonResult:
     result = run_command(
         project_dir,
-        [str(cli), "--json-errors", "validate", str(output_path), "--report", str(validation_path)],
+        [
+            str(cli), "--json-errors", "--temp-dir", str(work_dir),
+            "inspect", str(input_path),
+            "--format", "agent-json", "--output", str(view_path),
+        ],
+        log_path,
+    )
+    if result.returncode != 0:
+        return ComparisonResult("fail", [f"inspect command failed; see {log_path}"])
+    try:
+        view = json.loads(view_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return ComparisonResult("fail", [f"inspect view could not be read: {exc}"])
+    try:
+        patch = {
+            "schema": "pptx-compose.patch.v1",
+            "version": 1,
+            "document_id": view["document_id"],
+            "base_revision": view["revision"],
+            "client_request_id": "pptx-compose-roundtrip-e2e-no-edit",
+            "operations": [],
+        }
+    except KeyError as exc:
+        return ComparisonResult("fail", [f"inspect view omitted required patch guard: {exc}"])
+    patch_path.write_text(json.dumps(patch, indent=2, sort_keys=True) + "\n")
+    return ComparisonResult("pass")
+
+
+def validate_output(project_dir: Path, cli: Path, work_dir: Path, output_path: Path, validation_path: Path, log_path: Path) -> ComparisonResult:
+    result = run_command(
+        project_dir,
+        [
+            str(cli), "--json-errors", "--temp-dir", str(work_dir),
+            "validate", str(output_path), "--report", str(validation_path),
+        ],
         log_path,
     )
     if result.returncode != 0:
@@ -352,7 +425,7 @@ def issue_description(report: FixtureReport) -> str:
     return textwrap.dedent(
         f"""
         Why this exists:
-        The loop round-trip E2E check detected a PPTX -> legacy JSON -> PPTX regression for `{report.fixture}`.
+        The loop round-trip E2E check detected a V1 no-edit write regression for `{report.fixture}`.
 
         What failed:
         {chr(10).join(details)}
@@ -362,11 +435,13 @@ def issue_description(report: FixtureReport) -> str:
 
         Artifacts:
         - Output PPTX: `{report.output_pptx}`
-        - Legacy JSON: `{report.json_path}`
+        - Inspect view: `{report.view_path}`
+        - No-edit patch: `{report.patch_path}`
+        - Dry-run report: `{report.dry_run_report_path}`
         - Log: `{report.log_path}`
 
         What needs to be done:
-        Inspect the log and artifacts, identify whether the conversion path, package writer, validation, or renderer exposed the defect, then fix the smallest code path that restores a clean round trip.
+        Inspect the log and artifacts, identify whether inspect, patch apply, package writing, validation, or rendering exposed the defect, then fix the smallest code path that restores a clean round trip.
         """
     ).strip()
 

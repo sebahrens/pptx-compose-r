@@ -92,11 +92,11 @@ on top of these. So a bare `./loop.sh plan` is guaranteed to terminate.
   is fragile and prints control-char mojibake. `loop.sh` extracts
   `pptx-compose-<id>` and strips non-printable bytes before display (`clean_line`).
 - **The `include-tests` phase runs cargo and round-trip E2E checks.** After
-  `cargo test` + `cargo clippy` pass, `pptx_roundtrip_e2e.py` runs
-  `pptx-compose to-json --compat-json` followed by `to-pptx --compat-json` for
-  every non-malformed fixture in `fixtures/manifest.toml`, validates the output,
-  compares XML/package/media bytes, attempts a visual comparison when LibreOffice
-  + `pdftoppm` + Pillow are available, writes
+  `cargo test` + `cargo clippy` pass, `pptx_roundtrip_e2e.py` runs the V1
+  no-edit agent flow for every non-malformed fixture in `fixtures/manifest.toml`:
+  `inspect`, empty-patch `apply --dry-run`, empty-patch `apply --output`, and
+  `validate`. It compares XML/package/media bytes, attempts a visual comparison
+  when LibreOffice + `pdftoppm` + Pillow are available, writes
   `.ralph-roundtrip-e2e/roundtrip-summary.json`, and files deduplicated
   `defect:roundtrip-e2e` beads when defects are detected. Pass
   `skip-roundtrip-e2e` to keep cargo tests but skip this heavier check.
@@ -122,7 +122,7 @@ on top of these. So a bare `./loop.sh plan` is guaranteed to terminate.
 
 - `loop.sh` — the runner (engine dispatch, iteration control, beads integration).
 - `run.sh` — outer runner (test/file Beads → consolidate → build → repeat).
-- `pptx_roundtrip_e2e.py` — loop-integrated PPTX → legacy JSON → PPTX checker.
+- `pptx_roundtrip_e2e.py` — loop-integrated no-edit V1 agent flow checker.
 - `pptx_edit_e2e.py` — loop-integrated edit round-trip: apply each V1 edit op to
   a real fixture, assert targeted-change + byte-preservation + validation, then
   run an edit-aware visual render check (degrades gracefully without LibreOffice).

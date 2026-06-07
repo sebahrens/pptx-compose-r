@@ -72,7 +72,7 @@ POSITIONAL ARGS (order-independent, all optional, compose freely):
   plan            Run the planning loop (decompose specs/epics into true atomic
                   tasks) instead of the default build loop. Uses PROMPT_plan.md.
   include-tests   After each build iteration, also run `cargo test`,
-                  `cargo clippy`, and the roundtrip-e2e PPTX -> JSON -> PPTX
+                  `cargo clippy`, and the roundtrip-e2e no-edit V1 apply
                   check. Opt-in; off by default. Skipped automatically while
                   there is no Cargo workspace yet. Ignored in plan mode.
   roundtrip-e2e   Keep the roundtrip E2E check enabled under include-tests. This
@@ -658,7 +658,7 @@ $CARGO_TAIL" 2>/dev/null || true
                 echo "  ✓ cargo test + clippy passed"
                 if [ "$RUN_ROUNDTRIP_E2E" = true ]; then
                     echo ""
-                    echo "  Phase 1.6: roundtrip-e2e (PPTX -> legacy JSON -> PPTX)"
+                    echo "  Phase 1.6: roundtrip-e2e (V1 no-edit apply)"
                     ROUNDTRIP_LOG="$PROJECT_DIR/.ralph-roundtrip-e2e.log"
                     set +e
                     ( cd "$PROJECT_DIR" && python3 "$SCRIPT_DIR/pptx_roundtrip_e2e.py" --project-dir "$PROJECT_DIR" --file-beads ) >"$ROUNDTRIP_LOG" 2>&1

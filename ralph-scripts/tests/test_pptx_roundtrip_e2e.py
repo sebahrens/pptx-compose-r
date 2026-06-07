@@ -41,7 +41,9 @@ class RoundTripE2ETest(unittest.TestCase):
             visual=runner.ComparisonResult(status="skipped", details=["LibreOffice not installed"]),
             validation=runner.ComparisonResult(status="pass"),
             output_pptx="out.pptx",
-            json_path="out.json",
+            view_path="inspect.json",
+            patch_path="noop.patch.json",
+            dry_run_report_path="dry-run.report.json",
             log_path="roundtrip.log",
         )
         self.assertEqual(runner.form_opinion([report]).status, "pass")
@@ -57,13 +59,15 @@ class RoundTripE2ETest(unittest.TestCase):
         report = runner.FixtureReport(
             fixture="fixtures/minimal.pptx",
             status="fail",
-            commands=["pptx-compose to-json ...", "pptx-compose to-pptx ..."],
+            commands=["pptx-compose inspect ...", "pptx-compose apply --dry-run ...", "pptx-compose apply --output ..."],
             xml=runner.ComparisonResult(status="fail", details=["ppt/slides/slide1.xml differs"]),
             media=runner.ComparisonResult(status="pass"),
             visual=runner.ComparisonResult(status="skipped", details=["pdftoppm not installed"]),
             validation=runner.ComparisonResult(status="pass"),
             output_pptx="/tmp/out.pptx",
-            json_path="/tmp/out.json",
+            view_path="/tmp/inspect.json",
+            patch_path="/tmp/noop.patch.json",
+            dry_run_report_path="/tmp/dry-run.report.json",
             log_path="/tmp/roundtrip.log",
         )
 
@@ -73,6 +77,40 @@ class RoundTripE2ETest(unittest.TestCase):
         self.assertIn("ppt/slides/slide1.xml differs", description)
         self.assertIn("/tmp/roundtrip.log", description)
         self.assertIn("Visual comparison", description)
+
+    def test_prepare_no_edit_patch_uses_inspect_guards(self):
+        runner = load_runner()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            view_path = tmp_path / "inspect.json"
+            patch_path = tmp_path / "noop.patch.json"
+            log_path = tmp_path / "roundtrip.log"
+            view_path.write_text(
+                '{"document_id":"sha256:abc","revision":7}\n',
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(runner, "run_command") as run_command:
+                run_command.return_value.returncode = 0
+                result = runner.prepare_no_edit_patch(
+                    tmp_path,
+                    pathlib.Path("pptx-compose"),
+                    tmp_path,
+                    tmp_path / "input.pptx",
+                    view_path,
+                    patch_path,
+                    log_path,
+                )
+
+            patch = runner.json.loads(patch_path.read_text())
+            self.assertEqual(result.status, "pass")
+            self.assertEqual(patch["schema"], "pptx-compose.patch.v1")
+            self.assertEqual(patch["document_id"], "sha256:abc")
+            self.assertEqual(patch["base_revision"], 7)
+            self.assertEqual(patch["operations"], [])
+            command = run_command.call_args.args[1]
+            self.assertIn("inspect", command)
 
     def test_visual_input_pdf_render_failure_is_skipped(self):
         runner = load_runner()
