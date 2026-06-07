@@ -48,6 +48,7 @@ use pptx_compose_edit::{
     operations::{
         ResolvedTarget, add_image::AddImage, add_text_box::AddTextBox, move_resize::MoveResize,
         replace_image::ReplaceImage, replace_text::ReplaceText, set_alt_text::SetAltText,
+        set_document_metadata::SetDocumentMetadata,
     },
     patch::{DocumentState, Operation, OperationExecutor, PatchEffects, validate_envelope},
     selectors::{self, Selector},
@@ -1259,6 +1260,14 @@ impl OperationExecutor for RealOperationExecutor<'_> {
                 )?;
                 SetAltText::from(operation).apply(package, &target)
             }
+            Operation::SetDocumentMetadata(operation) => {
+                let target = resolve_core_properties(
+                    &model,
+                    operation.operation_id.as_str(),
+                    &operation.target_selector(),
+                )?;
+                SetDocumentMetadata::from(operation).apply(package, &target)
+            }
             Operation::AddImage(operation) => {
                 let target = resolve_slide(
                     &model,
@@ -1316,7 +1325,8 @@ fn operation_media_ref(operation: &Operation) -> Option<&str> {
         Operation::ReplaceText(_)
         | Operation::AddTextBox(_)
         | Operation::MoveResizeElement(_)
-        | Operation::SetAltText(_) => None,
+        | Operation::SetAltText(_)
+        | Operation::SetDocumentMetadata(_) => None,
     }
 }
 
@@ -1359,6 +1369,14 @@ fn validate_operation(
             )?;
             SetAltText::from(operation).validate(package, &target)
         }
+        Operation::SetDocumentMetadata(operation) => {
+            let target = resolve_core_properties(
+                model,
+                operation.operation_id.as_str(),
+                &operation.target_selector(),
+            )?;
+            SetDocumentMetadata::from(operation).validate(package, &target)
+        }
         Operation::AddImage(operation) => {
             let _target = resolve_slide(
                 model,
@@ -1387,7 +1405,9 @@ fn resolve_element(
         .map_err(|error| with_operation_location(error, operation_id))?
     {
         ResolvedTarget::Element(target) => Ok(target),
-        ResolvedTarget::Slide(_) | ResolvedTarget::MediaPart(_) => Err(Error::new(
+        ResolvedTarget::Slide(_)
+        | ResolvedTarget::MediaPart(_)
+        | ResolvedTarget::CoreProperties(_) => Err(Error::new(
             ErrorCode::SelectorGuardFailed,
             "Selector did not resolve to an element.",
         )),
@@ -1403,10 +1423,30 @@ fn resolve_slide(
         .map_err(|error| with_operation_location(error, operation_id))?
     {
         ResolvedTarget::Slide(target) => Ok(target),
-        ResolvedTarget::Element(_) | ResolvedTarget::MediaPart(_) => Err(Error::new(
+        ResolvedTarget::Element(_)
+        | ResolvedTarget::MediaPart(_)
+        | ResolvedTarget::CoreProperties(_) => Err(Error::new(
             ErrorCode::SelectorGuardFailed,
             "Selector did not resolve to a slide.",
         )),
+    }
+}
+
+fn resolve_core_properties(
+    model: &core_presentation::PresentationDocument,
+    operation_id: &str,
+    selector: &Selector,
+) -> Result<pptx_compose_edit::operations::ResolvedCoreProperties> {
+    match selectors::resolve(model, selector)
+        .map_err(|error| with_operation_location(error, operation_id))?
+    {
+        ResolvedTarget::CoreProperties(target) => Ok(target),
+        ResolvedTarget::Element(_) | ResolvedTarget::Slide(_) | ResolvedTarget::MediaPart(_) => {
+            Err(Error::new(
+                ErrorCode::SelectorGuardFailed,
+                "Selector did not resolve to core properties.",
+            ))
+        }
     }
 }
 

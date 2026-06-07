@@ -1113,6 +1113,7 @@ fn default_capabilities() -> Capabilities {
             "add_text_box".to_owned(),
             "move_resize_element".to_owned(),
             "set_alt_text".to_owned(),
+            "set_document_metadata".to_owned(),
             "add_image".to_owned(),
             "replace_image".to_owned(),
         ],

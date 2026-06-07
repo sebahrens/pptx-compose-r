@@ -60,6 +60,7 @@ pub enum Operation {
     AddTextBox(AddTextBoxOperation),
     MoveResizeElement(MoveResizeElementOperation),
     SetAltText(SetAltTextOperation),
+    SetDocumentMetadata(SetDocumentMetadataOperation),
     AddImage(AddImageOperation),
     ReplaceImage(ReplaceImageOperation),
 }
@@ -72,6 +73,7 @@ impl Operation {
             Self::AddTextBox(operation) => &operation.operation_id,
             Self::MoveResizeElement(operation) => &operation.operation_id,
             Self::SetAltText(operation) => &operation.operation_id,
+            Self::SetDocumentMetadata(operation) => &operation.operation_id,
             Self::AddImage(operation) => &operation.operation_id,
             Self::ReplaceImage(operation) => &operation.operation_id,
         }
@@ -84,6 +86,7 @@ impl Operation {
             Self::AddTextBox(_) => "add_text_box",
             Self::MoveResizeElement(_) => "move_resize_element",
             Self::SetAltText(_) => "set_alt_text",
+            Self::SetDocumentMetadata(_) => "set_document_metadata",
             Self::AddImage(_) => "add_image",
             Self::ReplaceImage(_) => "replace_image",
         }
@@ -164,6 +167,12 @@ impl ReplaceImageOperation {
     }
 }
 
+impl SetDocumentMetadataOperation {
+    pub fn target_selector(&self) -> Selector {
+        self.selector.clone()
+    }
+}
+
 fn element_target_selector(
     operation_id: &str,
     shorthand: &str,
@@ -186,7 +195,9 @@ fn element_target_selector(
                 "Operation target conflict: element_id `{shorthand}` does not match selector id `{id}`."
             ),
         )),
-        Some(Selector::SlideId { .. } | Selector::MediaPart { .. }) => Err(selector_conflict(
+        Some(
+            Selector::SlideId { .. } | Selector::MediaPart { .. } | Selector::CoreProperties { .. },
+        ) => Err(selector_conflict(
             operation_id,
             target_element_id(shorthand, selector),
             "Operation selector must have type `element_id` for an element-targeting operation.",
@@ -226,7 +237,11 @@ fn slide_target_selector(
                 "Operation target conflict: slide_id `{shorthand}` does not match selector id `{id}`."
             ),
         )),
-        Some(Selector::ElementId { .. } | Selector::MediaPart { .. }) => Err(selector_conflict(
+        Some(
+            Selector::ElementId { .. }
+            | Selector::MediaPart { .. }
+            | Selector::CoreProperties { .. },
+        ) => Err(selector_conflict(
             operation_id,
             target_element_id(shorthand, selector),
             "Operation selector must have type `slide_id` for a slide-targeting operation.",
@@ -249,7 +264,10 @@ fn target_element_id<'a>(shorthand: &'a str, selector: Option<&'a Selector>) -> 
     }
     match selector {
         Some(Selector::ElementId { id, .. }) => Some(id),
-        Some(Selector::SlideId { .. } | Selector::MediaPart { .. }) | None => None,
+        Some(
+            Selector::SlideId { .. } | Selector::MediaPart { .. } | Selector::CoreProperties { .. },
+        )
+        | None => None,
     }
 }
 
@@ -259,7 +277,12 @@ fn target_slide_id<'a>(shorthand: &'a str, selector: Option<&'a Selector>) -> Op
     }
     match selector {
         Some(Selector::SlideId { id, .. }) => Some(id),
-        Some(Selector::ElementId { .. } | Selector::MediaPart { .. }) | None => None,
+        Some(
+            Selector::ElementId { .. }
+            | Selector::MediaPart { .. }
+            | Selector::CoreProperties { .. },
+        )
+        | None => None,
     }
 }
 
@@ -390,6 +413,42 @@ pub struct SetAltTextOperation {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alt_text: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetDocumentMetadataOperation {
+    pub operation_id: String,
+    #[schemars(
+        description = "Canonical core-properties selector resolved through the package root core-properties relationship."
+    )]
+    pub selector: Selector,
+    #[serde(rename = "match", default, skip_serializing_if = "Option::is_none")]
+    pub current_value_match: Option<DocumentMetadataFields>,
+    pub metadata: DocumentMetadataFields,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentMetadataFields {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keywords: Option<String>,
+}
+
+impl DocumentMetadataFields {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.subject.is_none()
+            && self.creator.is_none()
+            && self.keywords.is_none()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]

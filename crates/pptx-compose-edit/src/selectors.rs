@@ -8,6 +8,7 @@ use pptx_compose_core::{
         text::read_text_body,
     },
     provenance::{
+        checksum::part_checksum,
         fingerprint::{FingerprintInput, fingerprint},
         text_hash,
     },
@@ -19,7 +20,12 @@ use pptx_compose_core::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::operations::{ResolvedElement, ResolvedMediaPart, ResolvedSlide, ResolvedTarget};
+use crate::operations::{
+    ResolvedCoreProperties, ResolvedElement, ResolvedMediaPart, ResolvedSlide, ResolvedTarget,
+};
+
+const CORE_PROPERTIES_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -39,6 +45,11 @@ pub enum Selector {
     MediaPart {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         part: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        guards: Option<Guards>,
+    },
+    CoreProperties {
+        part: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         guards: Option<Guards>,
     },
@@ -68,6 +79,8 @@ pub struct Guards {
     pub text_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part_checksum: Option<String>,
 }
 
 pub fn resolve(model: &PresentationDocument, selector: &Selector) -> Result<ResolvedTarget> {
@@ -76,6 +89,9 @@ pub fn resolve(model: &PresentationDocument, selector: &Selector) -> Result<Reso
         Selector::SlideId { id, guards } => resolve_slide(model, id, guards.as_ref()),
         Selector::MediaPart { part, guards } => {
             resolve_media_part(model, part.as_deref(), guards.as_ref())
+        }
+        Selector::CoreProperties { part, guards } => {
+            resolve_core_properties(model, part, guards.as_ref())
         }
     }
 }
@@ -111,6 +127,7 @@ fn resolve_slide(
         reject_inapplicable_guard("kind", guards.kind.as_deref(), None)?;
         reject_inapplicable_guard("text_hash", guards.text_hash.as_deref(), None)?;
         reject_inapplicable_guard("fingerprint", guards.fingerprint.as_deref(), None)?;
+        reject_inapplicable_guard("part_checksum", guards.part_checksum.as_deref(), None)?;
     }
     Ok(ResolvedTarget::Slide(target))
 }
@@ -198,6 +215,11 @@ fn resolve_element(
             &target.fingerprint,
             Some(&target.element_id),
         )?;
+        reject_inapplicable_guard(
+            "part_checksum",
+            guards.part_checksum.as_deref(),
+            Some(&target.element_id),
+        )?;
     }
     Ok(ResolvedTarget::Element(target))
 }
@@ -239,8 +261,77 @@ fn resolve_media_part(
         reject_inapplicable_guard("kind", guards.kind.as_deref(), None)?;
         reject_inapplicable_guard("text_hash", guards.text_hash.as_deref(), None)?;
         reject_inapplicable_guard("fingerprint", guards.fingerprint.as_deref(), None)?;
+        reject_inapplicable_guard("part_checksum", guards.part_checksum.as_deref(), None)?;
     }
     Ok(ResolvedTarget::MediaPart(target))
+}
+
+fn resolve_core_properties(
+    model: &PresentationDocument,
+    part: &str,
+    guards: Option<&Guards>,
+) -> Result<ResolvedTarget> {
+    let relationship = model
+        .package()
+        .relationships()
+        .iter()
+        .find(|relationship| {
+            relationship.source
+                == pptx_compose_core::opc::relationships::RelationshipSource::Package
+                && relationship.rel_type == CORE_PROPERTIES_REL_TYPE
+        })
+        .ok_or_else(|| {
+            selector_not_found(
+                "Package root relationships do not contain a core-properties relationship."
+                    .to_owned(),
+                None,
+            )
+        })?;
+
+    if relationship.target_mode != pptx_compose_core::opc::relationships::TargetMode::Internal {
+        return Err(selector_not_found(
+            "Core-properties relationship must be internal.".to_owned(),
+            None,
+        ));
+    }
+
+    let resolved = match &relationship.resolved_target {
+        Some(resolved) => resolved.clone(),
+        None => pptx_compose_core::opc::relationships::resolve_internal_target(
+            &relationship.source,
+            &relationship.target,
+        )?,
+    };
+    let Some(core_part) = model.package().parts().get(&resolved) else {
+        return Err(selector_not_found(
+            format!("Core-properties part {resolved} was not found."),
+            None,
+        ));
+    };
+
+    guard_eq("part", Some(part), resolved.zip_entry_name(), None)?;
+    if let Some(guards) = guards {
+        guard_eq(
+            "part",
+            guards.part.as_deref(),
+            resolved.zip_entry_name(),
+            None,
+        )?;
+        guard_eq(
+            "part_checksum",
+            guards.part_checksum.as_deref(),
+            &part_checksum(core_part.bytes()),
+            None,
+        )?;
+        reject_inapplicable_guard("slide_id", guards.slide_id.as_deref(), None)?;
+        reject_inapplicable_guard("kind", guards.kind.as_deref(), None)?;
+        reject_inapplicable_guard("text_hash", guards.text_hash.as_deref(), None)?;
+        reject_inapplicable_guard("fingerprint", guards.fingerprint.as_deref(), None)?;
+    }
+
+    Ok(ResolvedTarget::CoreProperties(ResolvedCoreProperties {
+        part: resolved,
+    }))
 }
 
 fn slide_document(
@@ -509,6 +600,7 @@ fn resolve_and_guard() {
                 part: Some("ppt/slides/slide1.xml".to_owned()),
                 text_hash: element.text_hash.clone(),
                 fingerprint: Some(element.fingerprint.clone()),
+                part_checksum: None,
             }),
             run: None,
         },
@@ -622,6 +714,78 @@ fn legacy_kind_guard_aliases_still_resolve() {
 }
 
 #[cfg(test)]
+#[test]
+fn resolves_core_properties_from_package_relationship() {
+    use pptx_compose_core::provenance::checksum::part_checksum;
+
+    let mut package = Package::new();
+    insert(
+        &mut package,
+        "ppt/presentation.xml",
+        presentation_xml_empty(),
+    );
+    insert(
+        &mut package,
+        "docProps/core.xml",
+        br#"<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"/>"#,
+    );
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument",
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rCore",
+        CORE_PROPERTIES_REL_TYPE,
+        "docProps/core.xml",
+    ));
+
+    let checksum = part_checksum(
+        package
+            .parts()
+            .get(&part("docProps/core.xml"))
+            .expect("core part exists")
+            .bytes(),
+    );
+    let document = TestPresentationDocument::open(package).expect("presentation opens");
+    let resolved = resolve(
+        &document,
+        &Selector::CoreProperties {
+            part: "docProps/core.xml".to_owned(),
+            guards: Some(Guards {
+                part_checksum: Some(checksum),
+                ..Guards::default()
+            }),
+        },
+    )
+    .expect("core properties resolves");
+
+    assert!(matches!(
+        resolved,
+        ResolvedTarget::CoreProperties(target)
+            if target.part.zip_entry_name() == "docProps/core.xml"
+    ));
+
+    let error = resolve(
+        &document,
+        &Selector::CoreProperties {
+            part: "docProps/core.xml".to_owned(),
+            guards: Some(Guards {
+                part_checksum: Some(
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_owned(),
+                ),
+                ..Guards::default()
+            }),
+        },
+    )
+    .expect_err("checksum mismatch fails");
+    assert_eq!(error.code(), ErrorCode::SelectorGuardFailed);
+}
+
+#[cfg(test)]
 fn fixture_document() -> TestPresentationDocument {
     let mut package = Package::new();
     insert(&mut package, "ppt/presentation.xml", presentation_xml());
@@ -661,6 +825,11 @@ fn part(name: &str) -> pptx_compose_core::opc::part_name::PartName {
 #[cfg(test)]
 fn presentation_xml() -> &'static [u8] {
     br#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rSlide"/></p:sldIdLst></p:presentation>"#
+}
+
+#[cfg(test)]
+fn presentation_xml_empty() -> &'static [u8] {
+    br#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldIdLst/></p:presentation>"#
 }
 
 #[cfg(test)]

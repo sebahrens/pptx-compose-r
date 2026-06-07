@@ -17,12 +17,14 @@ pub mod move_resize;
 pub mod replace_image;
 pub mod replace_text;
 pub mod set_alt_text;
+pub mod set_document_metadata;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolvedTarget {
     Slide(ResolvedSlide),
     Element(ResolvedElement),
     MediaPart(ResolvedMediaPart),
+    CoreProperties(ResolvedCoreProperties),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +48,11 @@ pub struct ResolvedElement {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedMediaPart {
+    pub part: PartName,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedCoreProperties {
     pub part: PartName,
 }
 
