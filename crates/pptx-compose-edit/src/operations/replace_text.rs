@@ -256,7 +256,7 @@ fn replacement_text_body(existing: &XmlElement, operation: &ReplaceText) -> XmlE
 
     let run_properties = match operation.format_policy {
         FormatPolicy::PreserveExistingRuns | FormatPolicy::PreserveFirstRun => {
-            first_run_properties(existing).cloned()
+            first_run_properties(existing).map(style_run_properties_for_rewrite)
         }
         FormatPolicy::SingleRunDefaultStyle => None,
     };
@@ -310,6 +310,28 @@ fn first_run_properties(element: &XmlElement) -> Option<&XmlElement> {
         }
     }
     None
+}
+
+fn style_run_properties_for_rewrite(run_properties: &XmlElement) -> XmlElement {
+    let mut run_properties = run_properties.clone();
+    drop_rich_text_constructs(&mut run_properties);
+    run_properties
+}
+
+fn drop_rich_text_constructs(element: &mut XmlElement) {
+    element.children.retain_mut(|child| {
+        let Some(child_element) = node_element_mut(child) else {
+            return true;
+        };
+        if matches!(
+            child_element.name.local_name.as_str(),
+            "fld" | "hlinkClick" | "hlinkMouseOver" | "br"
+        ) {
+            return false;
+        }
+        drop_rich_text_constructs(child_element);
+        true
+    });
 }
 
 fn run_count(element: &XmlElement) -> usize {
