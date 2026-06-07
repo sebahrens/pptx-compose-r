@@ -97,6 +97,8 @@ Optional fields:
   whole-element rewrites after the run-scoped mode is implemented. This field is
   ignored by V1 implementations that only warn, but Phase 2 implementations MUST
   reject lossy `whole_element` rewrites unless it is `true`.
+- `run_style`: accepted only with `mode: run_scoped`; see Phase 3 run-property
+  overrides below.
 
 V1 `replace_text` supports only `mode: whole_element`; no paragraph-, run-, or
 span-scoped replacement mode exists in V1. Whole-element replacement is a
@@ -353,6 +355,12 @@ Example:
 Run-property overrides in `replace_text`:
 
 - Optional `run_style` overrides (size/bold/italic/color/family/align) are accepted **only** when `mode: run_scoped`. On `whole_element` they fail validation. This is a hard boundary, not a default.
+- Supported keys are `font_size_pt`, `bold`, `italic`, `color_hex`,
+  `font_family`, and `align`. Unknown keys fail validation rather than being
+  ignored. `color_hex` is exactly six hexadecimal characters (`RRGGBB`).
+  `align` uses the same values as `add_text_box.style.align` and maps to the
+  selected paragraph's `a:pPr/@algn`; all other fields apply to the first
+  selected run's `a:rPr`.
 
 ### Phase 4 — table cell text
 

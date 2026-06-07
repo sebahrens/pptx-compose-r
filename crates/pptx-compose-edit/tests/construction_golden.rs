@@ -25,7 +25,7 @@ use pptx_compose_edit::{
     },
     patch::{
         Bounds, FormatPolicy, ImageDedupe, ImageFit, InsertOptions, OverflowPolicy,
-        ReplaceTextMode, ZOrder, ZOrderKeyword,
+        ReplaceTextMode, TextAlign, TextBoxStyle, ZOrder, ZOrderKeyword,
     },
     selectors::RunSelector,
 };
@@ -171,6 +171,7 @@ mod construction {
             overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: false,
             run: None,
+            run_style: None,
         };
 
         operation.apply(&mut package, &target)?;
@@ -197,6 +198,7 @@ mod construction {
             overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: true,
             run: None,
+            run_style: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;
@@ -225,6 +227,7 @@ mod construction {
             overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: true,
             run: None,
+            run_style: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;
@@ -258,6 +261,7 @@ mod construction {
                 run_end_index: None,
                 text_hash: None,
             }),
+            run_style: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;
@@ -278,6 +282,127 @@ mod construction {
     }
 
     #[test]
+    fn replace_text_run_scoped_applies_run_style_without_touching_sibling_runs() -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated".to_owned(),
+            current_text_match: Some("First".to_owned()),
+            mode: ReplaceTextMode::RunScoped,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            overflow_policy: OverflowPolicy::Allow,
+            allow_formatting_simplification: false,
+            run: Some(RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: None,
+                text_hash: None,
+            }),
+            run_style: Some(TextBoxStyle {
+                font_size_pt: Some(20),
+                bold: Some(false),
+                italic: Some(true),
+                font_family: Some("Aptos".to_owned()),
+                color_hex: Some("112233".to_owned()),
+                align: Some(TextAlign::Center),
+                extra: Default::default(),
+            }),
+        };
+
+        operation.apply(&mut package, &target)?;
+        let output = element_xml_at_path(&package, &slide_part, &[3])?;
+
+        assert!(output.contains(r#"<a:pPr algn="ctr"/>"#));
+        assert!(output.contains(r#"<a:r><a:rPr lang="en-US" sz="2000" b="0" i="1"><a:solidFill><a:srgbClr val="112233"/></a:solidFill><a:latin typeface="Aptos"/></a:rPr><a:t>Updated</a:t></a:r>"#));
+        assert!(
+            output.contains(r#"<a:r><a:rPr lang="en-US" sz="2400" i="1"/><a:t>Second</a:t></a:r>"#)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn replace_text_whole_element_rejects_run_style() -> Result<()> {
+        let package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated".to_owned(),
+            current_text_match: None,
+            mode: ReplaceTextMode::WholeElement,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            overflow_policy: OverflowPolicy::Allow,
+            allow_formatting_simplification: true,
+            run: None,
+            run_style: Some(TextBoxStyle {
+                font_size_pt: Some(20),
+                bold: None,
+                italic: None,
+                font_family: None,
+                color_hex: None,
+                align: None,
+                extra: Default::default(),
+            }),
+        };
+
+        let error = operation
+            .validate(&package, &target)
+            .expect_err("whole-element mode rejects run_style");
+
+        assert_eq!(
+            error.code(),
+            pptx_compose_core::error::ErrorCode::UnsupportedEdit
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn replace_text_run_scoped_rejects_unknown_run_style_keys() -> Result<()> {
+        let package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated".to_owned(),
+            current_text_match: None,
+            mode: ReplaceTextMode::RunScoped,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            overflow_policy: OverflowPolicy::Allow,
+            allow_formatting_simplification: false,
+            run: Some(RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: None,
+                text_hash: None,
+            }),
+            run_style: Some(TextBoxStyle {
+                font_size_pt: None,
+                bold: None,
+                italic: None,
+                font_family: None,
+                color_hex: None,
+                align: None,
+                extra: [("underline".to_owned(), serde_json::json!(true))]
+                    .into_iter()
+                    .collect(),
+            }),
+        };
+
+        let error = operation
+            .validate(&package, &target)
+            .expect_err("unknown run_style key is rejected");
+
+        assert_eq!(
+            error.code(),
+            pptx_compose_core::error::ErrorCode::UnsupportedEdit
+        );
+        Ok(())
+    }
+
+    #[test]
     fn replace_text_whole_element_refuses_rich_text_without_confirmation() -> Result<()> {
         let package = package_with_slide(RICH_TEXT_SLIDE_XML)?;
         let target = target(ElementKind::TextBox);
@@ -291,6 +416,7 @@ mod construction {
             overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: false,
             run: None,
+            run_style: None,
         };
 
         let error = operation
@@ -323,6 +449,7 @@ mod construction {
                 run_end_index: None,
                 text_hash: None,
             }),
+            run_style: None,
         };
 
         let error = operation
@@ -350,6 +477,7 @@ mod construction {
             overflow_policy: OverflowPolicy::Allow,
             allow_formatting_simplification: false,
             run: None,
+            run_style: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;

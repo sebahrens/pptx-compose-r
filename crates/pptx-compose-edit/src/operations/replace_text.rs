@@ -17,10 +17,10 @@ use pptx_compose_json::schemas::OperationTarget;
 use serde_json::json;
 
 use crate::{
-    operations::{ResolvedElement, ResolvedTableCell},
+    operations::{ResolvedElement, ResolvedTableCell, add_text_box::validate_style},
     patch::{
         FormatPolicy, OverflowPolicy, PatchEffects, ReplaceTableCellTextOperation, ReplaceTextMode,
-        ReplaceTextOperation,
+        ReplaceTextOperation, TextAlign, TextBoxStyle,
     },
     selectors::RunSelector,
 };
@@ -36,6 +36,7 @@ pub struct ReplaceText {
     pub overflow_policy: OverflowPolicy,
     pub allow_formatting_simplification: bool,
     pub run: Option<RunSelector>,
+    pub run_style: Option<TextBoxStyle>,
 }
 
 impl From<&ReplaceTextOperation> for ReplaceText {
@@ -52,6 +53,7 @@ impl From<&ReplaceTextOperation> for ReplaceText {
             overflow_policy: operation.overflow_policy.unwrap_or(OverflowPolicy::Allow),
             allow_formatting_simplification: operation.allow_formatting_simplification,
             run: operation.run_selector().cloned(),
+            run_style: operation.run_style.clone(),
         }
     }
 }
@@ -202,6 +204,13 @@ impl ReplaceText {
             return Err(Error::new(
                 ErrorCode::InvalidInput,
                 "selector.run is only valid when replace_text mode is run_scoped.",
+            )
+            .with_location(self.location(Some(target))));
+        }
+        if self.run_style.is_some() {
+            return Err(Error::new(
+                ErrorCode::UnsupportedEdit,
+                "replace_text.run_style is only valid when mode is run_scoped.",
             )
             .with_location(self.location(Some(target))));
         }
@@ -431,6 +440,9 @@ trait RunScopedTextOperation {
     fn newline_message(&self) -> &'static str;
     fn match_guard_message(&self) -> &'static str;
     fn allow_default_run(&self) -> bool;
+    fn run_style(&self) -> Option<&TextBoxStyle> {
+        None
+    }
 }
 
 impl RunScopedTextOperation for ReplaceText {
@@ -464,6 +476,10 @@ impl RunScopedTextOperation for ReplaceText {
 
     fn allow_default_run(&self) -> bool {
         false
+    }
+
+    fn run_style(&self) -> Option<&TextBoxStyle> {
+        self.run_style.as_ref()
     }
 }
 
@@ -613,12 +629,17 @@ fn replace_run_scoped_text(
             Error::new(ErrorCode::InvalidInput, operation.missing_run_message())
                 .with_location(operation.location(Some(target)))
         })?;
+    {
+        let paragraph = paragraph_at_mut(tx_body, run.paragraph_index, operation, target)?;
+        apply_paragraph_style(paragraph, operation.run_style());
+    }
     let indices = run_indices(tx_body, run, operation, target)?;
     let first_index = indices[0];
     let paragraph = paragraph_at_mut(tx_body, run.paragraph_index, operation, target)?;
     let first_run = node_element_mut(&mut paragraph.children[first_index])
         .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run node is not an element."))?;
     replace_run_text(first_run, operation.text(), operation, target)?;
+    apply_run_style(first_run, operation.run_style());
     for remove_index in indices.iter().skip(1).rev() {
         paragraph.children.remove(*remove_index);
     }
@@ -809,7 +830,51 @@ fn validate_run_scoped_text_body(
             .with_location(operation.location(Some(target))));
         }
     }
+    validate_style("replace_text.run_style", operation.run_style())
+        .map_err(|error| error.with_location(operation.location(Some(target))))?;
     Ok(())
+}
+
+fn apply_paragraph_style(paragraph: &mut XmlElement, style: Option<&TextBoxStyle>) {
+    let Some(align) = style.and_then(|style| style.align) else {
+        return;
+    };
+    let p_pr = ensure_child_element_at_front(paragraph, "pPr", "a:pPr");
+    set_attribute(p_pr, "algn", align_value(align));
+}
+
+fn apply_run_style(run: &mut XmlElement, style: Option<&TextBoxStyle>) {
+    let Some(style) = style else {
+        return;
+    };
+    let r_pr = ensure_child_element_at_front(run, "rPr", "a:rPr");
+    if let Some(font_size) = style.font_size_pt {
+        set_attribute(r_pr, "sz", &(font_size * 100).to_string());
+    }
+    if let Some(bold) = style.bold {
+        set_attribute(r_pr, "b", bool_value(bold));
+    }
+    if let Some(italic) = style.italic {
+        set_attribute(r_pr, "i", bool_value(italic));
+    }
+    if let Some(color) = &style.color_hex {
+        upsert_single_child(
+            r_pr,
+            "solidFill",
+            element(
+                "a:solidFill",
+                &[],
+                vec![node(element("a:srgbClr", &[("val", color)], Vec::new()))],
+            ),
+        );
+    }
+    if let Some(font_family) = &style.font_family {
+        upsert_single_child(
+            r_pr,
+            "latin",
+            element("a:latin", &[("typeface", font_family)], Vec::new()),
+        );
+    }
 }
 
 fn table_cell<'a>(
@@ -1219,6 +1284,68 @@ fn child_element_mut<'a>(
         .find(|child| child.name.local_name == local_name)
 }
 
+fn ensure_child_element_at_front<'a>(
+    parent: &'a mut XmlElement,
+    local_name: &str,
+    raw_name: &str,
+) -> &'a mut XmlElement {
+    if let Some(index) = parent.children.iter().position(|node| {
+        node.as_element()
+            .is_some_and(|child| child.name.local_name == local_name)
+    }) {
+        return node_element_mut(&mut parent.children[index])
+            .expect("position already confirmed element");
+    }
+    parent
+        .children
+        .insert(0, node(element(raw_name, &[], Vec::new())));
+    node_element_mut(&mut parent.children[0]).expect("inserted node is an element")
+}
+
+fn set_attribute(element: &mut XmlElement, local_name: &str, value: &str) {
+    if let Some(attribute) = element
+        .attributes
+        .iter_mut()
+        .find(|attribute| attribute.name.local_name == local_name)
+    {
+        attribute.value = value.to_owned();
+    } else {
+        element.attributes.push(XmlAttribute {
+            name: QualifiedName::from_raw(local_name),
+            value: value.to_owned(),
+            namespace_declaration: false,
+        });
+    }
+}
+
+fn upsert_single_child(parent: &mut XmlElement, local_name: &str, replacement: XmlElement) {
+    parent.children.retain(|node| {
+        node.as_element()
+            .is_none_or(|child| child.name.local_name != local_name)
+    });
+    let insertion_index = parent
+        .children
+        .iter()
+        .position(|node| {
+            node.as_element()
+                .is_some_and(|child| child.name.local_name == "t")
+        })
+        .unwrap_or(parent.children.len());
+    parent.children.insert(insertion_index, node(replacement));
+}
+
+fn align_value(align: TextAlign) -> &'static str {
+    match align {
+        TextAlign::Left => "l",
+        TextAlign::Center => "ctr",
+        TextAlign::Right => "r",
+    }
+}
+
+fn bool_value(value: bool) -> &'static str {
+    if value { "1" } else { "0" }
+}
+
 fn node_element_mut(node: &mut XmlNode) -> Option<&mut XmlElement> {
     match node {
         XmlNode::Element(element) => Some(element),
@@ -1285,6 +1412,7 @@ fn replaces_and_maps_newlines() {
         overflow_policy: OverflowPolicy::Allow,
         allow_formatting_simplification: false,
         run: None,
+        run_style: None,
     };
 
     let effects = operation

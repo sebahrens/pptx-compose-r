@@ -345,6 +345,11 @@ pub struct ReplaceTextOperation {
     pub overflow_policy: Option<OverflowPolicy>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub allow_formatting_simplification: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Optional run-property overrides accepted only when mode is run_scoped. Supports font_size_pt, bold, italic, color_hex, font_family, and paragraph-level align."
+    )]
+    pub run_style: Option<TextBoxStyle>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]

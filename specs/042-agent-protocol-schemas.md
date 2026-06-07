@@ -188,6 +188,37 @@ Required fields:
 
 Each operation must include `operation_id` and `op`. Patches are atomic. Dry-run and apply must use the same report schema.
 
+`replace_text` may include `run_style` only when `mode` is `run_scoped`:
+
+```json
+{
+  "operation_id": "op-title-run",
+  "op": "replace_text",
+  "element_id": "slide-1:shape-4",
+  "selector": {
+    "type": "element_id",
+    "id": "slide-1:shape-4",
+    "run": { "paragraph_index": 0, "run_index": 0 }
+  },
+  "mode": "run_scoped",
+  "text": "Updated title",
+  "run_style": {
+    "font_size_pt": 28,
+    "bold": true,
+    "italic": false,
+    "color_hex": "112233",
+    "font_family": "Aptos",
+    "align": "center"
+  }
+}
+```
+
+The supported `run_style` key set is exactly `font_size_pt`, `bold`, `italic`,
+`color_hex`, `font_family`, and `align`; unknown keys fail validation. The
+`align` value is paragraph-level and uses the same enum as
+`add_text_box.style.align`: `left`, `center`, or `right`. On `whole_element`
+mode, `run_style` fails validation.
+
 Post-V1 operations appear in `capabilities.operations` only after their
 implementation ships. The first post-V1 operation schema is
 `set_document_metadata`:

@@ -47,7 +47,7 @@ impl From<&AddTextBoxOperation> for AddTextBox {
 impl AddTextBox {
     pub fn validate(&self) -> Result<()> {
         validate_bounds(&self.bounds).map_err(|error| error.with_location(self.location(None)))?;
-        validate_style(self.style.as_ref())
+        validate_style("add_text_box.style", self.style.as_ref())
             .map_err(|error| error.with_location(self.location(None)))
     }
 
@@ -111,7 +111,7 @@ impl AddTextBox {
     }
 }
 
-fn validate_style(style: Option<&TextBoxStyle>) -> Result<()> {
+pub(crate) fn validate_style(label: &str, style: Option<&TextBoxStyle>) -> Result<()> {
     let Some(style) = style else {
         return Ok(());
     };
@@ -119,7 +119,7 @@ fn validate_style(style: Option<&TextBoxStyle>) -> Result<()> {
     if let Some(key) = style.extra.keys().next() {
         return Err(Error::new(
             ErrorCode::UnsupportedEdit,
-            format!("add_text_box.style field {key} is not supported in V1."),
+            format!("{label} field {key} is not supported in V1."),
         ));
     }
 
@@ -128,7 +128,7 @@ fn validate_style(style: Option<&TextBoxStyle>) -> Result<()> {
         if !valid {
             return Err(Error::new(
                 ErrorCode::InvalidInput,
-                "add_text_box.style.color_hex must be RRGGBB.",
+                format!("{label}.color_hex must be RRGGBB."),
             ));
         }
     }
