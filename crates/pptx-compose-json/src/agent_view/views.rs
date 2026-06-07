@@ -1119,6 +1119,7 @@ fn default_capabilities() -> Capabilities {
     Capabilities {
         operations: vec![
             "replace_text".to_owned(),
+            "replace_notes_text".to_owned(),
             "add_text_box".to_owned(),
             "move_resize_element".to_owned(),
             "set_alt_text".to_owned(),

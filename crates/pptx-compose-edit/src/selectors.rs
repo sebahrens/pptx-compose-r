@@ -1,6 +1,7 @@
 use pptx_compose_core::{
     error::{Error, ErrorCode, ErrorLocation, Result},
     opc::part_name::PartName,
+    opc::relationships::{RelationshipSource, TargetMode, resolve_internal_target},
     pptx::{
         ids::{ElementKind, agent_element_id, index_sp_tree},
         presentation::PresentationDocument,
@@ -21,11 +22,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::operations::{
-    ResolvedCoreProperties, ResolvedElement, ResolvedMediaPart, ResolvedSlide, ResolvedTarget,
+    ResolvedCoreProperties, ResolvedElement, ResolvedMediaPart, ResolvedNotesSlide, ResolvedSlide,
+    ResolvedTarget,
 };
 
 const CORE_PROPERTIES_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
+const NOTES_SLIDE_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -94,6 +98,75 @@ pub fn resolve(model: &PresentationDocument, selector: &Selector) -> Result<Reso
             resolve_core_properties(model, part, guards.as_ref())
         }
     }
+}
+
+pub fn resolve_notes_slide(
+    model: &PresentationDocument,
+    selector: &Selector,
+) -> Result<ResolvedTarget> {
+    let ResolvedTarget::Slide(slide) = resolve(model, selector)? else {
+        return Err(selector_guard_failed(
+            "Selector did not resolve to a slide.".to_owned(),
+            None,
+            Some("slide_id"),
+            Some("<different target type>"),
+        ));
+    };
+
+    let relationship = model
+        .package()
+        .relationships()
+        .iter()
+        .find(|relationship| {
+            relationship.source == RelationshipSource::Part(slide.part.clone())
+                && relationship.rel_type == NOTES_SLIDE_REL_TYPE
+        })
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Target slide does not have a speaker-notes part; V1 does not create notes slides.",
+            )
+            .with_location(ErrorLocation {
+                slide_id: Some(slide.slide_id.clone()),
+                part: Some(slide.part.zip_entry_name().to_owned()),
+                ..ErrorLocation::default()
+            })
+        })?;
+
+    if relationship.target_mode != TargetMode::Internal {
+        return Err(Error::new(
+            ErrorCode::UnsupportedEdit,
+            "Speaker-notes relationship must target an internal notes slide part.",
+        )
+        .with_location(ErrorLocation {
+            slide_id: Some(slide.slide_id.clone()),
+            part: Some(slide.part.zip_entry_name().to_owned()),
+            ..ErrorLocation::default()
+        }));
+    }
+
+    let notes_part = relationship.resolved_target.clone().map_or_else(
+        || resolve_internal_target(&relationship.source, &relationship.target),
+        Ok,
+    )?;
+    if model.package().parts().get(&notes_part).is_none() {
+        return Err(Error::new(
+            ErrorCode::UnsupportedEdit,
+            format!("Speaker-notes part {notes_part} was not found."),
+        )
+        .with_location(ErrorLocation {
+            slide_id: Some(slide.slide_id.clone()),
+            part: Some(notes_part.zip_entry_name().to_owned()),
+            ..ErrorLocation::default()
+        }));
+    }
+
+    Ok(ResolvedTarget::NotesSlide(ResolvedNotesSlide {
+        slide_id: slide.slide_id.clone(),
+        slide_part: slide.part,
+        notes_part,
+        element_id: format!("{}:notes", slide.slide_id),
+    }))
 }
 
 fn resolve_slide(
@@ -566,10 +639,7 @@ const fn legacy_kind_name(kind: ElementKind) -> Option<&'static str> {
 
 #[cfg(test)]
 use pptx_compose_core::{
-    opc::{
-        package::Package,
-        relationships::{Relationship, RelationshipSource},
-    },
+    opc::{package::Package, relationships::Relationship},
     pptx::presentation::PresentationDocument as TestPresentationDocument,
 };
 
@@ -786,7 +856,59 @@ fn resolves_core_properties_from_package_relationship() {
 }
 
 #[cfg(test)]
+#[test]
+fn resolves_notes_slide_through_slide_relationship() {
+    let mut package = fixture_package();
+    let slide_part = part("ppt/slides/slide1.xml");
+    insert(
+        &mut package,
+        "ppt/notesSlides/notesSlide1.xml",
+        br#"<p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>"#,
+    );
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(slide_part.clone()),
+        "rNotes",
+        NOTES_SLIDE_REL_TYPE,
+        "../notesSlides/notesSlide1.xml",
+    ));
+    let document = TestPresentationDocument::open(package).expect("presentation opens");
+
+    let resolved = resolve_notes_slide(
+        &document,
+        &Selector::SlideId {
+            id: "slide-1".to_owned(),
+            guards: None,
+        },
+    )
+    .expect("notes slide resolves");
+
+    assert!(matches!(
+        resolved,
+        ResolvedTarget::NotesSlide(target)
+            if target.slide_id == "slide-1"
+                && target.slide_part == slide_part
+                && target.notes_part.zip_entry_name() == "ppt/notesSlides/notesSlide1.xml"
+                && target.element_id == "slide-1:notes"
+    ));
+
+    let missing = resolve_notes_slide(
+        &fixture_document(),
+        &Selector::SlideId {
+            id: "slide-1".to_owned(),
+            guards: None,
+        },
+    )
+    .expect_err("missing notes relationship is unsupported");
+    assert_eq!(missing.code(), ErrorCode::UnsupportedEdit);
+}
+
+#[cfg(test)]
 fn fixture_document() -> TestPresentationDocument {
+    TestPresentationDocument::open(fixture_package()).expect("fixture presentation opens")
+}
+
+#[cfg(test)]
+fn fixture_package() -> Package {
     let mut package = Package::new();
     insert(&mut package, "ppt/presentation.xml", presentation_xml());
     insert(&mut package, "ppt/slides/slide1.xml", slide_xml());
@@ -807,7 +929,7 @@ fn fixture_document() -> TestPresentationDocument {
         "slides/slide1.xml",
     ));
 
-    TestPresentationDocument::open(package).expect("fixture presentation opens")
+    package
 }
 
 #[cfg(test)]

@@ -17,10 +17,13 @@ use pptx_compose_json::schemas::OperationTarget;
 use serde_json::json;
 
 use crate::{
-    operations::{ResolvedElement, ResolvedTableCell, add_text_box::validate_style},
+    operations::{
+        ResolvedElement, ResolvedNotesSlide, ResolvedTableCell, add_text_box::validate_style,
+    },
     patch::{
-        FormatPolicy, OverflowPolicy, PatchEffects, ReplaceTableCellTextOperation, ReplaceTextMode,
-        ReplaceTextOperation, TextAlign, TextBoxStyle,
+        FormatPolicy, OverflowPolicy, PatchEffects, ReplaceNotesTextOperation,
+        ReplaceTableCellTextOperation, ReplaceTextMode, ReplaceTextOperation, TextAlign,
+        TextBoxStyle,
     },
     selectors::RunSelector,
 };
@@ -54,6 +57,27 @@ impl From<&ReplaceTextOperation> for ReplaceText {
             allow_formatting_simplification: operation.allow_formatting_simplification,
             run: operation.run_selector().cloned(),
             run_style: operation.run_style.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplaceNotesText {
+    pub operation_id: String,
+    pub slide_id: String,
+    pub text: String,
+    pub current_text_match: Option<String>,
+    pub run: RunSelector,
+}
+
+impl From<&ReplaceNotesTextOperation> for ReplaceNotesText {
+    fn from(operation: &ReplaceNotesTextOperation) -> Self {
+        Self {
+            operation_id: operation.operation_id.clone(),
+            slide_id: operation.target_slide_id().to_owned(),
+            text: operation.text.clone(),
+            current_text_match: operation.current_text_match.clone(),
+            run: operation.run.clone(),
         }
     }
 }
@@ -259,6 +283,136 @@ impl ReplaceText {
             ),
             operation_id: Some(self.operation_id.clone()),
             operation: Some("replace_text".to_owned()),
+            ..ErrorLocation::default()
+        }
+    }
+}
+
+impl ReplaceNotesText {
+    pub fn validate(&self, package: &Package, target: &ResolvedNotesSlide) -> Result<()> {
+        self.validate_target(target)?;
+        let part = package.parts().get(&target.notes_part).ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                format!("Speaker-notes part {} was not found.", target.notes_part),
+            )
+            .with_location(self.location(Some(target)))
+        })?;
+        let document = parse_document(part.bytes()).map_err(|source| {
+            Error::with_source(
+                source.code(),
+                format!("Could not parse speaker-notes part {}.", target.notes_part),
+                source,
+            )
+            .with_location(self.location(Some(target)))
+        })?;
+        let root = document.root_element().ok_or_else(|| {
+            Error::malformed_xml("Speaker-notes XML does not contain a root element.")
+                .with_location(self.location(Some(target)))
+        })?;
+        let tx_body = notes_body_tx_body(root).ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Speaker-notes part does not contain a notes body text shape.",
+            )
+            .with_location(self.location(Some(target)))
+        })?;
+        validate_run_scoped_text_body(self, &self.target_element(target), tx_body)
+    }
+
+    pub fn apply(
+        &self,
+        package: &mut Package,
+        target: &ResolvedNotesSlide,
+    ) -> Result<PatchEffects> {
+        self.validate_target(target)?;
+        let part_name = target.notes_part.clone();
+        let part = package.parts_mut().get_mut(&part_name).ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                format!("Speaker-notes part {part_name} was not found."),
+            )
+            .with_location(self.location(Some(target)))
+        })?;
+        let mut document = parse_document(part.bytes()).map_err(|source| {
+            Error::with_source(
+                source.code(),
+                format!("Could not parse speaker-notes part {part_name}."),
+                source,
+            )
+            .with_location(self.location(Some(target)))
+        })?;
+        let root = root_element_mut(&mut document).ok_or_else(|| {
+            Error::malformed_xml("Speaker-notes XML does not contain a root element.")
+                .with_location(self.location(Some(target)))
+        })?;
+        let tx_body = notes_body_tx_body_mut(root).ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Speaker-notes part does not contain a notes body text shape.",
+            )
+            .with_location(self.location(Some(target)))
+        })?;
+        let element_target = self.target_element(target);
+        validate_run_scoped_text_body(self, &element_target, tx_body)?;
+        replace_run_scoped_text(tx_body, self, &element_target)?;
+
+        *part.bytes_mut() = write_document(
+            &document,
+            &WriteOptions {
+                mode: WriteMode::Preserve,
+            },
+        )?;
+        package.mark_dirty(part_name.clone());
+
+        Ok(PatchEffects {
+            changed_parts: vec![part_name.zip_entry_name().to_owned()],
+            target: Some(OperationTarget {
+                slide_id: target.slide_id.clone(),
+                element_id: target.element_id.clone(),
+                part: part_name.zip_entry_name().to_owned(),
+            }),
+            created_element_ids: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn validate_target(&self, target: &ResolvedNotesSlide) -> Result<()> {
+        if target.slide_id != self.slide_id {
+            return Err(Error::new(
+                ErrorCode::SelectorGuardFailed,
+                "Resolved slide does not match replace_notes_text slide_id.",
+            )
+            .with_location(self.location(Some(target))));
+        }
+        Ok(())
+    }
+
+    fn target_element(&self, target: &ResolvedNotesSlide) -> ResolvedElement {
+        ResolvedElement {
+            slide_id: target.slide_id.clone(),
+            element_id: target.element_id.clone(),
+            kind: ElementKind::TextBox,
+            part: target.notes_part.clone(),
+            sp_tree_path: Vec::new(),
+            group_path: Vec::new(),
+            cnvpr_id: None,
+            text_hash: None,
+            fingerprint: String::new(),
+        }
+    }
+
+    fn location(&self, target: Option<&ResolvedNotesSlide>) -> ErrorLocation {
+        ErrorLocation {
+            part: target.map(|target| target.notes_part.zip_entry_name().to_owned()),
+            slide_id: Some(
+                target
+                    .map(|target| target.slide_id.clone())
+                    .unwrap_or_else(|| self.slide_id.clone()),
+            ),
+            element_id: target.map(|target| target.element_id.clone()),
+            operation_id: Some(self.operation_id.clone()),
+            operation: Some("replace_notes_text".to_owned()),
             ..ErrorLocation::default()
         }
     }
@@ -483,6 +637,51 @@ impl RunScopedTextOperation for ReplaceText {
     }
 }
 
+impl RunScopedTextOperation for ReplaceNotesText {
+    fn text(&self) -> &str {
+        &self.text
+    }
+
+    fn current_text_match(&self) -> Option<&str> {
+        self.current_text_match.as_deref()
+    }
+
+    fn run_selector(&self) -> Option<&RunSelector> {
+        Some(&self.run)
+    }
+
+    fn location(&self, target: Option<&ResolvedElement>) -> ErrorLocation {
+        ErrorLocation {
+            part: target.map(|target| target.part.zip_entry_name().to_owned()),
+            slide_id: Some(
+                target
+                    .map(|target| target.slide_id.clone())
+                    .unwrap_or_else(|| self.slide_id.clone()),
+            ),
+            element_id: target.map(|target| target.element_id.clone()),
+            operation_id: Some(self.operation_id.clone()),
+            operation: Some("replace_notes_text".to_owned()),
+            ..ErrorLocation::default()
+        }
+    }
+
+    fn missing_run_message(&self) -> &'static str {
+        "replace_notes_text requires run."
+    }
+
+    fn newline_message(&self) -> &'static str {
+        "replace_notes_text text must not contain newline characters."
+    }
+
+    fn match_guard_message(&self) -> &'static str {
+        "replace_notes_text match guard did not match current run text."
+    }
+
+    fn allow_default_run(&self) -> bool {
+        false
+    }
+}
+
 impl RunScopedTextOperation for ReplaceTableCellText {
     fn text(&self) -> &str {
         &self.text
@@ -587,6 +786,50 @@ fn rewrite_text_body(
             })
         }
     }
+}
+
+fn notes_body_tx_body(element: &XmlElement) -> Option<&XmlElement> {
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        if child.name.local_name == "sp" {
+            let has_body_placeholder = first_descendant(child, "ph").is_some_and(|ph| {
+                ph.attributes.iter().any(|attribute| {
+                    attribute.name.local_name == "type" && attribute.value == "body"
+                })
+            });
+            if has_body_placeholder && let Some(tx_body) = child_element(child, "txBody") {
+                return Some(tx_body);
+            }
+        }
+        if let Some(descendant) = notes_body_tx_body(child) {
+            return Some(descendant);
+        }
+    }
+    None
+}
+
+fn notes_body_tx_body_mut(element: &mut XmlElement) -> Option<&mut XmlElement> {
+    let body_shape_index = element.children.iter().position(|child| {
+        child.as_element().is_some_and(|child| {
+            child.name.local_name == "sp"
+                && first_descendant(child, "ph").is_some_and(|ph| {
+                    ph.attributes.iter().any(|attribute| {
+                        attribute.name.local_name == "type" && attribute.value == "body"
+                    })
+                })
+                && child_element(child, "txBody").is_some()
+        })
+    });
+    if let Some(index) = body_shape_index {
+        let shape = node_element_mut(&mut element.children[index])?;
+        return child_element_mut(shape, "txBody");
+    }
+
+    for child in element.children.iter_mut().filter_map(node_element_mut) {
+        if let Some(descendant) = notes_body_tx_body_mut(child) {
+            return Some(descendant);
+        }
+    }
+    None
 }
 
 struct RewriteResult {

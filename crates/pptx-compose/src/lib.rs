@@ -51,7 +51,7 @@ use pptx_compose_edit::{
         add_text_box::AddTextBox,
         move_resize::MoveResize,
         replace_image::ReplaceImage,
-        replace_text::{ReplaceTableCellText, ReplaceText},
+        replace_text::{ReplaceNotesText, ReplaceTableCellText, ReplaceText},
         set_alt_text::SetAltText,
         set_document_metadata::SetDocumentMetadata,
     },
@@ -728,6 +728,18 @@ fn semantic_changes(operations: &[Operation], report: &PatchReport) -> Vec<DiffC
                     after: serde_json::json!({ "text": operation.text }),
                 })
             }
+            Operation::ReplaceNotesText(operation) => {
+                let operation_report = report
+                    .operation_reports
+                    .iter()
+                    .find(|report| report.operation_id == operation.operation_id)?;
+                Some(DiffChange::TextReplaced {
+                    operation_id: operation.operation_id.clone(),
+                    element_id: operation_report.target.element_id.clone(),
+                    before: serde_json::json!({ "text": operation.current_text_match }),
+                    after: serde_json::json!({ "text": operation.text }),
+                })
+            }
             _ => None,
         })
         .collect()
@@ -1248,6 +1260,14 @@ impl OperationExecutor for RealOperationExecutor<'_> {
                 )?;
                 ReplaceText::from(operation).apply(package, &target)
             }
+            Operation::ReplaceNotesText(operation) => {
+                let target = resolve_notes_slide(
+                    &model,
+                    operation.operation_id.as_str(),
+                    &operation.target_selector()?,
+                )?;
+                ReplaceNotesText::from(operation).apply(package, &target)
+            }
             Operation::ReplaceTableCellText(operation) => {
                 let target = resolve_table_cell(
                     &model,
@@ -1345,6 +1365,7 @@ fn operation_media_ref(operation: &Operation) -> Option<&str> {
         Operation::AddImage(operation) => Some(operation.media_ref.as_str()),
         Operation::ReplaceImage(operation) => Some(operation.media_ref.as_str()),
         Operation::ReplaceText(_)
+        | Operation::ReplaceNotesText(_)
         | Operation::ReplaceTableCellText(_)
         | Operation::AddTextBox(_)
         | Operation::MoveResizeElement(_)
@@ -1367,6 +1388,14 @@ fn validate_operation(
                 &operation.target_selector()?,
             )?;
             ReplaceText::from(operation).validate(package, &target)
+        }
+        Operation::ReplaceNotesText(operation) => {
+            let target = resolve_notes_slide(
+                model,
+                operation.operation_id.as_str(),
+                &operation.target_selector()?,
+            )?;
+            ReplaceNotesText::from(operation).validate(package, &target)
         }
         Operation::ReplaceTableCellText(operation) => {
             let target = resolve_table_cell(
@@ -1439,6 +1468,7 @@ fn resolve_element(
     {
         ResolvedTarget::Element(target) => Ok(target),
         ResolvedTarget::Slide(_)
+        | ResolvedTarget::NotesSlide(_)
         | ResolvedTarget::TableCell(_)
         | ResolvedTarget::MediaPart(_)
         | ResolvedTarget::CoreProperties(_) => Err(Error::new(
@@ -1459,6 +1489,26 @@ fn resolve_table_cell(
     Ok(pptx_compose_edit::operations::ResolvedTableCell { element, row, col })
 }
 
+fn resolve_notes_slide(
+    model: &core_presentation::PresentationDocument,
+    operation_id: &str,
+    selector: &Selector,
+) -> Result<pptx_compose_edit::operations::ResolvedNotesSlide> {
+    match selectors::resolve_notes_slide(model, selector)
+        .map_err(|error| with_operation_location(error, operation_id))?
+    {
+        ResolvedTarget::NotesSlide(target) => Ok(target),
+        ResolvedTarget::Element(_)
+        | ResolvedTarget::TableCell(_)
+        | ResolvedTarget::Slide(_)
+        | ResolvedTarget::MediaPart(_)
+        | ResolvedTarget::CoreProperties(_) => Err(Error::new(
+            ErrorCode::SelectorGuardFailed,
+            "Selector did not resolve to a notes slide.",
+        )),
+    }
+}
+
 fn resolve_slide(
     model: &core_presentation::PresentationDocument,
     operation_id: &str,
@@ -1469,6 +1519,7 @@ fn resolve_slide(
     {
         ResolvedTarget::Slide(target) => Ok(target),
         ResolvedTarget::Element(_)
+        | ResolvedTarget::NotesSlide(_)
         | ResolvedTarget::TableCell(_)
         | ResolvedTarget::MediaPart(_)
         | ResolvedTarget::CoreProperties(_) => Err(Error::new(
@@ -1488,6 +1539,7 @@ fn resolve_core_properties(
     {
         ResolvedTarget::CoreProperties(target) => Ok(target),
         ResolvedTarget::Element(_)
+        | ResolvedTarget::NotesSlide(_)
         | ResolvedTarget::TableCell(_)
         | ResolvedTarget::Slide(_)
         | ResolvedTarget::MediaPart(_) => Err(Error::new(

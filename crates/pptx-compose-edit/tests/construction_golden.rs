@@ -19,8 +19,12 @@ use pptx_compose_core::{
 use pptx_compose_edit::{
     media_inputs::{MediaBinding, MediaInputs, MediaSource},
     operations::{
-        ResolvedElement, ResolvedSlide, add_image::AddImage, add_text_box::AddTextBox,
-        move_resize::MoveResize, replace_image::ReplaceImage, replace_text::ReplaceText,
+        ResolvedElement, ResolvedNotesSlide, ResolvedSlide,
+        add_image::AddImage,
+        add_text_box::AddTextBox,
+        move_resize::MoveResize,
+        replace_image::ReplaceImage,
+        replace_text::{ReplaceNotesText, ReplaceText},
         set_alt_text::SetAltText,
     },
     patch::{
@@ -324,6 +328,85 @@ mod construction {
     }
 
     #[test]
+    fn replace_notes_text_rewrites_only_notes_body_run() -> Result<()> {
+        let slide_part = slide_part()?;
+        let notes_part = notes_part()?;
+        let original_slide = NOTES_LINKED_SLIDE_XML.as_bytes().to_vec();
+        let mut package = package_with_notes()?;
+        let target = notes_target()?;
+        let operation = ReplaceNotesText {
+            operation_id: "op-replace-notes-text".to_owned(),
+            slide_id: target.slide_id.clone(),
+            text: "Updated notes".to_owned(),
+            current_text_match: Some("Linked".to_owned()),
+            run: RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: None,
+                text_hash: None,
+            },
+        };
+
+        let effects = operation.apply(&mut package, &target)?;
+        let output = part_xml(&package, &notes_part)?;
+
+        assert_eq!(
+            effects.changed_parts,
+            vec!["ppt/notesSlides/notesSlide1.xml"]
+        );
+        assert!(package.dirty_parts().contains(&notes_part));
+        assert!(!package.dirty_parts().contains(&slide_part));
+        assert_eq!(
+            package
+                .parts()
+                .get(&slide_part)
+                .expect("slide part exists")
+                .bytes(),
+            original_slide.as_slice()
+        );
+        assert!(output.contains(r#"<a:t>Updated notes</a:t>"#));
+        assert!(!output.contains(r#"<a:t>Linked</a:t>"#));
+        assert!(output.contains(r#"<a:hlinkClick r:id="rId9"/>"#));
+        assert!(output.contains(r#"<a:fld id="{00000000-0000-0000-0000-000000000000}" type="datetime"><a:t>Field</a:t></a:fld>"#));
+        assert!(output.contains(r#"<a:br/>"#));
+        assert!(output.contains(r#"<a:r><a:t>Sibling</a:t></a:r>"#));
+        Ok(())
+    }
+
+    #[test]
+    fn replace_notes_text_rejects_missing_notes_body_part() -> Result<()> {
+        let package = package_with_slide(NOTES_LINKED_SLIDE_XML)?;
+        let target = ResolvedNotesSlide {
+            slide_id: "slide-1".to_owned(),
+            slide_part: slide_part()?,
+            notes_part: notes_part()?,
+            element_id: "slide-1:notes".to_owned(),
+        };
+        let operation = ReplaceNotesText {
+            operation_id: "op-replace-notes-text".to_owned(),
+            slide_id: target.slide_id.clone(),
+            text: "Updated notes".to_owned(),
+            current_text_match: None,
+            run: RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: None,
+                text_hash: None,
+            },
+        };
+
+        let error = operation
+            .validate(&package, &target)
+            .expect_err("missing notes part is unsupported");
+
+        assert_eq!(
+            error.code(),
+            pptx_compose_core::error::ErrorCode::UnsupportedEdit
+        );
+        Ok(())
+    }
+
+    #[test]
     fn replace_text_whole_element_rejects_run_style() -> Result<()> {
         let package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
         let target = target(ElementKind::TextBox);
@@ -578,6 +661,10 @@ mod construction {
 
     const RICH_TEXT_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:fld id="{00000000-0000-0000-0000-000000000000}" type="slidenum"><a:rPr lang="en-US"/><a:t>Field</a:t></a:fld><a:r><a:rPr lang="en-US"><a:hlinkClick r:id="rId2"/></a:rPr><a:t>Linked</a:t></a:r><a:br/><a:r><a:t>Break</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
 
+    const NOTES_LINKED_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/></p:spTree></p:cSld></p:sld>"#;
+
+    const NOTES_SLIDE_XML: &str = r#"<p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/><p:cNvSpPr/><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp><p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/><p:cNvSpPr txBox="1"/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:fld id="{00000000-0000-0000-0000-000000000000}" type="datetime"><a:t>Field</a:t></a:fld><a:r><a:rPr lang="en-US"><a:hlinkClick r:id="rId9"/></a:rPr><a:t>Linked</a:t></a:r><a:br/><a:r><a:t>Sibling</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>"#;
+
     const SINGLE_PLAIN_RUN_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Old copy</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
 
     const PICTURE_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:pic><p:nvPicPr><p:cNvPr id="9" name="Picture" hidden="0"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId5"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="1" y="2"/><a:ext cx="3" cy="4"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic></p:spTree></p:cSld></p:sld>"#;
@@ -635,9 +722,29 @@ mod construction {
         PartName::from_zip_entry("ppt/slides/slide1.xml")
     }
 
+    fn notes_part() -> Result<PartName> {
+        PartName::from_zip_entry("ppt/notesSlides/notesSlide1.xml")
+    }
+
     fn package_with_slide(slide_xml: &str) -> Result<Package> {
         let mut package = Package::new();
         package.insert_zip_entry("ppt/slides/slide1.xml", slide_xml.as_bytes().to_vec())?;
+        Ok(package)
+    }
+
+    fn package_with_notes() -> Result<Package> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(NOTES_LINKED_SLIDE_XML)?;
+        package.insert_zip_entry(
+            notes_part()?.zip_entry_name(),
+            NOTES_SLIDE_XML.as_bytes().to_vec(),
+        )?;
+        package.push_relationship(Relationship::internal(
+            RelationshipSource::Part(slide_part),
+            "rIdNotes",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide",
+            "../notesSlides/notesSlide1.xml",
+        ));
         Ok(package)
     }
 
@@ -771,6 +878,15 @@ mod construction {
             text_hash: None,
             fingerprint: "fp".to_owned(),
         }
+    }
+
+    fn notes_target() -> Result<ResolvedNotesSlide> {
+        Ok(ResolvedNotesSlide {
+            slide_id: "slide-1".to_owned(),
+            slide_part: slide_part()?,
+            notes_part: notes_part()?,
+            element_id: "slide-1:notes".to_owned(),
+        })
     }
 
     fn inserted_element_xml(

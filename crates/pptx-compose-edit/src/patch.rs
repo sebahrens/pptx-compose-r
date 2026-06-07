@@ -57,6 +57,7 @@ pub struct Patch {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Operation {
     ReplaceText(ReplaceTextOperation),
+    ReplaceNotesText(ReplaceNotesTextOperation),
     ReplaceTableCellText(ReplaceTableCellTextOperation),
     AddTextBox(AddTextBoxOperation),
     MoveResizeElement(MoveResizeElementOperation),
@@ -71,6 +72,7 @@ impl Operation {
     pub fn operation_id(&self) -> &str {
         match self {
             Self::ReplaceText(operation) => &operation.operation_id,
+            Self::ReplaceNotesText(operation) => &operation.operation_id,
             Self::ReplaceTableCellText(operation) => &operation.operation_id,
             Self::AddTextBox(operation) => &operation.operation_id,
             Self::MoveResizeElement(operation) => &operation.operation_id,
@@ -85,6 +87,7 @@ impl Operation {
     pub const fn op_name(&self) -> &'static str {
         match self {
             Self::ReplaceText(_) => "replace_text",
+            Self::ReplaceNotesText(_) => "replace_notes_text",
             Self::ReplaceTableCellText(_) => "replace_table_cell_text",
             Self::AddTextBox(_) => "add_text_box",
             Self::MoveResizeElement(_) => "move_resize_element",
@@ -112,6 +115,17 @@ impl ReplaceTextOperation {
     #[must_use]
     pub fn target_element_id(&self) -> &str {
         target_element_id(&self.element_id, self.selector.as_ref()).unwrap_or(&self.element_id)
+    }
+}
+
+impl ReplaceNotesTextOperation {
+    pub fn target_selector(&self) -> Result<Selector> {
+        slide_target_selector(&self.operation_id, &self.slide_id, self.selector.as_ref())
+    }
+
+    #[must_use]
+    pub fn target_slide_id(&self) -> &str {
+        target_slide_id(&self.slide_id, self.selector.as_ref()).unwrap_or(&self.slide_id)
     }
 }
 
@@ -350,6 +364,26 @@ pub struct ReplaceTextOperation {
         description = "Optional run-property overrides accepted only when mode is run_scoped. Supports font_size_pt, bold, italic, color_hex, font_family, and paragraph-level align."
     )]
     pub run_style: Option<TextBoxStyle>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReplaceNotesTextOperation {
+    pub operation_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(
+        description = "Target slide shorthand. Either slide_id or selector is required; when both are present, they must identify the same slide."
+    )]
+    pub slide_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Canonical target selector with optional guards. For replace_notes_text this must be type slide_id."
+    )]
+    pub selector: Option<Selector>,
+    pub text: String,
+    #[serde(rename = "match", skip_serializing_if = "Option::is_none")]
+    pub current_text_match: Option<String>,
+    pub run: RunSelector,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
