@@ -75,6 +75,10 @@ pub struct InspectArgs {
     #[arg(long, value_enum)]
     pub detail: Option<InspectDetail>,
     #[arg(long)]
+    pub cursor: Option<String>,
+    #[arg(long, value_name = "N")]
+    pub limit: Option<u32>,
+    #[arg(long)]
     pub overwrite: bool,
 }
 
@@ -315,6 +319,35 @@ fn parses_find_text_slides_scope() {
     assert_eq!(args.cursor, None);
     assert_eq!(args.limit, Some(5));
     assert_eq!(args.output, Some(PathBuf::from("matches.json")));
+}
+
+#[cfg(test)]
+#[test]
+fn parses_inspect_pagination_flags() {
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    let cli = Cli::try_parse_from([
+        "pptx-compose",
+        "inspect",
+        "in.pptx",
+        "--detail",
+        "full",
+        "--cursor",
+        "opaque",
+        "--limit",
+        "5",
+    ])
+    .expect("inspect pagination arguments should parse");
+
+    let Commands::Inspect(args) = cli.command else {
+        unreachable!("expected inspect command");
+    };
+
+    assert_eq!(args.input, PathBuf::from("in.pptx"));
+    assert_eq!(args.detail, Some(InspectDetail::Full));
+    assert_eq!(args.cursor, Some("opaque".to_owned()));
+    assert_eq!(args.limit, Some(5));
 }
 
 #[cfg(test)]

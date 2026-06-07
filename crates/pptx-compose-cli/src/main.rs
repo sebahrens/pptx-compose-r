@@ -411,6 +411,10 @@ fn inspect_view_options(args: &cli::InspectArgs) -> Result<AgentViewOptions, Cli
             options.slide_ids = slide_ids;
         }
     }
+    options.cursor.clone_from(&args.cursor);
+    if let Some(limit) = args.limit {
+        options.limit = Some(limit);
+    }
     Ok(options)
 }
 
