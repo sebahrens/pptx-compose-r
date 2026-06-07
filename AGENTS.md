@@ -35,8 +35,8 @@ For CLI edits, use the bounded V1 agent flow:
 
 ```bash
 pptx-compose --version
-pptx-compose inspect INPUT.pptx --format agent-json --output deck.view.json --report inspect.report.json --json-errors
-pptx-compose find-text INPUT.pptx "QUERY" --slide-id slide-N --limit N --json-errors
+pptx-compose inspect INPUT.pptx --output deck.view.json --report inspect.report.json --json-errors
+pptx-compose find-text INPUT.pptx "QUERY" --slides slide-N --limit N --json-errors
 pptx-compose apply INPUT.pptx PATCH.json --dry-run --media-manifest media.json --report dry-run.report.json --diff diff.json --json-errors
 pptx-compose apply INPUT.pptx PATCH.json --media-manifest media.json --output OUTPUT.pptx --report apply.report.json --json-errors
 pptx-compose validate OUTPUT.pptx --report validation.json --json-errors
@@ -45,7 +45,7 @@ pptx-compose validate OUTPUT.pptx --report validation.json --json-errors
 `inspect`, `validate`, and `apply --dry-run` are read-only. `apply --output`
 is the CLI export/write step; it must validate edited output before the final
 write by default and must not overwrite existing files unless `--overwrite` is
-explicit. `find-text` may be scoped with `--slide-id slide-N`; its matches carry
+explicit. `find-text` may be scoped with `--slides slide-N`; its matches carry
 selector guards (`slide_id`, `kind`, `part`, `text_hash`, `fingerprint`) that
 paste directly into a `replace_text` operation.
 
