@@ -27,8 +27,9 @@ use pptx_compose::{
             views::{FindTextRequest, ViewMode},
         },
         schemas::{
-            JsonError, ResultEnvelope, ResultStatus, agent_view_json_schema, error_json_schema,
-            patch_report_json_schema, validation_report_json_schema,
+            JsonError, ResultEnvelope, ResultStatus, Severity, ValidationReport,
+            agent_view_json_schema, error_json_schema, patch_report_json_schema,
+            validation_report_json_schema,
         },
     },
 };
@@ -199,7 +200,20 @@ fn validate(
     let document = PresentationDocument::open_path_with_options(&input, open_options)
         .map_err(CliError::from_error)?;
     let report = document.validate().map_err(CliError::from_error)?;
-    sink.emit_json_overwrite(&report, OutputDest::from(args.report), args.overwrite)
+    sink.emit_json_overwrite(&report, OutputDest::from(args.report), args.overwrite)?;
+    if validation_report_has_blocking_findings(&report) {
+        return Err(CliError::new(
+            ErrorCode::ValidationFailed,
+            "Package failed validation.",
+        ));
+    }
+    Ok(())
+}
+
+fn validation_report_has_blocking_findings(report: &ValidationReport) -> bool {
+    report.findings.iter().any(|finding| {
+        matches!(finding.severity, Severity::Error | Severity::Fatal) || finding.blocking
+    })
 }
 
 fn media_list(
