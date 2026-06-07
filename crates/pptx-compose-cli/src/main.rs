@@ -76,7 +76,7 @@ fn main() {
 fn run(cli: Cli) -> Result<(), CliError> {
     let permissions = PermissionContext::from_global_args(&cli.global)?;
     let sink = OutputSink::from_global_args(&cli.global)
-        .with_atomic_temp_dir(permissions.temp_dir.clone(), permissions.keep_temp);
+        .with_atomic_temp_dir(permissions.temp_dir.clone(), false);
     let open_options = open_options_from_global_args(&cli.global)?;
     match cli.command {
         Commands::Capabilities => capabilities(sink),
@@ -288,7 +288,7 @@ fn media_get(
         &bytes,
         args.overwrite,
         Some(&permissions.temp_dir),
-        permissions.keep_temp,
+        false,
     )?;
 
     let info = document

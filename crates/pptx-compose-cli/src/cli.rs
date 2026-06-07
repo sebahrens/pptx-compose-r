@@ -30,8 +30,6 @@ pub struct GlobalArgs {
     pub workspace: Option<PathBuf>,
     #[arg(long, global = true, value_name = "DIR")]
     pub temp_dir: Option<PathBuf>,
-    #[arg(long, global = true)]
-    pub keep_temp: bool,
     #[arg(long, global = true, value_name = "N")]
     pub max_compressed_bytes: Option<u64>,
     #[arg(long, global = true, value_name = "N")]
@@ -351,6 +349,57 @@ fn spec_071_documents_command_variants() {
         command.get_subcommands().count(),
         documented_commands.len(),
         "test command list must match cli.rs Commands variants"
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn spec_071_documents_global_flags() {
+    use clap::CommandFactory;
+
+    let spec = include_str!("../../../specs/071-cli-agent-contract.md");
+    let command = Cli::command();
+    let documented_flags = [
+        "--version",
+        "--help",
+        "--json-errors",
+        "--quiet",
+        "--verbose",
+        "--no-color",
+        "--workspace",
+        "--temp-dir",
+        "--max-compressed-bytes",
+        "--max-uncompressed-bytes",
+        "--max-part-count",
+        "--max-media-bytes",
+    ];
+
+    for arg in command.get_arguments() {
+        let Some(long) = arg.get_long() else {
+            continue;
+        };
+        let flag = format!("--{long}");
+        assert!(
+            documented_flags.contains(&flag.as_str()),
+            "test must enumerate global CLI flag `{flag}`"
+        );
+        assert!(
+            spec.contains(&flag),
+            "spec 071 must document global CLI flag `{flag}`"
+        );
+    }
+
+    for flag in documented_flags {
+        assert!(
+            spec.contains(flag),
+            "spec 071 documented global flag list must contain `{flag}`"
+        );
+    }
+
+    assert_eq!(
+        command.get_arguments().count() + 2,
+        documented_flags.len(),
+        "test global flag list must match cli.rs GlobalArgs plus --help/--version"
     );
 }
 

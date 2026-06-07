@@ -11,7 +11,6 @@ use crate::{CliError, InvalidInputCause, cli::GlobalArgs};
 pub(crate) struct PermissionContext {
     pub(crate) workspace: PathBuf,
     pub(crate) temp_dir: PathBuf,
-    pub(crate) keep_temp: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,7 +44,6 @@ impl PermissionContext {
         Ok(Self {
             workspace,
             temp_dir,
-            keep_temp: args.keep_temp,
         })
     }
 
@@ -135,10 +133,6 @@ impl PermissionContext {
 
     #[allow(dead_code)]
     pub(crate) fn cleanup_temp_on_failure(&self, temp_path: &Path) -> Result<(), CliError> {
-        if self.keep_temp {
-            return Ok(());
-        }
-
         let authorized = self.authorize_write(temp_path, PathIntent::TempFile)?;
         if authorized.exists() {
             fs::remove_file(&authorized).map_err(|source| {
@@ -270,7 +264,6 @@ fn rejects_escape_and_cleans_temp() {
     let ctx = PermissionContext {
         workspace: fs::canonicalize(&workspace).expect("canonical workspace"),
         temp_dir: fs::canonicalize(&temp_dir).expect("canonical temp"),
-        keep_temp: false,
     };
 
     let err = ctx
@@ -327,17 +320,6 @@ fn rejects_escape_and_cleans_temp() {
     ctx.cleanup_temp_on_failure(&partial)
         .expect("cleanup should remove temp file");
     assert!(!partial.exists());
-
-    let keep_ctx = PermissionContext {
-        keep_temp: true,
-        ..ctx
-    };
-    let kept = temp_dir.join("kept.pptx.tmp");
-    fs::write(&kept, b"partial").expect("kept temp fixture");
-    keep_ctx
-        .cleanup_temp_on_failure(&kept)
-        .expect("keep-temp cleanup should be a no-op");
-    assert!(kept.exists());
 
     fs::remove_dir_all(root).expect("remove permission test fixture");
 }

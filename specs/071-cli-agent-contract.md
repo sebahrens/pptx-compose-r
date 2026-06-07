@@ -26,9 +26,17 @@ pptx-compose --verbose
 pptx-compose --no-color
 pptx-compose --workspace DIR
 pptx-compose --temp-dir DIR
+pptx-compose --max-compressed-bytes N
 pptx-compose --max-uncompressed-bytes N
 pptx-compose --max-part-count N
+pptx-compose --max-media-bytes N
 ```
+
+`--max-compressed-bytes` limits total compressed package bytes read from the
+input archive. `--max-uncompressed-bytes` limits total uncompressed package
+bytes, `--max-part-count` limits the number of ZIP entries, and
+`--max-media-bytes` limits a single media part. Exceeding any limit fails with
+`resource_limit_exceeded`.
 
 ## Commands
 

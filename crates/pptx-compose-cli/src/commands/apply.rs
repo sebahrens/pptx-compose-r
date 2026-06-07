@@ -41,8 +41,7 @@ pub(crate) fn apply(
     if let Some(diff) = &args.diff {
         permissions.authorize_write(diff, PathIntent::DiffOutput)?;
     }
-    let sink = OutputSink::default()
-        .with_atomic_temp_dir(permissions.temp_dir.clone(), permissions.keep_temp);
+    let sink = OutputSink::default().with_atomic_temp_dir(permissions.temp_dir.clone(), false);
 
     let patch = read_patch(&patch)?;
     let media_inputs = read_media_inputs(
@@ -102,7 +101,6 @@ pub(crate) fn apply(
         write_options.atomic_temp_path =
             Some(permissions.authorize_write(&temp_path, PathIntent::TempFile)?);
     }
-    write_options.keep_temp = permissions.keep_temp;
     let backup = if in_place_output && !args.no_backup {
         let backup = available_backup_path(&input);
         permissions.authorize_write(&backup, PathIntent::OutputPptx)?;
@@ -913,7 +911,7 @@ mod test_support {
 
         apply(
             args(&input, &patch, &output, false),
-            &permissions_with_temp(&workspace, &temp_dir, false),
+            &permissions_with_temp(&workspace, &temp_dir),
             OpenOptions::default(),
         )
         .expect("apply succeeds with separate configured temp dir");
@@ -1405,14 +1403,13 @@ mod test_support {
     }
 
     fn permissions(root: &Path) -> PermissionContext {
-        permissions_with_temp(root, root, false)
+        permissions_with_temp(root, root)
     }
 
-    fn permissions_with_temp(root: &Path, temp_dir: &Path, keep_temp: bool) -> PermissionContext {
+    fn permissions_with_temp(root: &Path, temp_dir: &Path) -> PermissionContext {
         PermissionContext {
             workspace: fs::canonicalize(root).expect("workspace canonicalizes"),
             temp_dir: fs::canonicalize(temp_dir).expect("temp canonicalizes"),
-            keep_temp,
         }
     }
 

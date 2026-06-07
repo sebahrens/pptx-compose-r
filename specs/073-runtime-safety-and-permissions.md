@@ -27,7 +27,7 @@ No wrapper may create extraction directories, cache files, reports, or sibling f
 - Input files are never modified unless an explicit in-place mode is used.
 - In-place mode must create a backup unless `--no-backup` is explicit.
 - PPTX writes use temporary files and atomic rename where supported.
-- Partial temp files are cleaned up on failure unless debug `--keep-temp` is set.
+- Partial temp files are cleaned up on failure.
 
 ## Destructive Operation Policy
 
