@@ -167,6 +167,8 @@ fn inspect(
     sink: OutputSink,
     open_options: OpenOptions,
 ) -> Result<(), CliError> {
+    reject_inspect_stdout_collision(&args)?;
+
     let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
     if let Some(output) = &args.output {
         permissions.authorize_write(output, PathIntent::ReportOutput)?;
@@ -185,6 +187,26 @@ fn inspect(
         let report = document.validate().map_err(CliError::from_error)?;
         sink.emit_json_overwrite(&report, OutputDest::from(args.report), args.overwrite)?;
     }
+    Ok(())
+}
+
+fn reject_inspect_stdout_collision(args: &cli::InspectArgs) -> Result<(), CliError> {
+    let view_targets_stdout = args
+        .output
+        .as_deref()
+        .is_none_or(|output| output == std::path::Path::new("-"));
+    let report_targets_stdout = args
+        .report
+        .as_deref()
+        .is_some_and(|report| report == std::path::Path::new("-"));
+
+    if view_targets_stdout && report_targets_stdout {
+        return Err(CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            "inspect cannot write both the view and --report to stdout; give --output or --report a file path.",
+        ));
+    }
+
     Ok(())
 }
 

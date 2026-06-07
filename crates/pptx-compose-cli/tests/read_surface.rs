@@ -28,6 +28,68 @@ fn inspect_and_validate_emit_json_documents() {
 }
 
 #[test]
+fn inspect_rejects_view_and_report_to_stdout() {
+    let fixture = repo_root().join("fixtures/minimal.pptx");
+    let output = run_cli_raw([
+        "--json-errors",
+        "inspect",
+        fixture_str(&fixture),
+        "--report",
+        "-",
+    ]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+
+    let stderr_text = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    let envelope: serde_json::Value =
+        serde_json::from_str(&stderr_text).expect("stderr is one JSON document");
+    assert_eq!(envelope["schema"], "pptx-compose.error.v1");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "invalid_input");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .expect("error message is a string")
+            .contains("inspect cannot write both the view and --report to stdout")
+    );
+}
+
+#[test]
+fn inspect_stdout_view_allows_report_file() {
+    let root = unique_dir();
+    let fixture = repo_root().join("fixtures/minimal.pptx");
+    let report = root.join("inspect.report.json");
+
+    let output = run_cli_owned(vec![
+        "inspect".to_owned(),
+        fixture_str(&fixture).to_owned(),
+        "--output".to_owned(),
+        "-".to_owned(),
+        "--report".to_owned(),
+        report.to_string_lossy().into_owned(),
+    ]);
+
+    let view = parse_stdout(&output);
+    assert_eq!(view["schema"], "pptx-compose.agent_view.v1");
+    assert_eq!(view["version"], 1);
+
+    let report_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&report).expect("report reads"))
+            .expect("report parses as JSON");
+    assert_eq!(report_json["schema"], "pptx-compose.validation_report.v1");
+    assert_eq!(report_json["version"], 1);
+
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
 fn json_errors_parse_failures_emit_one_error_envelope() {
     let output = run_cli_raw(["--json-errors", "--not-a-real-flag"]);
 
