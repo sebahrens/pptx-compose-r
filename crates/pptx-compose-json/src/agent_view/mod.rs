@@ -237,11 +237,14 @@ pub struct FindTextResult {
     pub matches: Vec<TextMatch>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FindTextScope {
+    #[default]
     Deck,
-    Slide { slide_id: String },
+    Slide {
+        slide_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -415,7 +415,10 @@ pub struct FindTextInput {
     pub session_id: String,
     #[schemars(description = "Text query to search for.", length(min = 1, max = 2048))]
     pub query: String,
-    #[schemars(description = "Deck, slide, or element search scope.")]
+    #[serde(default)]
+    #[schemars(
+        description = "Search scope. Omit for deck-wide search ({}) or pass a slide scope such as {\"scope\":{\"type\":\"slide\",\"slide_id\":\"slide-1\"}}."
+    )]
     pub scope: FindTextScope,
     #[schemars(
         description = "Opaque pagination cursor returned by a previous response.",
@@ -1216,6 +1219,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn find_text_defaults_to_deck_scope_when_scope_is_omitted() {
+        let server = PptxServer::default();
+        let deck = custom_slide_path_deck();
+        let opened = server
+            .sessions()
+            .open_package(
+                pptx_compose::PresentationDocument::from_bytes(deck.clone())
+                    .expect("text deck opens"),
+                &deck,
+            )
+            .expect("session opens");
+        let input = serde_json::from_value::<FindTextInput>(serde_json::json!({
+            "session_id": opened.session_id,
+            "query": "Deck Needle"
+        }))
+        .expect("find_text scope defaults during deserialization");
+
+        assert_eq!(input.scope, FindTextScope::Deck);
+
+        let found = server
+            .pptx_find_text(rmcp::handler::server::wrapper::Parameters(input))
+            .await
+            .expect("find_text succeeds with omitted scope");
+        let result = found.0.0.result;
+
+        assert_eq!(result["scope"]["type"], "deck");
+        assert!(
+            result["matches"]
+                .as_array()
+                .is_some_and(|matches| !matches.is_empty()),
+            "deck-wide search returns matches"
+        );
+    }
+
+    #[tokio::test]
     async fn import_media_accepts_inline_base64_without_filesystem_access() {
         let server = PptxServer::default();
         let opened = open_fixture_session(&server);
@@ -1542,8 +1580,8 @@ mod tests {
         assert_tool_schema_fields("pptx_get_element", &["session_id", "element_id"], &[]);
         assert_tool_schema_fields(
             "pptx_find_text",
-            &["session_id", "query", "scope"],
-            &["cursor", "limit"],
+            &["session_id", "query"],
+            &["scope", "cursor", "limit"],
         );
         assert_tool_schema_fields(
             "pptx_import_media",
@@ -1832,7 +1870,13 @@ mod tests {
     fn custom_slide() -> String {
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
-  <p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/></p:spTree></p:cSld>
+  <p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/>
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr/>
+      <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Deck Needle</a:t></a:r></a:p></p:txBody>
+    </p:sp>
+  </p:spTree></p:cSld>
 </p:sld>"#
             .to_owned()
     }
