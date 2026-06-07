@@ -194,6 +194,19 @@ fn compressed_limit_rejects_path_and_reader_before_zip_parse() {
 }
 
 #[test]
+fn seek_reader_sniffs_package_type_before_zip_parse() {
+    let bytes = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00];
+
+    let error = PresentationDocument::open_seek_reader_with_options(
+        Cursor::new(bytes),
+        OpenOptions::default(),
+    )
+    .expect_err("CFBF seek-reader input must be rejected before ZIP parsing");
+
+    assert_eq!(error.code(), ErrorCode::UnsupportedPackage);
+}
+
+#[test]
 fn concurrent_non_overwrite_writes_do_not_clobber_output() {
     use std::sync::{Arc, Barrier};
     use std::thread;

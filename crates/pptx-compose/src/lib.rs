@@ -169,6 +169,7 @@ impl PresentationDocument {
     where
         R: std::io::Read + std::io::Seek,
     {
+        sniff_package(&mut reader)?;
         let entries = open_reader_with_options(
             &mut reader,
             &CoreOpenOptions {
