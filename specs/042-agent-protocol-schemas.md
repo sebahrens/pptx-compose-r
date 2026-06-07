@@ -22,7 +22,7 @@ Required top-level fields:
   "revision": 1,
   "view_id": "sha256:...",
   "capabilities": {
-    "operations": ["replace_text", "add_text_box", "move_resize_element", "set_alt_text", "add_image", "replace_image"],
+    "operations": ["replace_text", "replace_notes_text", "replace_table_cell_text", "add_text_box", "move_resize_element", "set_alt_text", "set_document_metadata", "add_image", "replace_image"],
     "media_content_types": ["image/png", "image/jpeg", "image/gif"],
     "units": "emu"
   },

@@ -6,7 +6,7 @@ use crate::{
     core::{error::ErrorCode, zip::limits::ResourceLimits},
     edit::{
         media_inputs::{MEDIA_MANIFEST_SCHEMA, MEDIA_MANIFEST_VERSION, limits::MediaLimits},
-        patch::{PATCH_SCHEMA, PATCH_VERSION},
+        patch::{ALL_OP_NAMES, PATCH_SCHEMA, PATCH_VERSION},
     },
     json::schema_versions::{
         AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION, CAPABILITIES_SCHEMA, CAPABILITIES_VERSION,
@@ -230,22 +230,13 @@ fn command_capabilities() -> Vec<CommandCapability> {
 }
 
 fn operation_capabilities() -> Vec<OperationCapability> {
-    [
-        "replace_text",
-        "replace_notes_text",
-        "replace_table_cell_text",
-        "add_text_box",
-        "move_resize_element",
-        "set_alt_text",
-        "add_image",
-        "replace_image",
-    ]
-    .into_iter()
-    .map(|op| OperationCapability {
-        op: op.to_owned(),
-        dry_run: true,
-    })
-    .collect()
+    ALL_OP_NAMES
+        .into_iter()
+        .map(|op| OperationCapability {
+            op: op.to_owned(),
+            dry_run: true,
+        })
+        .collect()
 }
 
 fn schema_capabilities() -> Vec<SchemaCapability> {

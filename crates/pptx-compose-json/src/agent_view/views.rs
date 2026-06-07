@@ -61,6 +61,17 @@ const PARAGRAPH_PREVIEW_CHARS: usize = 1_024;
 const RUN_PREVIEW_CHARS: usize = 1_024;
 const ACCESSIBILITY_PREVIEW_CHARS: usize = 1_024;
 const EMBEDDED_SLIDE_ELEMENT_LIMIT: u32 = 50;
+const ALL_OP_NAMES: [&str; 9] = [
+    "replace_text",
+    "replace_notes_text",
+    "replace_table_cell_text",
+    "add_text_box",
+    "move_resize_element",
+    "set_alt_text",
+    "set_document_metadata",
+    "add_image",
+    "replace_image",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1209,16 +1220,7 @@ fn view_meta(mode: &str, limit: u32) -> ViewMeta {
 
 fn default_capabilities() -> Capabilities {
     Capabilities {
-        operations: vec![
-            "replace_text".to_owned(),
-            "replace_notes_text".to_owned(),
-            "add_text_box".to_owned(),
-            "move_resize_element".to_owned(),
-            "set_alt_text".to_owned(),
-            "set_document_metadata".to_owned(),
-            "add_image".to_owned(),
-            "replace_image".to_owned(),
-        ],
+        operations: ALL_OP_NAMES.iter().map(|op| (*op).to_owned()).collect(),
         media_content_types: vec![
             "image/png".to_owned(),
             "image/jpeg".to_owned(),

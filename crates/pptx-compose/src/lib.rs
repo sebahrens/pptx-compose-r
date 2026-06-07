@@ -56,8 +56,8 @@ use pptx_compose_edit::{
         set_document_metadata::SetDocumentMetadata,
     },
     patch::{
-        DocumentState, Operation, OperationExecutor, PatchEffects, ValidationFailedReport,
-        validate_envelope,
+        ALL_OP_NAMES, DocumentState, Operation, OperationExecutor, PatchEffects,
+        ValidationFailedReport, validate_envelope,
     },
     reports::has_blocking_findings,
     selectors::{self, Selector},
@@ -242,7 +242,7 @@ impl PresentationDocument {
     ) -> Result<serde_json::Value> {
         let package = package_from_entries_with_limits(&self.entries, &self.resource_limits)?;
         let model = core_presentation::PresentationDocument::open(package)?;
-        pptx_compose_json::agent_view::views::build_view_with_revision(
+        let mut value = pptx_compose_json::agent_view::views::build_view_with_revision(
             &model,
             revision,
             ViewRequest {
@@ -255,7 +255,9 @@ impl PresentationDocument {
                 limit: options.limit,
             },
         )
-        .map_err(json_error)
+        .map_err(json_error)?;
+        normalize_agent_view_capabilities(&mut value);
+        Ok(value)
     }
 
     pub fn to_legacy_json(&self) -> Result<serde_json::Value> {
@@ -1398,6 +1400,25 @@ fn operation_media_ref(operation: &Operation) -> Option<&str> {
     }
 }
 
+fn normalize_agent_view_capabilities(value: &mut serde_json::Value) {
+    let Some(capabilities) = value
+        .as_object_mut()
+        .and_then(|object| object.get_mut("capabilities"))
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    capabilities.insert(
+        "operations".to_owned(),
+        serde_json::Value::Array(
+            ALL_OP_NAMES
+                .iter()
+                .map(|op| serde_json::Value::String((*op).to_owned()))
+                .collect(),
+        ),
+    );
+}
+
 fn validate_operation(
     package: &Package,
     model: &core_presentation::PresentationDocument,
@@ -1598,12 +1619,48 @@ mod tests {
     };
     use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
-    use super::{PresentationDocument, WriteOptions, package_from_entries_with_limits};
+    use super::{
+        PresentationDocument, WriteOptions,
+        capabilities::{CapabilitiesOptions, capabilities},
+        package_from_entries_with_limits,
+    };
+    use crate::edit::patch::ALL_OP_NAMES;
 
     #[test]
     fn facade_crate_compiles() {
         let crate_name = env!("CARGO_PKG_NAME");
         assert_eq!(crate_name, "pptx-compose");
+    }
+
+    #[test]
+    fn agent_view_and_capabilities_advertise_canonical_operations() {
+        let bytes = zip_entries([
+            ("[Content_Types].xml", CONTENT_TYPES_WITH_SLIDE.as_bytes()),
+            ("_rels/.rels", ROOT_RELS.as_bytes()),
+            ("ppt/presentation.xml", PRESENTATION_WITH_SLIDE.as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                PRESENTATION_RELS.as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", SLIDE.as_bytes()),
+        ]);
+        let document = PresentationDocument::from_bytes(&bytes).expect("minimal deck opens");
+        let view = document.to_agent_json().expect("agent view builds");
+        let view_operations = view["capabilities"]["operations"]
+            .as_array()
+            .expect("agent view operations are an array")
+            .iter()
+            .map(|op| op.as_str().expect("operation name is a string"))
+            .collect::<Vec<_>>();
+        let capability_document = capabilities(CapabilitiesOptions::new("pptx-compose", "0.1.0"));
+        let capability_operations = capability_document
+            .supported_operations
+            .iter()
+            .map(|op| op.op.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(view_operations, ALL_OP_NAMES);
+        assert_eq!(capability_operations, ALL_OP_NAMES);
     }
 
     #[test]
@@ -1707,4 +1764,18 @@ mod tests {
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
 </Relationships>"#;
+
+    const SLIDE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr>
+        <p:cNvPr id="1" name=""/>
+        <p:cNvGrpSpPr/>
+        <p:nvPr/>
+      </p:nvGrpSpPr>
+      <p:grpSpPr/>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#;
 }

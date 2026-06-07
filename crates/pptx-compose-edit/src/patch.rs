@@ -26,6 +26,17 @@ use crate::{
 
 pub const PATCH_SCHEMA: &str = "pptx-compose.patch.v1";
 pub const PATCH_VERSION: u32 = 1;
+pub const ALL_OP_NAMES: [&str; 9] = [
+    "replace_text",
+    "replace_notes_text",
+    "replace_table_cell_text",
+    "add_text_box",
+    "move_resize_element",
+    "set_alt_text",
+    "set_document_metadata",
+    "add_image",
+    "replace_image",
+];
 
 pub fn patch_json_schema() -> Result<Value> {
     let schema = schemars::schema_for!(Patch);
@@ -1179,6 +1190,113 @@ fn envelope_and_stale() {
     }))
     .expect_err("unknown top-level patch field is rejected");
     assert_eq!(error.code(), ErrorCode::InvalidInput);
+}
+
+#[cfg(test)]
+#[test]
+fn all_op_names_matches_operation_variants() {
+    let bounds = Bounds {
+        x: 1,
+        y: 2,
+        cx: 3,
+        cy: 4,
+    };
+    let variants = [
+        Operation::ReplaceText(ReplaceTextOperation {
+            operation_id: "op-1".to_owned(),
+            element_id: "slide-1:shape-1".to_owned(),
+            selector: None,
+            text: "updated".to_owned(),
+            current_text_match: None,
+            mode: None,
+            format_policy: None,
+            overflow_policy: None,
+            allow_formatting_simplification: false,
+            run_style: None,
+        }),
+        Operation::ReplaceNotesText(ReplaceNotesTextOperation {
+            operation_id: "op-2".to_owned(),
+            slide_id: "slide-1".to_owned(),
+            selector: None,
+            text: "updated".to_owned(),
+            current_text_match: None,
+            run: RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: None,
+                text_hash: None,
+            },
+        }),
+        Operation::ReplaceTableCellText(ReplaceTableCellTextOperation {
+            operation_id: "op-3".to_owned(),
+            element_id: "slide-1:table-1".to_owned(),
+            selector: None,
+            cell: TableCellSelector { row: 0, col: 0 },
+            text: "updated".to_owned(),
+            current_text_match: None,
+        }),
+        Operation::AddTextBox(AddTextBoxOperation {
+            operation_id: "op-4".to_owned(),
+            slide_id: "slide-1".to_owned(),
+            selector: None,
+            text: "new".to_owned(),
+            bounds: bounds.clone(),
+            name: None,
+            alt_text: None,
+            style: None,
+            insert: None,
+        }),
+        Operation::MoveResizeElement(MoveResizeElementOperation {
+            operation_id: "op-5".to_owned(),
+            element_id: "slide-1:shape-1".to_owned(),
+            selector: None,
+            bounds: bounds.clone(),
+        }),
+        Operation::SetAltText(SetAltTextOperation {
+            operation_id: "op-6".to_owned(),
+            element_id: "slide-1:shape-1".to_owned(),
+            selector: None,
+            title: None,
+            description: Some("description".to_owned()),
+            alt_text: None,
+        }),
+        Operation::SetDocumentMetadata(SetDocumentMetadataOperation {
+            operation_id: "op-7".to_owned(),
+            selector: Selector::CoreProperties {
+                part: "docProps/core.xml".to_owned(),
+                guards: None,
+            },
+            current_value_match: None,
+            metadata: DocumentMetadataFields {
+                title: Some("Title".to_owned()),
+                ..DocumentMetadataFields::default()
+            },
+        }),
+        Operation::AddImage(AddImageOperation {
+            operation_id: "op-8".to_owned(),
+            slide_id: "slide-1".to_owned(),
+            selector: None,
+            media_ref: "image-1".to_owned(),
+            content_type: "image/png".to_owned(),
+            bounds,
+            name: None,
+            alt_text: None,
+            fit: None,
+            dedupe: None,
+            insert: None,
+        }),
+        Operation::ReplaceImage(ReplaceImageOperation {
+            operation_id: "op-9".to_owned(),
+            element_id: "slide-1:pic-1".to_owned(),
+            selector: None,
+            media_ref: "image-1".to_owned(),
+            content_type: "image/png".to_owned(),
+            allow_shared_mutation: None,
+        }),
+    ];
+    let variant_names = variants.map(|operation| operation.op_name());
+
+    assert_eq!(variant_names, ALL_OP_NAMES);
 }
 
 #[cfg(test)]

@@ -25,16 +25,17 @@ Agents should modify decks through explicit operations, not arbitrary raw XML or
 ## V1 Operations
 
 - `replace_text`
+- `replace_notes_text`
+- `replace_table_cell_text`
 - `add_text_box`
 - `move_resize_element`
 - `set_alt_text`
+- `set_document_metadata`
 - `add_image`
 - `replace_image`
 
 Post-V1 operations are not advertised in V1 `capabilities.operations` until
-their implementation task ships. The first such operation is
-`set_document_metadata`, specified below because it does not depend on the
-slide shape tree or the run-scoped text primitive.
+their implementation task ships.
 
 ## Operation Requirements
 
