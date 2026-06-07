@@ -433,6 +433,39 @@ pub mod schema {
         let output: Value = serde_json::to_value(view).expect("agent view serializes");
         assert_eq!(output, input);
     }
+
+    #[test]
+    fn text_view_rejects_unsupported_paragraph_and_run_fields() {
+        let input: Value = serde_json::from_str(
+            r#"{
+                "plain": "Quarterly Results",
+                "normalized": "Quarterly Results",
+                "paragraphs": [
+                    {
+                        "index": 0,
+                        "text": "Quarterly Results",
+                        "runs": [
+                            {
+                                "index": 0,
+                                "text": "Quarterly Results",
+                                "style_summary": { "font_size_pt": 32, "bold": false },
+                                "text_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+                            }
+                        ]
+                    }
+                ],
+                "text_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            }"#,
+        )
+        .expect("test fixture is valid JSON");
+
+        let error = serde_json::from_value::<super::TextView>(input)
+            .expect_err("unsupported text view fields are rejected");
+        assert!(
+            error.to_string().contains("unknown field"),
+            "unexpected error: {error}"
+        );
+    }
 }
 
 #[cfg(test)]

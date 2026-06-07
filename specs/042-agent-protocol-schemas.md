@@ -136,14 +136,11 @@ Flat `text` is convenient but insufficient for safe targeting. Text-capable elem
     "normalized": "Quarterly Results",
     "paragraphs": [
       {
-        "index": 0,
         "text": "Quarterly Results",
         "runs": [
           {
-            "index": 0,
             "text": "Quarterly Results",
-            "style_summary": { "font_size_pt": 32, "bold": false },
-            "text_hash": "sha256:..."
+            "style_summary": { "font_size_pt": 32, "bold": false }
           }
         ]
       }
