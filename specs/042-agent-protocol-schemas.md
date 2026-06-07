@@ -23,7 +23,7 @@ Required top-level fields:
   "view_id": "sha256:...",
   "capabilities": {
     "operations": ["replace_text", "add_text_box", "move_resize_element", "set_alt_text", "add_image", "replace_image"],
-    "media_content_types": ["image/png", "image/jpeg"],
+    "media_content_types": ["image/png", "image/jpeg", "image/gif"],
     "units": "emu"
   },
   "presentation": {

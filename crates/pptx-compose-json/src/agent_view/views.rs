@@ -1103,7 +1103,11 @@ fn default_capabilities() -> Capabilities {
             "add_image".to_owned(),
             "replace_image".to_owned(),
         ],
-        media_content_types: vec!["image/png".to_owned(), "image/jpeg".to_owned()],
+        media_content_types: vec![
+            "image/png".to_owned(),
+            "image/jpeg".to_owned(),
+            "image/gif".to_owned(),
+        ],
         units: "emu".to_owned(),
     }
 }

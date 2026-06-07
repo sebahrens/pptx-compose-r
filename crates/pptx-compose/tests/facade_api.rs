@@ -320,6 +320,29 @@ fn agent_view_rejects_huge_page_limit() {
 }
 
 #[test]
+fn agent_view_advertises_image_content_types_accepted_by_image_edits() {
+    let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
+    let view = document.to_agent_json().expect("agent view builds");
+    let advertised = view["capabilities"]["media_content_types"]
+        .as_array()
+        .expect("media content types are an array")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("media content type is a string")
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+    let accepted = ["image/png", "image/jpeg", "image/gif"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(advertised, accepted);
+}
+
+#[test]
 fn find_text_pages_many_matches_without_unbounded_page() {
     let document = PresentationDocument::from_bytes(repeated_text_deck(150)).expect("deck opens");
     let first = document
@@ -786,6 +809,50 @@ fn v1_edit_operations_round_trip_with_exact_dirty_parts() {
 }
 
 #[test]
+fn gif_image_edits_round_trip_with_gif_media_parts() {
+    assert_successful_edit_round_trip(
+        "add_image_gif",
+        text_deck_with_clean_extras(),
+        serde_json::json!({
+            "operation_id": "add-gif",
+            "op": "add_image",
+            "slide_id": "slide-1",
+            "media_ref": "new-gif",
+            "content_type": "image/gif",
+            "bounds": { "x": 0, "y": 2743200, "cx": 914400, "cy": 914400 },
+            "name": "Animated marker",
+            "alt_text": "GIF marker"
+        }),
+        media_inputs("new-gif", "image/gif", tiny_gif()),
+        &[
+            "[Content_Types].xml",
+            "ppt/media/image1.gif",
+            "ppt/slides/_rels/slide1.xml.rels",
+            "ppt/slides/slide1.xml",
+        ],
+        &["ppt/media/image1.gif", "ppt/slides/_rels/slide1.xml.rels"],
+    );
+    assert_successful_edit_round_trip(
+        "replace_image_gif",
+        image_deck_with_clean_extras(),
+        serde_json::json!({
+            "operation_id": "replace-gif",
+            "op": "replace_image",
+            "element_id": "slide-1:pic-4",
+            "media_ref": "replacement-gif",
+            "content_type": "image/gif"
+        }),
+        media_inputs("replacement-gif", "image/gif", tiny_gif()),
+        &[
+            "[Content_Types].xml",
+            "ppt/media/image1.gif",
+            "ppt/slides/_rels/slide1.xml.rels",
+        ],
+        &["ppt/media/image1.gif"],
+    );
+}
+
+#[test]
 fn failed_multi_operation_patch_leaves_package_byte_identical() {
     let bytes = text_deck_with_clean_extras();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
@@ -1179,6 +1246,14 @@ fn tiny_png() -> Vec<u8> {
         0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
         0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
         0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ]
+}
+
+fn tiny_gif() -> Vec<u8> {
+    vec![
+        0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xff, 0xff, 0xff, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02,
+        0x02, 0x44, 0x01, 0x00, 0x3b,
     ]
 }
 

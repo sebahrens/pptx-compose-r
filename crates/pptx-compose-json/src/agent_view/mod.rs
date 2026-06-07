@@ -310,7 +310,7 @@ pub mod schema {
                         "add_image",
                         "replace_image"
                     ],
-                    "media_content_types": ["image/png", "image/jpeg"],
+                    "media_content_types": ["image/png", "image/jpeg", "image/gif"],
                     "units": "emu"
                 },
                 "presentation": {
