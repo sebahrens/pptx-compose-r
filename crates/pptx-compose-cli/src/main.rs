@@ -366,7 +366,10 @@ fn parse_slide_scope(slides: &str) -> Result<Vec<String>, CliError> {
                 "--slides contains an empty list item.",
             ));
         }
-        if let Some((start, end)) = token.split_once('-') {
+        if token.starts_with("slide-") {
+            let number = parse_slide_id_token(token)?;
+            push_unique_slide_id(&mut slide_ids, format!("slide-{number}"));
+        } else if let Some((start, end)) = token.split_once('-') {
             let start = parse_slide_number(start)?;
             let end = parse_slide_number(end)?;
             if start > end {
@@ -378,15 +381,22 @@ fn parse_slide_scope(slides: &str) -> Result<Vec<String>, CliError> {
             for number in start..=end {
                 push_unique_slide_id(&mut slide_ids, format!("slide-{number}"));
             }
-        } else if token.starts_with("slide-") {
-            let number = parse_slide_number(token.trim_start_matches("slide-"))?;
-            push_unique_slide_id(&mut slide_ids, format!("slide-{number}"));
         } else {
             let number = parse_slide_number(token)?;
             push_unique_slide_id(&mut slide_ids, format!("slide-{number}"));
         }
     }
     Ok(slide_ids)
+}
+
+fn parse_slide_id_token(value: &str) -> Result<u32, CliError> {
+    let number = value.strip_prefix("slide-").ok_or_else(|| {
+        CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            "--slides canonical slide ids must use the slide-N form.",
+        )
+    })?;
+    parse_slide_number(number)
 }
 
 fn parse_slide_number(value: &str) -> Result<u32, CliError> {

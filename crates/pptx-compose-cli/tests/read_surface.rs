@@ -61,6 +61,18 @@ fn inspect_slides_accepts_single_range_and_list_scopes() {
     assert_eq!(single["view"]["mode"], "slide_detail");
     assert_slide_ids(&single, &["slide-2"]);
 
+    let canonical_single = parse_stdout(&run_cli_owned(vec![
+        "inspect".to_owned(),
+        deck.to_string_lossy().into_owned(),
+        "--format".to_owned(),
+        "agent-json".to_owned(),
+        "--slides".to_owned(),
+        "slide-2".to_owned(),
+    ]));
+    assert_eq!(canonical_single["view"]["mode"], "slide_detail");
+    assert_slide_ids(&canonical_single, &["slide-2"]);
+    assert_eq!(canonical_single["slides"], single["slides"]);
+
     let range = parse_stdout(&run_cli_owned(vec![
         "inspect".to_owned(),
         deck.to_string_lossy().into_owned(),

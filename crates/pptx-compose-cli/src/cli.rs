@@ -66,7 +66,11 @@ pub struct InspectArgs {
     pub output: Option<PathBuf>,
     #[arg(long)]
     pub report: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "N|slide-N|N-M",
+        help = "Slides to inspect: 1-based numbers, canonical slide-N ids, comma lists, or numeric ranges"
+    )]
     pub slides: Option<String>,
     #[arg(long, value_enum)]
     pub detail: Option<InspectDetail>,
