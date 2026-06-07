@@ -365,10 +365,10 @@ pub struct ListElementsInput {
     )]
     pub session_id: String,
     #[schemars(
-        description = "Optional agent slide id such as slide-1.",
+        description = "Agent slide id such as slide-1.",
         regex(pattern = "^slide-[1-9][0-9]*$")
     )]
-    pub slide_id: Option<String>,
+    pub slide_id: String,
     #[schemars(
         description = "Opaque pagination cursor returned by a previous response.",
         length(min = 1, max = 256)
@@ -695,13 +695,9 @@ impl PptxServer {
             .package
             .to_agent_json_with_revision(
                 AgentViewOptions {
-                    mode: if input.slide_id.is_some() {
-                        ViewMode::SlideDetail
-                    } else {
-                        ViewMode::SlidePage
-                    },
-                    include_elements: input.slide_id.is_none(),
-                    slide_id: input.slide_id,
+                    mode: ViewMode::SlideDetail,
+                    include_elements: false,
+                    slide_id: Some(input.slide_id),
                     slide_ids: Vec::new(),
                     element_id: None,
                     cursor: input.cursor,
@@ -1171,6 +1167,45 @@ mod tests {
 
     const ONE_BY_ONE_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
+    #[test]
+    fn list_elements_input_requires_slide_id() {
+        let missing_slide_id = serde_json::json!({
+            "session_id": "sess_1",
+            "limit": 10
+        });
+
+        serde_json::from_value::<ListElementsInput>(missing_slide_id)
+            .expect_err("slide_id is required");
+    }
+
+    #[tokio::test]
+    async fn list_elements_returns_slide_detail_element_page() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+
+        let listed = server
+            .pptx_list_elements(rmcp::handler::server::wrapper::Parameters(
+                ListElementsInput {
+                    session_id: opened.session_id,
+                    slide_id: "slide-1".to_owned(),
+                    cursor: None,
+                    limit: Some(1),
+                },
+            ))
+            .await
+            .expect("list elements succeeds");
+
+        let result = listed.0.0.result;
+        assert_eq!(result["view"]["mode"], "slide_detail");
+        assert_eq!(result["view"]["limit"], 1);
+        assert_eq!(result["slides"][0]["id"], "slide-1");
+        assert!(
+            result["slides"][0]["elements"]
+                .as_array()
+                .is_some_and(|elements| elements.len() <= 1)
+        );
+    }
+
     #[tokio::test]
     async fn import_media_accepts_inline_base64_without_filesystem_access() {
         let server = PptxServer::default();
@@ -1462,8 +1497,8 @@ mod tests {
         );
         assert_tool_schema_fields(
             "pptx_list_elements",
-            &["session_id"],
-            &["slide_id", "cursor", "limit"],
+            &["session_id", "slide_id"],
+            &["cursor", "limit"],
         );
         assert_tool_schema_fields("pptx_get_element", &["session_id", "element_id"], &[]);
         assert_tool_schema_fields(

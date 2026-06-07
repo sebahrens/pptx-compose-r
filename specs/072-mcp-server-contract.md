@@ -32,6 +32,11 @@ Minimum tool set:
 
 Each tool must define input schema, structured output schema, annotations, max output size, pagination behavior, and error envelope behavior.
 
+For V1, `pptx_list_elements` is slide-scoped: its input schema requires
+`slide_id`, and `cursor`/`limit` paginate that slide's element collection in a
+`slide_detail` view. Deck-wide element listing requires a separate explicit
+collection mode with its own stable ordering and cursor scope.
+
 ## Sessions and Revisions
 
 `pptx_open` returns:
