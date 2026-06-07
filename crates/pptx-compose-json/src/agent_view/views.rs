@@ -735,9 +735,15 @@ fn project_element(
     let shape = read_shape(element, path.clone());
     let text = first_descendant(element, "txBody").map(project_text);
     let text_hash = text.as_ref().map(|text| text.text_hash.clone());
+    let mut image_support = if core_kind == CoreElementKind::Picture {
+        ImageEditSupport::Unresolved
+    } else {
+        ImageEditSupport::NotPicture
+    };
     let image = if core_kind == CoreElementKind::Picture {
         match read_picture(element, path.clone(), slide_rels, package) {
             Ok(picture) if !picture.external => {
+                image_support = ImageEditSupport::Embedded;
                 let Some(media_part) = picture.media_part else {
                     return Err(JsonError::Projection(
                         "Embedded picture did not resolve to a media part.".to_owned(),
@@ -764,7 +770,11 @@ fn project_element(
                     .or_insert_with(|| image.clone());
                 Some(image)
             }
-            Ok(_) | Err(_) => None,
+            Ok(_) => {
+                image_support = ImageEditSupport::ExternalLink;
+                None
+            }
+            Err(_) => None,
         }
     } else {
         None
@@ -791,7 +801,7 @@ fn project_element(
                 cy: bounds.cy,
             },
         ),
-        editable: editable(core_kind, text.is_some(), image.is_some()),
+        editable: editable(text.is_some(), image_support),
         fingerprint: fingerprint(&FingerprintInput {
             kind: core_kind,
             part: slide_part,
@@ -1098,7 +1108,22 @@ fn default_capabilities() -> Capabilities {
     }
 }
 
-fn editable(kind: CoreElementKind, has_text: bool, has_image: bool) -> Editable {
+#[derive(Clone, Copy)]
+enum ImageEditSupport {
+    Embedded,
+    ExternalLink,
+    NotPicture,
+    Unresolved,
+}
+
+fn editable(has_text: bool, image_support: ImageEditSupport) -> Editable {
+    let (image_supported, image_reason) = match image_support {
+        ImageEditSupport::Embedded => (true, None),
+        ImageEditSupport::ExternalLink => (false, Some("external_link".to_owned())),
+        ImageEditSupport::NotPicture => (false, Some("not_picture".to_owned())),
+        ImageEditSupport::Unresolved => (false, None),
+    };
+
     Editable {
         text: EditableSupport {
             supported: has_text,
@@ -1109,8 +1134,8 @@ fn editable(kind: CoreElementKind, has_text: bool, has_image: bool) -> Editable 
             reason: None,
         },
         image: EditableSupport {
-            supported: has_image,
-            reason: (!matches!(kind, CoreElementKind::Picture)).then(|| "not_picture".to_owned()),
+            supported: image_supported,
+            reason: image_reason,
         },
     }
 }
@@ -1355,6 +1380,100 @@ fn all_modes() {
 
 #[cfg(test)]
 #[test]
+fn image_editability_matches_embedded_and_external_picture_support() {
+    use pptx_compose_core::{
+        opc::{
+            package::{OFFICE_DOCUMENT_REL_TYPE, Package},
+            part_name::PartName,
+            relationships::{Relationship, RelationshipSource},
+        },
+        pptx::{media::IMAGE_REL_TYPE, presentation::PresentationDocument},
+    };
+
+    const SLIDE_REL_TYPE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+
+    let presentation_part = PartName::from_zip_entry("ppt/presentation.xml").expect("part name");
+    let slide_part = PartName::from_zip_entry("ppt/slides/slide1.xml").expect("part name");
+    let media_part = PartName::from_zip_entry("ppt/media/image1.png").expect("part name");
+
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("[Content_Types].xml", content_types_xml().to_vec())
+        .expect("content types part inserts");
+    package
+        .insert_zip_entry("ppt/presentation.xml", presentation_xml().to_vec())
+        .expect("presentation part inserts");
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", picture_slide_xml().to_vec())
+        .expect("slide part inserts");
+    package
+        .insert_zip_entry("ppt/media/image1.png", b"embedded image bytes".to_vec())
+        .expect("media part inserts");
+    package
+        .content_types_mut()
+        .insert_default("png", "image/png");
+
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        OFFICE_DOCUMENT_REL_TYPE,
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlide",
+        SLIDE_REL_TYPE,
+        "slides/slide1.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(slide_part.clone()),
+        "rEmbed",
+        IMAGE_REL_TYPE,
+        "../media/image1.png",
+    ));
+    package.push_relationship(Relationship::external(
+        RelationshipSource::Part(slide_part),
+        "rLink",
+        IMAGE_REL_TYPE,
+        "https://example.test/image.png",
+    ));
+
+    let pkg = PresentationDocument::open(package).expect("presentation opens");
+    let value = build_view(&pkg, request_for(&pkg, ViewMode::SlideDetail, None))
+        .expect("slide detail builds");
+    let elements = value["slides"][0]["elements"]
+        .as_array()
+        .expect("elements array");
+
+    let embedded = elements
+        .iter()
+        .find(|element| element["xml_location"]["cnvpr_name"] == "Embedded Picture")
+        .expect("embedded picture is projected");
+    assert_eq!(embedded["editable"]["image"]["supported"], true);
+    assert_eq!(embedded["editable"]["image"].get("reason"), None);
+    assert_eq!(embedded["image"]["relationship_id"], "rEmbed");
+
+    let linked = elements
+        .iter()
+        .find(|element| element["xml_location"]["cnvpr_name"] == "Linked Picture")
+        .expect("linked picture is projected");
+    assert_eq!(linked["editable"]["image"]["supported"], false);
+    assert_eq!(linked["editable"]["image"]["reason"], "external_link");
+    assert_eq!(linked.get("image"), None);
+
+    assert_eq!(
+        pkg.package()
+            .parts()
+            .get(&media_part)
+            .expect("embedded media part remains present")
+            .bytes(),
+        b"embedded image bytes"
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn slide_detail_paginates_elements_with_working_cursor() {
     let slide = slide_projection_with_elements(3);
     let document_id = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -1407,6 +1526,21 @@ fn slide_detail_paginates_elements_with_working_cursor() {
     )
     .expect_err("element cursor is scoped to its slide");
     assert!(matches!(err, JsonError::InvalidCursor(_)));
+}
+
+#[cfg(test)]
+fn presentation_xml() -> &'static [u8] {
+    br#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rSlide"/></p:sldIdLst></p:presentation>"#
+}
+
+#[cfg(test)]
+fn content_types_xml() -> &'static [u8] {
+    br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="png" ContentType="image/png"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>"#
+}
+
+#[cfg(test)]
+fn picture_slide_xml() -> &'static [u8] {
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:pic><p:nvPicPr><p:cNvPr id="5" name="Embedded Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rEmbed"/></p:blipFill><p:spPr/></p:pic><p:pic><p:nvPicPr><p:cNvPr id="6" name="Linked Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:link="rLink"/></p:blipFill><p:spPr/></p:pic></p:spTree></p:cSld></p:sld>"#
 }
 
 #[cfg(test)]
