@@ -957,6 +957,9 @@ fn project_validation(package: &Package, document_id: &str, revision: u32) -> Va
                         FindingCategory::Presentation
                     }
                     pptx_compose_core::validation::FindingCategory::Slide => FindingCategory::Slide,
+                    pptx_compose_core::validation::FindingCategory::Comments => {
+                        FindingCategory::Comments
+                    }
                     pptx_compose_core::validation::FindingCategory::Xml => FindingCategory::Xml,
                     pptx_compose_core::validation::FindingCategory::Package => {
                         FindingCategory::Package
@@ -975,6 +978,9 @@ fn project_validation(package: &Package, document_id: &str, revision: u32) -> Va
                     pptx_compose_core::validation::FindingCode::DanglingInternalRelationship => {
                         FindingCode::DanglingInternalRelationship
                     }
+                    pptx_compose_core::validation::FindingCode::UnreferencedMedia => {
+                        FindingCode::UnreferencedMedia
+                    }
                     pptx_compose_core::validation::FindingCode::UnresolvedRelationshipReference => {
                         FindingCode::UnresolvedRelationshipReference
                     }
@@ -983,6 +989,9 @@ fn project_validation(package: &Package, document_id: &str, revision: u32) -> Va
                     }
                     pptx_compose_core::validation::FindingCode::ExternalRelationshipNotChecked => {
                         FindingCode::ExternalRelationshipNotChecked
+                    }
+                    pptx_compose_core::validation::FindingCode::DanglingCommentAuthorRef => {
+                        FindingCode::DanglingCommentAuthorRef
                     }
                     pptx_compose_core::validation::FindingCode::DuplicateSlideId => {
                         FindingCode::DuplicateSlideId

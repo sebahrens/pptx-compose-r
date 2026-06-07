@@ -82,6 +82,7 @@ const fn category(category: core_validation::FindingCategory) -> FindingCategory
         core_validation::FindingCategory::Relationship => FindingCategory::Relationship,
         core_validation::FindingCategory::Presentation => FindingCategory::Presentation,
         core_validation::FindingCategory::Slide => FindingCategory::Slide,
+        core_validation::FindingCategory::Comments => FindingCategory::Comments,
         core_validation::FindingCategory::Xml => FindingCategory::Xml,
         core_validation::FindingCategory::Package => FindingCategory::Package,
         core_validation::FindingCategory::Signature => FindingCategory::Signature,
@@ -97,6 +98,7 @@ const fn code(code: core_validation::FindingCode) -> FindingCode {
         core_validation::FindingCode::DanglingInternalRelationship => {
             FindingCode::DanglingInternalRelationship
         }
+        core_validation::FindingCode::UnreferencedMedia => FindingCode::UnreferencedMedia,
         core_validation::FindingCode::UnresolvedRelationshipReference => {
             FindingCode::UnresolvedRelationshipReference
         }
@@ -105,6 +107,9 @@ const fn code(code: core_validation::FindingCode) -> FindingCode {
         }
         core_validation::FindingCode::ExternalRelationshipNotChecked => {
             FindingCode::ExternalRelationshipNotChecked
+        }
+        core_validation::FindingCode::DanglingCommentAuthorRef => {
+            FindingCode::DanglingCommentAuthorRef
         }
         core_validation::FindingCode::DuplicateSlideId => FindingCode::DuplicateSlideId,
         core_validation::FindingCode::SlideOrderMismatch => FindingCode::SlideOrderMismatch,

@@ -4,7 +4,7 @@ use pptx_compose_core::validation::{
 
 #[test]
 fn every_044_finding_has_producer_or_deferral() {
-    assert_eq!(FINDING_REGISTRY.len(), 15);
+    assert_eq!(FINDING_REGISTRY.len(), 17);
     assert_eq!(FINDING_COVERAGE.len(), FINDING_REGISTRY.len());
 
     for (code, _, _) in FINDING_REGISTRY {
@@ -49,7 +49,9 @@ fn every_044_finding_has_producer_or_deferral() {
     }
 
     assert_has_runtime_producer(FindingCode::MediaContentTypeMismatch);
+    assert_has_runtime_producer(FindingCode::UnreferencedMedia);
     assert_has_runtime_producer(FindingCode::UnresolvedRelationshipReference);
+    assert_has_runtime_producer(FindingCode::DanglingCommentAuthorRef);
     assert_deferral(
         FindingCode::SlideOrderMismatch,
         "specs/050-roundtrip-invariants.md",

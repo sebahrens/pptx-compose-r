@@ -16,6 +16,7 @@ pub enum FindingCategory {
     Relationship,
     Presentation,
     Slide,
+    Comments,
     Xml,
     Package,
     Signature,
@@ -27,9 +28,11 @@ pub enum FindingCode {
     MissingContentType,
     MediaContentTypeMismatch,
     DanglingInternalRelationship,
+    UnreferencedMedia,
     UnresolvedRelationshipReference,
     DuplicateRelationshipId,
     ExternalRelationshipNotChecked,
+    DanglingCommentAuthorRef,
     DuplicateSlideId,
     SlideOrderMismatch,
     DuplicateDrawingId,
@@ -58,6 +61,11 @@ pub const FINDING_REGISTRY: &[(FindingCode, FindingCategory, Severity)] = &[
         Severity::Error,
     ),
     (
+        FindingCode::UnreferencedMedia,
+        FindingCategory::Package,
+        Severity::Info,
+    ),
+    (
         FindingCode::UnresolvedRelationshipReference,
         FindingCategory::Relationship,
         Severity::Error,
@@ -71,6 +79,11 @@ pub const FINDING_REGISTRY: &[(FindingCode, FindingCategory, Severity)] = &[
         FindingCode::ExternalRelationshipNotChecked,
         FindingCategory::Relationship,
         Severity::Warning,
+    ),
+    (
+        FindingCode::DanglingCommentAuthorRef,
+        FindingCategory::Comments,
+        Severity::Error,
     ),
     (
         FindingCode::DuplicateSlideId,
@@ -126,6 +139,7 @@ impl FindingCode {
             Self::MissingContentType => (FindingCategory::ContentType, Severity::Error),
             Self::MediaContentTypeMismatch => (FindingCategory::ContentType, Severity::Error),
             Self::DanglingInternalRelationship => (FindingCategory::Relationship, Severity::Error),
+            Self::UnreferencedMedia => (FindingCategory::Package, Severity::Info),
             Self::UnresolvedRelationshipReference => {
                 (FindingCategory::Relationship, Severity::Error)
             }
@@ -133,6 +147,7 @@ impl FindingCode {
             Self::ExternalRelationshipNotChecked => {
                 (FindingCategory::Relationship, Severity::Warning)
             }
+            Self::DanglingCommentAuthorRef => (FindingCategory::Comments, Severity::Error),
             Self::DuplicateSlideId => (FindingCategory::Presentation, Severity::Error),
             Self::SlideOrderMismatch => (FindingCategory::Presentation, Severity::Error),
             Self::DuplicateDrawingId => (FindingCategory::Slide, Severity::Error),
@@ -165,6 +180,11 @@ fn registry_matches_044_table() {
             Severity::Error,
         ),
         (
+            FindingCode::UnreferencedMedia,
+            FindingCategory::Package,
+            Severity::Info,
+        ),
+        (
             FindingCode::UnresolvedRelationshipReference,
             FindingCategory::Relationship,
             Severity::Error,
@@ -178,6 +198,11 @@ fn registry_matches_044_table() {
             FindingCode::ExternalRelationshipNotChecked,
             FindingCategory::Relationship,
             Severity::Warning,
+        ),
+        (
+            FindingCode::DanglingCommentAuthorRef,
+            FindingCategory::Comments,
+            Severity::Error,
         ),
         (
             FindingCode::DuplicateSlideId,
@@ -227,7 +252,7 @@ fn registry_matches_044_table() {
     ];
 
     assert_eq!(FINDING_REGISTRY, expected);
-    assert_eq!(FINDING_REGISTRY.len(), 15);
+    assert_eq!(FINDING_REGISTRY.len(), 17);
 
     for (code, category, severity) in expected {
         assert_eq!(code.default_entry(), (category, severity));

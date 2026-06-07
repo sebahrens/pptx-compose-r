@@ -30,6 +30,11 @@ For `read(input).write(output)` with no edits:
 - Added media parts must have correct content types.
 - Slide XML must reference the correct relationship ID.
 - Existing media bytes must remain unchanged unless explicitly replaced.
+- Media parts under `ppt/media/*` that are referenced by zero internal package relationships must be reported as `unreferenced_media`; V1 validation preserves them and does not garbage-collect automatically.
+
+## Comments Integrity
+
+- Comment `authorId` references in `p:cmLst` parts must resolve to an author id in `ppt/commentAuthors.xml`; dangling references must be reported as `dangling_comment_author_ref`.
 
 ## XML Integrity
 

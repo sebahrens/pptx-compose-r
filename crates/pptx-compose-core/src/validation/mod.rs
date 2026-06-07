@@ -167,6 +167,12 @@ pub const FINDING_COVERAGE: &[FindingCoverage] = &[
         deferral: None,
     },
     FindingCoverage {
+        code: FindingCode::UnreferencedMedia,
+        producer: Some(package_graph::PRODUCER_CHECK_UNREFERENCED_MEDIA),
+        producer_test: Some("validation::package_graph::detects_unreferenced_media"),
+        deferral: None,
+    },
+    FindingCoverage {
         code: FindingCode::UnresolvedRelationshipReference,
         producer: Some(package_graph::PRODUCER_CHECK_UNRESOLVED_RELATIONSHIP_REFERENCE),
         producer_test: Some("validation::package_graph::detects_unresolved_relationship_reference"),
@@ -184,6 +190,12 @@ pub const FINDING_COVERAGE: &[FindingCoverage] = &[
         producer_test: Some(
             "hazardous_package_preservation::preserves_hazardous_parts_and_warns_without_fetching",
         ),
+        deferral: None,
+    },
+    FindingCoverage {
+        code: FindingCode::DanglingCommentAuthorRef,
+        producer: Some(package_graph::PRODUCER_CHECK_DANGLING_COMMENT_AUTHOR_REF),
+        producer_test: Some("validation::package_graph::detects_dangling_comment_author_ref"),
         deferral: None,
     },
     FindingCoverage {

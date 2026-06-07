@@ -121,9 +121,11 @@ Edited documents with any `error` or `fatal` finding must not be written by defa
 | `missing_content_type` | `content_type` | `error` | An ordinary part resolves to no content type (010, 012 resolution algorithm, 050). |
 | `media_content_type_mismatch` | `content_type` | `error` | A media part's declared content type disagrees with its sniffed magic-byte type (012, 032). |
 | `dangling_internal_relationship` | `relationship` | `error` | An internal relationship `Target` does not resolve to an existing part (010, 050). |
+| `unreferenced_media` | `package` | `info` | A `ppt/media/*` part is referenced by zero internal package relationships; preserved, never auto-pruned in V1 (050). |
 | `unresolved_relationship_reference` | `relationship` | `error` | Slide/part XML references an `r:id`/`rId` not present in that part's `.rels` (012, 050). |
 | `duplicate_relationship_id` | `relationship` | `error` | Two relationships in one relationship part share an `Id` (010, 012, 050). |
 | `external_relationship_not_checked` | `relationship` | `warning` | An external relationship was preserved but not fetched (010). |
+| `dangling_comment_author_ref` | `comments` | `error` | A `p:cmLst` comment `authorId` does not resolve to `ppt/commentAuthors.xml` (050). |
 | `duplicate_slide_id` | `presentation` | `error` | Two `p:sldId` entries share an id (050). |
 | `slide_order_mismatch` | `presentation` | `error` | Slide order diverges from `p:sldIdLst` without an explicit reorder edit (050). |
 | `duplicate_drawing_id` | `slide` | `error` | Two `p:cNvPr` ids collide within one slide shape tree (050). |

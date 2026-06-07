@@ -15,8 +15,12 @@ use crate::{
 
 pub(crate) const PRODUCER_CHECK_DANGLING_INTERNAL_RELATIONSHIP: &str =
     "validation::package_graph::check_dangling_internal_relationship";
+pub(crate) const PRODUCER_CHECK_UNREFERENCED_MEDIA: &str =
+    "validation::package_graph::check_unreferenced_media";
 pub(crate) const PRODUCER_CHECK_DUPLICATE_RELATIONSHIP_ID: &str =
     "validation::package_graph::check_duplicate_relationship_id";
+pub(crate) const PRODUCER_CHECK_DANGLING_COMMENT_AUTHOR_REF: &str =
+    "validation::package_graph::check_dangling_comment_author_ref";
 pub(crate) const PRODUCER_CHECK_MISSING_CONTENT_TYPE: &str =
     "validation::package_graph::check_missing_content_type";
 pub(crate) const PRODUCER_CHECK_MEDIA_CONTENT_TYPE_MISMATCH: &str =
@@ -28,7 +32,9 @@ pub(crate) const PRODUCER_CHECK_UNRESOLVED_RELATIONSHIP_REFERENCE: &str =
 pub fn check_package_graph(pkg: &Package) -> Vec<Finding> {
     let mut findings = Vec::new();
     check_dangling_internal_relationship(pkg, &mut findings);
+    check_unreferenced_media(pkg, &mut findings);
     check_duplicate_relationship_id(pkg, &mut findings);
+    check_dangling_comment_author_ref(pkg, &mut findings);
     check_missing_content_type(pkg, &mut findings);
     check_media_content_type_mismatch(pkg, &mut findings);
     check_unresolved_relationship_reference(pkg, &mut findings);
@@ -76,6 +82,46 @@ fn check_dangling_internal_relationship(pkg: &Package, findings: &mut Vec<Findin
     }
 }
 
+fn check_unreferenced_media(pkg: &Package, findings: &mut Vec<Finding>) {
+    let referenced_media_parts = pkg
+        .relationships()
+        .iter()
+        .filter(|relationship| relationship.target_mode == TargetMode::Internal)
+        .filter_map(|relationship| {
+            relationship
+                .resolved_target
+                .clone()
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    resolve_internal_target(&relationship.source, &relationship.target)
+                })
+                .ok()
+        })
+        .filter(is_media_part)
+        .collect::<BTreeSet<_>>();
+
+    for part in pkg.parts().iter().filter(|part| is_media_part(part.name())) {
+        if referenced_media_parts.contains(part.name()) {
+            continue;
+        }
+
+        findings.push(Finding::new(
+            "",
+            FindingCode::UnreferencedMedia,
+            format!(
+                "Media part {} is not referenced by any internal package relationship.",
+                part.name()
+            ),
+            false,
+            location(&[("part", part.name().zip_entry_name().to_owned())]),
+            Some(
+                "Remove the media part only as part of an explicit garbage-collection edit."
+                    .to_owned(),
+            ),
+        ));
+    }
+}
+
 fn check_duplicate_relationship_id(pkg: &Package, findings: &mut Vec<Finding>) {
     let mut ids_by_source: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
@@ -101,6 +147,102 @@ fn check_duplicate_relationship_id(pkg: &Package, findings: &mut Vec<Finding>) {
             ));
         }
     }
+}
+
+fn check_dangling_comment_author_ref(pkg: &Package, findings: &mut Vec<Finding>) {
+    let author_ids = comment_author_ids(pkg);
+
+    for part in pkg.parts().iter() {
+        if !is_comment_list_part(part.name()) {
+            continue;
+        }
+
+        let Ok(document) = parse_document(part.bytes()) else {
+            continue;
+        };
+        let Some(root) = document.root_element() else {
+            continue;
+        };
+        let mut author_refs = BTreeSet::new();
+        collect_comment_author_refs(root, &mut author_refs);
+
+        for author_id in author_refs {
+            if author_ids.contains(&author_id) {
+                continue;
+            }
+
+            findings.push(Finding::new(
+                "",
+                FindingCode::DanglingCommentAuthorRef,
+                format!(
+                    "Comment part {} references missing comment author id {author_id}.",
+                    part.name()
+                ),
+                false,
+                location(&[
+                    ("part", part.name().zip_entry_name().to_owned()),
+                    ("author_id", author_id),
+                ]),
+                Some(
+                    "Add the comment author entry or remove the stale comment reference."
+                        .to_owned(),
+                ),
+            ));
+        }
+    }
+}
+
+fn comment_author_ids(pkg: &Package) -> BTreeSet<String> {
+    let Ok(part_name) = PartName::from_zip_entry("ppt/commentAuthors.xml") else {
+        return BTreeSet::new();
+    };
+    let Some(part) = pkg.parts().get(&part_name) else {
+        return BTreeSet::new();
+    };
+    let Ok(document) = parse_document(part.bytes()) else {
+        return BTreeSet::new();
+    };
+    let Some(root) = document.root_element() else {
+        return BTreeSet::new();
+    };
+
+    let mut author_ids = BTreeSet::new();
+    collect_comment_author_ids(root, &mut author_ids);
+    author_ids
+}
+
+fn collect_comment_author_ids(element: &XmlElement, author_ids: &mut BTreeSet<String>) {
+    if element.name.local_name == "cmAuthor"
+        && let Some(id) = attribute_value(element, "id")
+    {
+        author_ids.insert(id.to_owned());
+    }
+
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_comment_author_ids(child, author_ids);
+    }
+}
+
+fn collect_comment_author_refs(element: &XmlElement, author_refs: &mut BTreeSet<String>) {
+    if element.name.local_name == "cm"
+        && let Some(author_id) = attribute_value(element, "authorId")
+    {
+        author_refs.insert(author_id.to_owned());
+    }
+
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_comment_author_refs(child, author_refs);
+    }
+}
+
+fn attribute_value<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .iter()
+        .find(|attribute| {
+            !attribute.namespace_declaration && attribute.name.local_name == local_name
+        })
+        .map(|attribute| attribute.value.as_str())
 }
 
 fn check_missing_content_type(pkg: &Package, findings: &mut Vec<Finding>) {
@@ -232,6 +374,11 @@ fn is_xml_part(part_name: &PartName) -> bool {
 
 fn is_media_part(part_name: &PartName) -> bool {
     part_name.as_str().starts_with("/ppt/media/")
+}
+
+fn is_comment_list_part(part_name: &PartName) -> bool {
+    let path = part_name.as_str();
+    path.starts_with("/ppt/comments/comment") && path.ends_with(".xml")
 }
 
 fn sniff_media_content_type(bytes: &[u8]) -> Option<&'static str> {
@@ -377,6 +524,35 @@ fn detects_media_content_type_mismatch() {
 }
 
 #[test]
+fn detects_unreferenced_media() {
+    use crate::{
+        opc::{package::Package, part_name::PartName},
+        validation::{FindingCode, package_graph::check_package_graph},
+    };
+
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("ppt/media/image1.png", Vec::new())
+        .expect("media part inserted");
+    package
+        .content_types_mut()
+        .insert_default("png", "image/png");
+
+    let findings = check_package_graph(&package);
+    let finding = findings
+        .iter()
+        .find(|finding| finding.code == FindingCode::UnreferencedMedia)
+        .expect("unreferenced media is reported");
+
+    assert_eq!(
+        finding.location["part"],
+        PartName::from_zip_entry("ppt/media/image1.png")
+            .expect("valid part")
+            .zip_entry_name()
+    );
+}
+
+#[test]
 fn detects_unresolved_relationship_reference() {
     use crate::{
         opc::{
@@ -420,4 +596,46 @@ fn detects_unresolved_relationship_reference() {
         .find(|finding| finding.code == FindingCode::UnresolvedRelationshipReference)
         .expect("missing relationship reference is reported");
     assert_eq!(finding.location["relationship_id"], "rIdMissing");
+}
+
+#[test]
+fn detects_dangling_comment_author_ref() {
+    use crate::{
+        opc::{package::Package, part_name::PartName},
+        validation::{FindingCode, package_graph::check_package_graph},
+    };
+
+    let comments_part =
+        PartName::from_zip_entry("ppt/comments/comment1.xml").expect("valid comments part");
+    let mut package = Package::new();
+    package
+        .insert_zip_entry(
+            "ppt/commentAuthors.xml",
+            br#"<p:cmAuthorLst xmlns:p="p"><p:cmAuthor id="0" name="Ada"/></p:cmAuthorLst>"#
+                .to_vec(),
+        )
+        .expect("comment authors part inserted");
+    package
+        .insert_zip_entry(
+            "ppt/comments/comment1.xml",
+            br#"<p:cmLst xmlns:p="p"><p:cm authorId="0"/><p:cm authorId="42"/></p:cmLst>"#.to_vec(),
+        )
+        .expect("comments part inserted");
+    package.content_types_mut().insert_override(
+        PartName::from_zip_entry("ppt/commentAuthors.xml").expect("valid authors part"),
+        "application/vnd.openxmlformats-officedocument.presentationml.commentAuthors+xml",
+    );
+    package.content_types_mut().insert_override(
+        comments_part,
+        "application/vnd.openxmlformats-officedocument.presentationml.comments+xml",
+    );
+
+    let findings = check_package_graph(&package);
+    let finding = findings
+        .iter()
+        .find(|finding| finding.code == FindingCode::DanglingCommentAuthorRef)
+        .expect("dangling comment author reference is reported");
+
+    assert_eq!(finding.location["part"], "ppt/comments/comment1.xml");
+    assert_eq!(finding.location["author_id"], "42");
 }
