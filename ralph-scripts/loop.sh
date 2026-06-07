@@ -17,7 +17,7 @@
 #   ./loop.sh plan               - Run planning loop (decompose backlog)
 #   ./loop.sh N                  - Run build loop for max N iterations
 #   ./loop.sh plan N             - Run planning loop for max N iterations
-#   ./loop.sh include-tests      - Run build loop with cargo test/clippy each pass
+#   ./loop.sh include-tests      - Run build loop with cargo + roundtrip E2E tests
 #   ./loop.sh include-tests N    - Run build loop with tests for max N iterations
 #   ./loop.sh codex              - Run the loop with OpenAI Codex instead of Claude
 #   ./loop.sh codex plan N       - Flags compose: engine + mode + iteration cap
@@ -33,9 +33,9 @@
 #   codex  — Uses the model from ~/.codex/config.toml by default. Override with
 #            CODEX_BUILD_MODEL.
 #
-# By default only the build phase runs. The cargo test/clippy phase is opt-in via
-# the "include-tests" flag, and is skipped gracefully while the repo is still in
-# the cleanroom spec-only state (no Cargo workspace yet).
+# By default only the build phase runs. The cargo test/clippy and roundtrip-e2e
+# phases are opt-in via the "include-tests" flag, and are skipped gracefully while
+# the repo is still in the cleanroom spec-only state (no Cargo workspace yet).
 #
 # FIX for Claude Code hang bug (GitHub #19060, #25629, #31050):
 # Claude completes work but never calls process.exit(). The process hangs
@@ -50,6 +50,7 @@ unset ANTHROPIC_API_KEY
 
 MODE="build"
 INCLUDE_TESTS=false
+RUN_ROUNDTRIP_E2E=true
 MAX_ITERATIONS=0
 ITERATION=0
 ENGINE="${RALPH_ENGINE:-claude}"              # claude (default) or codex
@@ -64,15 +65,20 @@ pptx-compose Ralph Loop Runner — drives an agent (Claude or Codex) over the
 pptx-compose repo, iterating on beads-tracked work until done or a cap is hit.
 
 USAGE:
-  ./loop.sh [claude|codex] [plan] [include-tests] [N]
+  ./loop.sh [claude|codex] [plan] [include-tests] [roundtrip-e2e|skip-roundtrip-e2e] [N]
   ./loop.sh --help | -h
 
 POSITIONAL ARGS (order-independent, all optional, compose freely):
   plan            Run the planning loop (decompose specs/epics into true atomic
                   tasks) instead of the default build loop. Uses PROMPT_plan.md.
-  include-tests   After each build iteration, also run `cargo test` and
-                  `cargo clippy`. Opt-in; off by default. Skipped automatically
-                  while there is no Cargo workspace yet. Ignored in plan mode.
+  include-tests   After each build iteration, also run `cargo test`,
+                  `cargo clippy`, and the roundtrip-e2e PPTX -> JSON -> PPTX
+                  check. Opt-in; off by default. Skipped automatically while
+                  there is no Cargo workspace yet. Ignored in plan mode.
+  roundtrip-e2e   Keep the roundtrip E2E check enabled under include-tests. This
+                  is the default; pass for explicitness in scripted runs.
+  skip-roundtrip-e2e
+                  Disable only the roundtrip E2E check while keeping cargo tests.
   claude          Use the Claude engine (`claude -p`). This is the default.
   codex           Use the OpenAI Codex engine (`codex exec`) instead of Claude.
                   Equivalent to RALPH_ENGINE=codex.
@@ -84,7 +90,9 @@ POSITIONAL ARGS (order-independent, all optional, compose freely):
     ./loop.sh plan             Planning loop (decompose backlog to atomic)
     ./loop.sh 5                Build loop, stop after 5 iterations
     ./loop.sh plan 3           Planning loop, max 3 iterations
-    ./loop.sh include-tests    Build loop + cargo test/clippy each pass
+    ./loop.sh include-tests    Build loop + cargo + roundtrip-e2e each pass
+    ./loop.sh include-tests skip-roundtrip-e2e
+                               Build loop + cargo only
     ./loop.sh codex plan 2     Codex engine, planning loop, max 2 iterations
 
 ENGINES:
@@ -431,6 +439,10 @@ for arg in "$@"; do
         MODE="plan"
     elif [ "$arg" = "include-tests" ]; then
         INCLUDE_TESTS=true
+    elif [ "$arg" = "roundtrip-e2e" ]; then
+        RUN_ROUNDTRIP_E2E=true
+    elif [ "$arg" = "skip-roundtrip-e2e" ]; then
+        RUN_ROUNDTRIP_E2E=false
     elif [ "$arg" = "codex" ]; then
         ENGINE="codex"
     elif [ "$arg" = "claude" ]; then
@@ -461,6 +473,9 @@ echo "=== pptx-compose Ralph Loop ==="
 echo "Engine: $ENGINE"
 echo "Mode: $MODE"
 echo "Tests: $INCLUDE_TESTS"
+if [ "$INCLUDE_TESTS" = true ]; then
+    echo "Roundtrip E2E: $RUN_ROUNDTRIP_E2E"
+fi
 echo "Project: $PROJECT_DIR"
 if [ $MAX_ITERATIONS -gt 0 ]; then
     echo "Max iterations: $MAX_ITERATIONS"
@@ -641,6 +656,42 @@ $CARGO_TAIL" 2>/dev/null || true
                 fi
             else
                 echo "  ✓ cargo test + clippy passed"
+                if [ "$RUN_ROUNDTRIP_E2E" = true ]; then
+                    echo ""
+                    echo "  Phase 1.6: roundtrip-e2e (PPTX -> legacy JSON -> PPTX)"
+                    ROUNDTRIP_LOG="$PROJECT_DIR/.ralph-roundtrip-e2e.log"
+                    set +e
+                    ( cd "$PROJECT_DIR" && python3 "$SCRIPT_DIR/pptx_roundtrip_e2e.py" --project-dir "$PROJECT_DIR" --file-beads ) >"$ROUNDTRIP_LOG" 2>&1
+                    ROUNDTRIP_EXIT=$?
+                    set -e
+
+                    if [ $ROUNDTRIP_EXIT -ne 0 ]; then
+                        echo "  ⚠ roundtrip-e2e FAILED (exit=$ROUNDTRIP_EXIT)"
+                        tail -20 "$ROUNDTRIP_LOG" | sed 's/^/    /'
+                        echo "  Defect beads are filed by pptx_roundtrip_e2e.py when bd is available."
+                    else
+                        echo "  ✓ roundtrip-e2e passed"
+                        tail -5 "$ROUNDTRIP_LOG" | sed 's/^/    /'
+                    fi
+                    rm -f "$ROUNDTRIP_LOG"
+
+                    echo ""
+                    echo "  Phase 1.7: edit-e2e (apply V1 edit ops + visual QA)"
+                    EDIT_LOG="$PROJECT_DIR/.ralph-edit-e2e.log"
+                    set +e
+                    ( cd "$PROJECT_DIR" && python3 "$SCRIPT_DIR/pptx_edit_e2e.py" --project-dir "$PROJECT_DIR" ) >"$EDIT_LOG" 2>&1
+                    EDIT_EXIT=$?
+                    set -e
+
+                    if [ $EDIT_EXIT -ne 0 ]; then
+                        echo "  ⚠ edit-e2e FAILED (exit=$EDIT_EXIT)"
+                        tail -20 "$EDIT_LOG" | sed 's/^/    /'
+                    else
+                        echo "  ✓ edit-e2e passed"
+                        tail -8 "$EDIT_LOG" | sed 's/^/    /'
+                    fi
+                    rm -f "$EDIT_LOG"
+                fi
             fi
             rm -f "$CARGO_LOG"
         else

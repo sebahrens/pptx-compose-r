@@ -71,6 +71,46 @@ invariants = ["contains-presentation-part", "roundtrip", "edit-add-image"]
 consuming_test = "roundtrip_golden::edits::add_image_runs_against_corpus_media_fixture"
 
 [[entries]]
+path = "real-world/worldbank-cpf-concept-note.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "embedding", "external-relationship"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/worldbank-macro-economic-update.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "external-relationship"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/worldbank-smart-rwanda-roadshow.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "media", "image", "unicode-metadata"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/oecd-economic-outlook-2017.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "embedding"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/rsm-technology-strategy.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "media", "image", "external-relationship"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
 path = "malformed/broken-slide-xml.pptx"
 source_app = "synthetic"
 features = ["malformed", "malformed-xml"]

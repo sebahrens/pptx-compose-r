@@ -83,6 +83,19 @@ yarn.lock
 dist/
 output/
 
+# Ralph E2E harness work dirs (regenerated artifacts, not source)
+.ralph-roundtrip-e2e/
+.ralph-edit-e2e/
+ralph-scripts/__pycache__/
+ralph-scripts/tests/__pycache__/
+
+# Rust build output
+target/
+
+# Local tooling state (coderlm index / session)
+.coderlm/
+.claude/coderlm_state/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

@@ -46,15 +46,16 @@ See [cleanroom process](specs/003-cleanroom-process.md).
 17. [Diffs, previews, and journals](specs/045-diffs-previews-journals.md)
 18. [Provenance and hashing](specs/046-provenance-and-hashing.md)
 19. [DrawingML construction](specs/047-drawingml-construction.md)
-20. [Round-trip invariants](specs/050-roundtrip-invariants.md)
-21. [Rust architecture](specs/060-rust-architecture.md)
-22. [Public API and CLI](specs/070-public-api-and-cli.md)
-23. [CLI agent contract](specs/071-cli-agent-contract.md)
-24. [MCP server contract](specs/072-mcp-server-contract.md)
-25. [Runtime safety and permissions](specs/073-runtime-safety-and-permissions.md)
-26. [Testing and fixtures](specs/080-testing-and-fixtures.md)
-27. [Agent runtime evals](specs/081-agent-runtime-evals.md)
-28. [Known risks and non-goals](specs/090-known-risks-and-non-goals.md)
+20. [Editability catalogue](specs/048-editability-catalogue.md)
+21. [Round-trip invariants](specs/050-roundtrip-invariants.md)
+22. [Rust architecture](specs/060-rust-architecture.md)
+23. [Public API and CLI](specs/070-public-api-and-cli.md)
+24. [CLI agent contract](specs/071-cli-agent-contract.md)
+25. [MCP server contract](specs/072-mcp-server-contract.md)
+26. [Runtime safety and permissions](specs/073-runtime-safety-and-permissions.md)
+27. [Testing and fixtures](specs/080-testing-and-fixtures.md)
+28. [Agent runtime evals](specs/081-agent-runtime-evals.md)
+29. [Known risks and non-goals](specs/090-known-risks-and-non-goals.md)
 
 ## Spec Map
 
@@ -79,6 +80,7 @@ See [cleanroom process](specs/003-cleanroom-process.md).
 | [045-diffs-previews-journals.md](specs/045-diffs-previews-journals.md) | Defines semantic diffs, preview levels, and transaction journals. |
 | [046-provenance-and-hashing.md](specs/046-provenance-and-hashing.md) | Defines derivation of document_id, revision, checksums, fingerprints, text hashes, and agent IDs. |
 | [047-drawingml-construction.md](specs/047-drawingml-construction.md) | Defines `p:pic`/`p:sp` templates, image rel URIs, EMU mapping, and default text-box style for inserted elements. |
+| [048-editability-catalogue.md](specs/048-editability-catalogue.md) | Exhaustive catalogue of every editable feature class: OOXML location, V1 status, rationale, and preservation risk. |
 | [050-roundtrip-invariants.md](specs/050-roundtrip-invariants.md) | Defines correctness rules for parse/write/edit cycles. |
 | [060-rust-architecture.md](specs/060-rust-architecture.md) | Defines crate/module boundaries for the Rust rewrite. |
 | [070-public-api-and-cli.md](specs/070-public-api-and-cli.md) | Defines library, Node-compatible, and CLI surfaces. |
