@@ -22,45 +22,108 @@ Full-deck export is not the primary agent read path for large decks. Agent-facin
 
 ```json
 {
+  "schema": "pptx-compose.agent_view.v1",
   "version": 1,
-  "document_id": "sha256:example-package-fingerprint",
+  "document_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "revision": 1,
+  "view_id": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+  "view": {
+    "mode": "slide_detail",
+    "limit": 20,
+    "next_cursor": null,
+    "truncated": false
+  },
+  "omitted_count": 0,
+  "capabilities": {
+    "operations": [
+      "replace_text",
+      "add_text_box",
+      "move_resize_element",
+      "set_alt_text",
+      "add_image",
+      "replace_image"
+    ],
+    "media_content_types": ["image/png", "image/jpeg", "image/gif"],
+    "units": "emu"
+  },
   "presentation": {
+    "part": "ppt/presentation.xml",
     "slide_count": 1
   },
   "slides": [
     {
       "id": "slide-1",
       "index": 0,
+      "ppt_slide_id": 256,
       "part": "ppt/slides/slide1.xml",
-      "layout": "ppt/slideLayouts/slideLayout1.xml",
+      "relationship_id": "rId7",
+      "layout_part": "ppt/slideLayouts/slideLayout1.xml",
+      "part_checksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "elements": [
         {
           "id": "slide-1:shape-4",
           "kind": "text_box",
-          "name": "Title 1",
-          "text": "Quarterly Results",
+          "slide_id": "slide-1",
+          "part": "ppt/slides/slide1.xml",
+          "xml_location": {
+            "sp_tree_path": [3],
+            "group_path": [],
+            "element_tag": "p:sp",
+            "cnvpr_id": 4,
+            "cnvpr_name": "Title 1"
+          },
+          "z_order": 3,
           "bounds": { "x": 914400, "y": 457200, "cx": 7315200, "cy": 914400 },
-          "editable": { "text": { "supported": true }, "bounds": { "supported": true }, "alt_text": { "supported": true } },
-          "selector_hints": {
-            "slide_index": 0,
-            "shape_name": "Title 1",
-            "text_hash": "sha256:example-text-hash"
+          "editable": {
+            "text": { "supported": true },
+            "bounds": { "supported": true },
+            "image": { "supported": false, "reason": "not_picture" }
+          },
+          "fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "text": {
+            "plain": "Quarterly Results",
+            "normalized": "Quarterly Results",
+            "paragraphs": [
+              {
+                "text": "Quarterly Results",
+                "runs": [
+                  {
+                    "text": "Quarterly Results",
+                    "style_summary": { "font_size_pt": 32, "bold": false }
+                  }
+                ]
+              }
+            ],
+            "text_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
           }
         },
         {
-          "id": "slide-1:pic-7",
+          "id": "slide-1:pic-5",
           "kind": "image",
-          "media_part": "ppt/media/image1.png",
-          "content_type": "image/png",
-          "bounds": { "x": 914400, "y": 1828800, "cx": 3657600, "cy": 2743200 },
-          "editable": { "bounds": { "supported": true }, "alt_text": { "supported": true }, "image": { "supported": true } },
+          "slide_id": "slide-1",
+          "part": "ppt/slides/slide1.xml",
+          "xml_location": {
+            "sp_tree_path": [4],
+            "group_path": [],
+            "element_tag": "p:pic",
+            "cnvpr_id": 5,
+            "cnvpr_name": "Picture 1"
+          },
+          "z_order": 4,
+          "bounds": { "x": 914400, "y": 1524000, "cx": 3657600, "cy": 2743200 },
+          "editable": {
+            "text": { "supported": false, "reason": "not_text" },
+            "bounds": { "supported": true },
+            "image": { "supported": true }
+          },
+          "fingerprint": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
           "image": {
             "relationship_id": "rId2",
             "media_part": "ppt/media/image1.png",
             "content_type": "image/png",
             "byte_length": 12345,
-            "checksum": "sha256:example-media-hash",
+            "checksum": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+            "intrinsic_size_px": { "width": 800, "height": 600 },
             "shared_media_ref_count": 1
           }
         }

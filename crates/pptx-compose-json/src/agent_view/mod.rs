@@ -310,9 +310,38 @@ pub mod schema {
 
     use super::AgentView;
     use crate::schema_versions::AGENT_VIEW_SCHEMA;
+    use crate::schemas::agent_view_json_schema;
 
     #[test]
-    fn roundtrip_matches_spec_042() {
+    fn spec_040_example_validates_against_agent_view_schema() {
+        let input = spec_040_agent_view_example();
+
+        let view: AgentView = serde_json::from_value(input.clone()).expect("spec example parses");
+        assert_eq!(view.schema, AGENT_VIEW_SCHEMA);
+
+        let output: Value = serde_json::to_value(view).expect("agent view serializes");
+        assert_eq!(output, input);
+
+        let schema = agent_view_json_schema().expect("agent view schema emits");
+        let validator = jsonschema::validator_for(&schema).expect("agent view schema compiles");
+        assert!(
+            validator.is_valid(&input),
+            "spec 040 example should validate against agent view schema"
+        );
+    }
+
+    fn spec_040_agent_view_example() -> Value {
+        let spec = include_str!("../../../../specs/040-agent-json-format.md");
+        let json = spec
+            .split("```json")
+            .nth(1)
+            .and_then(|block| block.split("```").next())
+            .expect("spec 040 contains a JSON AgentView example");
+        serde_json::from_str(json).expect("spec 040 AgentView example is valid JSON")
+    }
+
+    #[test]
+    fn spec_040_example_fixture_documents_expected_shape() {
         let input: Value = serde_json::from_str(
             r#"{
                 "schema": "pptx-compose.agent_view.v1",
