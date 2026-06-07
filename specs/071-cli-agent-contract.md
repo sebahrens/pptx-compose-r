@@ -32,6 +32,68 @@ pptx-compose --max-part-count N
 
 ## Commands
 
+### `capabilities`
+
+```bash
+pptx-compose capabilities
+```
+
+`capabilities` must not modify input or write PPTX output. It emits a capabilities document to stdout.
+
+Result schema:
+
+```json
+{
+  "schema": "pptx-compose.capabilities.v1",
+  "version": 1,
+  "status": "success",
+  "package": {
+    "name": "pptx-compose-cli",
+    "version": "0.1.0"
+  },
+  "commands": [
+    {
+      "name": "inspect",
+      "read_only": true
+    }
+  ],
+  "supported_operations": [
+    {
+      "op": "replace_text",
+      "dry_run": true
+    }
+  ],
+  "schemas": [
+    {
+      "name": "agent-view-v1",
+      "schema": "pptx-compose.agent_view.v1",
+      "version": 1
+    }
+  ],
+  "exit_codes": [
+    {
+      "exit": 0,
+      "meaning": "success",
+      "error_codes": []
+    }
+  ],
+  "raw_xml_enabled": false,
+  "default_limits": {
+    "max_compressed_package_bytes": 0,
+    "max_uncompressed_package_bytes": 0,
+    "max_part_count": 0,
+    "max_single_part_uncompressed_bytes": 0,
+    "max_media_part_bytes": 0,
+    "max_per_entry_compression_ratio": 0,
+    "max_xml_depth": 0,
+    "max_xml_node_count": 0,
+    "max_media_bytes": 0
+  }
+}
+```
+
+The numeric limit values are implementation defaults. Each `schemas[].name` advertised by this command must be accepted by `pptx-compose schema <name>`, and each `schemas[].schema` must match that schema document's `$id`.
+
 ### `inspect`
 
 ```bash
@@ -40,6 +102,77 @@ pptx-compose inspect INPUT.pptx --slides 1-5 --detail summary --output - --json-
 ```
 
 `inspect` must not modify input or write PPTX output. It emits an agent view matching [agent protocol schemas](042-agent-protocol-schemas.md).
+
+### `find-text`
+
+```bash
+pptx-compose find-text INPUT.pptx "QUERY" --slides slide-2 --cursor CURSOR --limit 25 --output matches.json
+pptx-compose find-text INPUT.pptx "QUERY" --slides 2 --output - --json-errors
+```
+
+`find-text` must not modify input or write PPTX output. It emits paginated text-search results matching the `find-text-v1` schema and the MCP `pptx_find_text` result shape.
+
+Arguments and flags:
+
+| Argument / flag | Meaning |
+| --- | --- |
+| `INPUT.pptx` | PPTX package to search. |
+| `QUERY` | Literal text query. Matching is implementation-defined but must be deterministic for the same input bytes and query. |
+| `--slides N\|slide-N` | Optional single-slide scope. Uses the same flag name and accepted single-slide forms as `inspect --slides`; omitted means deck-wide search. Multi-slide ranges/lists are reserved until `find-text` supports multi-slide scopes. |
+| `--cursor CURSOR` | Continue a previous `find-text` page. Cursors are opaque and only valid for the same input bytes, query, scope, and limit. |
+| `--limit N` | Maximum matches to return. The implementation may clamp or reject values above the global page limit. |
+| `--output PATH` | Write the result JSON to `PATH`, or `-` for stdout. Omitted means stdout. |
+
+Result schema:
+
+```json
+{
+  "schema": "pptx-compose.find_text.v1",
+  "version": 1,
+  "document_id": "sha256:...",
+  "revision": 0,
+  "query": "QUERY",
+  "scope": {
+    "type": "deck"
+  },
+  "view": {
+    "mode": "find_text",
+    "cursor": null,
+    "next_cursor": null,
+    "limit": 25
+  },
+  "omitted_count": 0,
+  "matches": [
+    {
+      "slide_id": "slide-1",
+      "slide_index": 1,
+      "element_id": "slide-1:shape-1",
+      "kind": "shape",
+      "part": "ppt/slides/slide1.xml",
+      "fingerprint": "sha256:...",
+      "text_hash": "sha256:...",
+      "span": {
+        "start": 0,
+        "end": 5
+      },
+      "matched_text": "QUERY",
+      "selector": {
+        "type": "element_id",
+        "id": "slide-1:shape-1",
+        "guards": {
+          "slide_id": "slide-1",
+          "kind": "shape",
+          "part": "ppt/slides/slide1.xml",
+          "text_hash": "sha256:...",
+          "fingerprint": "sha256:..."
+        }
+      }
+    }
+  ]
+}
+```
+
+For a scoped search, `scope` is `{ "type": "slide", "slide_id": "slide-N" }`. Selector guards in `matches[].selector.guards` may be pasted directly into a `replace_text` operation selector. If `--cursor` is stale or malformed, the command fails with `invalid_input`; if `--slides` names a missing slide, it fails with `invalid_input`; if the input package cannot be opened, the usual parse/open exit semantics apply.
 
 ### `validate`
 
@@ -113,6 +246,7 @@ pptx-compose schema validation-report-v1
 pptx-compose schema result-v1
 pptx-compose schema error-v1
 pptx-compose schema capabilities-v1
+pptx-compose schema find-text-v1
 ```
 
 `schema` prints JSON Schema to stdout.

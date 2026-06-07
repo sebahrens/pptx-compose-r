@@ -144,8 +144,24 @@ fn find_text(
                 ..ErrorLocation::default()
             }))
         })?;
-    let scope = match args.slide_id {
-        Some(slide_id) => FindTextScope::Slide { slide_id },
+    let scope = match args.slides {
+        Some(slides) => {
+            let slide_ids = parse_slide_scope(&slides)?;
+            if slide_ids.len() != 1 {
+                return Err(CliError::invalid_input(
+                    InvalidInputCause::CliArgument,
+                    "find-text --slides currently accepts exactly one slide.",
+                ));
+            }
+            FindTextScope::Slide {
+                slide_id: slide_ids.into_iter().next().ok_or_else(|| {
+                    CliError::invalid_input(
+                        InvalidInputCause::CliArgument,
+                        "find-text --slides currently accepts exactly one slide.",
+                    )
+                })?,
+            }
+        }
         None => FindTextScope::Deck,
     };
     let result = document

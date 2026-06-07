@@ -93,8 +93,12 @@ pub enum InspectDetail {
 pub struct FindTextArgs {
     pub input: PathBuf,
     pub query: String,
-    #[arg(long)]
-    pub slide_id: Option<String>,
+    #[arg(
+        long,
+        value_name = "N|slide-N",
+        help = "Single slide to search: a 1-based number or canonical slide-N id"
+    )]
+    pub slides: Option<String>,
     #[arg(long)]
     pub cursor: Option<String>,
     #[arg(long, value_name = "N")]
@@ -278,6 +282,79 @@ fn parses_apply_media_bindings() {
     assert_eq!(
         args.media,
         vec!["hero=override.png".to_owned(), "logo=logo.gif".to_owned()]
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn parses_find_text_slides_scope() {
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    let cli = Cli::try_parse_from([
+        "pptx-compose",
+        "find-text",
+        "in.pptx",
+        "needle",
+        "--slides",
+        "slide-2",
+        "--limit",
+        "5",
+        "--output",
+        "matches.json",
+    ])
+    .expect("find-text arguments should parse");
+
+    let Commands::FindText(args) = cli.command else {
+        unreachable!("expected find-text command");
+    };
+
+    assert_eq!(args.input, PathBuf::from("in.pptx"));
+    assert_eq!(args.query, "needle");
+    assert_eq!(args.slides, Some("slide-2".to_owned()));
+    assert_eq!(args.cursor, None);
+    assert_eq!(args.limit, Some(5));
+    assert_eq!(args.output, Some(PathBuf::from("matches.json")));
+}
+
+#[cfg(test)]
+#[test]
+fn spec_071_documents_command_variants() {
+    use clap::CommandFactory;
+
+    let spec = include_str!("../../../specs/071-cli-agent-contract.md");
+    let command = Cli::command();
+    let documented_commands = [
+        "capabilities",
+        "inspect",
+        "find-text",
+        "validate",
+        "apply",
+        "to-json",
+        "to-pptx",
+        "convert",
+        "media",
+        "schema",
+    ];
+
+    for subcommand in command.get_subcommands() {
+        let name = subcommand.get_name();
+        assert!(
+            documented_commands.contains(&name),
+            "test must enumerate CLI command variant `{name}`"
+        );
+        assert!(
+            spec.contains(&format!("### `{name}`"))
+                || spec.contains(&format!("#### `{name}`"))
+                || spec.contains(&format!("`{name}`")),
+            "spec 071 must document CLI command variant `{name}`"
+        );
+    }
+
+    assert_eq!(
+        command.get_subcommands().count(),
+        documented_commands.len(),
+        "test command list must match cli.rs Commands variants"
     );
 }
 
