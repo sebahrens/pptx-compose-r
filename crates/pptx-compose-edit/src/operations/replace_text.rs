@@ -1,7 +1,7 @@
 use pptx_compose_core::{
     error::{Error, ErrorCode, ErrorLocation, Result},
     opc::package::Package,
-    pptx::{ids::ElementKind, text::read_text_body},
+    pptx::text::read_text_body,
     xml::{
         document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
         parser::parse_document,
@@ -132,7 +132,7 @@ impl ReplaceText {
             )
             .with_location(self.location(Some(target))));
         }
-        if !matches!(target.kind, ElementKind::TextBox | ElementKind::Shape) {
+        if !target.kind.supports_replace_text() {
             return Err(Error::new(
                 ErrorCode::UnsupportedEdit,
                 "Target element is not text-capable.",
@@ -478,7 +478,7 @@ fn element(raw_name: &str, attrs: &[(&str, &str)], children: Vec<XmlNode>) -> Xm
 #[cfg(test)]
 #[test]
 fn replaces_and_maps_newlines() {
-    use pptx_compose_core::opc::part_name::PartName;
+    use pptx_compose_core::{opc::part_name::PartName, pptx::ids::ElementKind};
 
     let slide_part = PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid slide part");
     let mut package = Package::new();

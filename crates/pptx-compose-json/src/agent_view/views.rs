@@ -811,7 +811,10 @@ fn project_element(
                 cy: bounds.cy,
             },
         ),
-        editable: editable(text.is_some(), image_support),
+        editable: editable(
+            text.is_some() && core_kind.supports_replace_text(),
+            image_support,
+        ),
         fingerprint: fingerprint(&FingerprintInput {
             kind: core_kind,
             part: slide_part,

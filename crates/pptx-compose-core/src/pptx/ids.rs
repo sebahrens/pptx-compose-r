@@ -50,6 +50,11 @@ impl ElementKind {
                 | Self::GraphicFrameOther
         )
     }
+
+    #[must_use]
+    pub const fn supports_replace_text(self) -> bool {
+        matches!(self, Self::TextBox | Self::Shape)
+    }
 }
 
 #[must_use]

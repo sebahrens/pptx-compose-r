@@ -995,6 +995,50 @@ fn external_link_image_view_flag_matches_replace_image_rejection() {
 }
 
 #[test]
+fn text_editability_view_flag_matches_replace_text_acceptance() {
+    let bytes = graphic_frame_deck();
+    let document = PresentationDocument::from_bytes(&bytes).expect("graphic frame deck opens");
+    let view = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide_detail builds");
+    let elements = view["slides"][0]["elements"]
+        .as_array()
+        .expect("slide_detail exposes elements");
+
+    for element in elements {
+        let element_id = element["id"].as_str().expect("element id is a string");
+        let advertised = element["editable"]["text"]["supported"]
+            .as_bool()
+            .expect("text edit support is a bool");
+        let mut candidate = PresentationDocument::from_bytes(&bytes).expect("candidate deck opens");
+        let patch = patch_with_operations(
+            &bytes,
+            &format!("replace-text-capability-{element_id}"),
+            vec![serde_json::json!({
+                "operation_id": format!("replace-{element_id}"),
+                "op": "replace_text",
+                "element_id": element_id,
+                "text": "replacement"
+            })],
+        );
+        let accepted = candidate.apply_patch(patch, MediaInputs::default()).is_ok();
+
+        assert_eq!(
+            advertised, accepted,
+            "{element_id}: editable.text.supported must match replace_text acceptance"
+        );
+    }
+}
+
+#[test]
 fn graphic_frame_kind_view_and_no_edit_round_trip_are_stable() {
     let bytes = graphic_frame_deck();
     let document = PresentationDocument::from_bytes(&bytes).expect("graphic frame deck opens");
