@@ -86,6 +86,8 @@ pub enum ElementKind {
     Group,
     Table,
     Chart,
+    Diagram,
+    Ole,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

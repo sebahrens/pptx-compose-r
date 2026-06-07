@@ -50,7 +50,11 @@ const fn fingerprint_kind(kind: ElementKind) -> &'static str {
         ElementKind::Shape => "shape",
         ElementKind::Picture => "image",
         ElementKind::Group => "group",
-        ElementKind::GraphicFrame => "graphic_frame",
+        ElementKind::GraphicFrameChart => "chart",
+        ElementKind::GraphicFrameTable => "table",
+        ElementKind::GraphicFrameDiagram => "diagram",
+        ElementKind::GraphicFrameOle => "ole",
+        ElementKind::GraphicFrameOther => "graphic_frame",
         ElementKind::Connector => "connector",
         ElementKind::Other => "other",
     }

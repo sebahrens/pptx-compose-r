@@ -1170,11 +1170,11 @@ fn core_element_kind(element: &XmlElement) -> CoreElementKind {
         ShapeKind::TextBox => CoreElementKind::TextBox,
         ShapeKind::AutoShape => CoreElementKind::Shape,
         ShapeKind::Picture => CoreElementKind::Picture,
-        ShapeKind::GraphicFrameChart
-        | ShapeKind::GraphicFrameTable
-        | ShapeKind::GraphicFrameDiagram
-        | ShapeKind::GraphicFrameOle
-        | ShapeKind::GraphicFrameOther => CoreElementKind::GraphicFrame,
+        ShapeKind::GraphicFrameChart => CoreElementKind::GraphicFrameChart,
+        ShapeKind::GraphicFrameTable => CoreElementKind::GraphicFrameTable,
+        ShapeKind::GraphicFrameDiagram => CoreElementKind::GraphicFrameDiagram,
+        ShapeKind::GraphicFrameOle => CoreElementKind::GraphicFrameOle,
+        ShapeKind::GraphicFrameOther => CoreElementKind::GraphicFrameOther,
         ShapeKind::Group => CoreElementKind::Group,
         ShapeKind::Connector => CoreElementKind::Connector,
         ShapeKind::Other => CoreElementKind::Other,
@@ -1186,7 +1186,12 @@ const fn json_element_kind(kind: CoreElementKind) -> ElementKind {
         CoreElementKind::TextBox => ElementKind::TextBox,
         CoreElementKind::Picture => ElementKind::Image,
         CoreElementKind::Group => ElementKind::Group,
-        CoreElementKind::GraphicFrame => ElementKind::Chart,
+        CoreElementKind::GraphicFrameChart | CoreElementKind::GraphicFrameOther => {
+            ElementKind::Chart
+        }
+        CoreElementKind::GraphicFrameTable => ElementKind::Table,
+        CoreElementKind::GraphicFrameDiagram => ElementKind::Diagram,
+        CoreElementKind::GraphicFrameOle => ElementKind::Ole,
         CoreElementKind::Shape | CoreElementKind::Connector | CoreElementKind::Other => {
             ElementKind::Shape
         }
@@ -1482,6 +1487,68 @@ fn image_editability_matches_embedded_and_external_picture_support() {
 
 #[cfg(test)]
 #[test]
+fn graphic_frame_kinds_are_emitted_from_graphic_data_uri() {
+    use pptx_compose_core::{
+        opc::{
+            package::{OFFICE_DOCUMENT_REL_TYPE, Package},
+            part_name::PartName,
+            relationships::{Relationship, RelationshipSource},
+        },
+        pptx::presentation::PresentationDocument,
+    };
+
+    const SLIDE_REL_TYPE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+
+    let presentation_part = PartName::from_zip_entry("ppt/presentation.xml").expect("part name");
+
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("[Content_Types].xml", content_types_xml().to_vec())
+        .expect("content types part inserts");
+    package
+        .insert_zip_entry("ppt/presentation.xml", presentation_xml().to_vec())
+        .expect("presentation part inserts");
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", graphic_frame_slide_xml().to_vec())
+        .expect("slide part inserts");
+
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        OFFICE_DOCUMENT_REL_TYPE,
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlide",
+        SLIDE_REL_TYPE,
+        "slides/slide1.xml",
+    ));
+
+    let pkg = PresentationDocument::open(package).expect("presentation opens");
+    let value = build_view(&pkg, request_for(&pkg, ViewMode::SlideDetail, None))
+        .expect("slide detail builds");
+    let elements = value["slides"][0]["elements"]
+        .as_array()
+        .expect("elements array");
+
+    for (name, kind) in [
+        ("Chart Frame", "chart"),
+        ("Table Frame", "table"),
+        ("Diagram Frame", "diagram"),
+        ("OLE Frame", "ole"),
+    ] {
+        let element = elements
+            .iter()
+            .find(|element| element["xml_location"]["cnvpr_name"] == name)
+            .unwrap_or_else(|| panic!("{name} should be projected"));
+        assert_eq!(element["kind"], kind);
+    }
+}
+
+#[cfg(test)]
+#[test]
 fn slide_detail_paginates_elements_with_working_cursor() {
     let slide = slide_projection_with_elements(3);
     let document_id = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -1549,6 +1616,11 @@ fn content_types_xml() -> &'static [u8] {
 #[cfg(test)]
 fn picture_slide_xml() -> &'static [u8] {
     br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:pic><p:nvPicPr><p:cNvPr id="5" name="Embedded Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rEmbed"/></p:blipFill><p:spPr/></p:pic><p:pic><p:nvPicPr><p:cNvPr id="6" name="Linked Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:link="rLink"/></p:blipFill><p:spPr/></p:pic></p:spTree></p:cSld></p:sld>"#
+}
+
+#[cfg(test)]
+fn graphic_frame_slide_xml() -> &'static [u8] {
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="Chart Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="8" name="Table Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl/></a:graphicData></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="9" name="Diagram Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="10" name="OLE Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/presentationml/2006/ole"/></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#
 }
 
 #[cfg(test)]

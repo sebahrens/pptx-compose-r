@@ -1,3 +1,4 @@
+use super::shape::{ShapeKind, read_shape};
 use crate::xml::document::{XmlElement, XmlNode};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12,7 +13,11 @@ pub enum ElementKind {
     Shape,
     Picture,
     Group,
-    GraphicFrame,
+    GraphicFrameChart,
+    GraphicFrameTable,
+    GraphicFrameDiagram,
+    GraphicFrameOle,
+    GraphicFrameOther,
     Connector,
     Other,
 }
@@ -24,10 +29,26 @@ impl ElementKind {
             Self::TextBox | Self::Shape => "shape",
             Self::Picture => "pic",
             Self::Group => "group",
-            Self::GraphicFrame => "graphic",
+            Self::GraphicFrameChart
+            | Self::GraphicFrameTable
+            | Self::GraphicFrameDiagram
+            | Self::GraphicFrameOle
+            | Self::GraphicFrameOther => "graphic",
             Self::Connector => "cxn",
             Self::Other => "oth",
         }
+    }
+
+    #[must_use]
+    pub const fn is_graphic_frame(self) -> bool {
+        matches!(
+            self,
+            Self::GraphicFrameChart
+                | Self::GraphicFrameTable
+                | Self::GraphicFrameDiagram
+                | Self::GraphicFrameOle
+                | Self::GraphicFrameOther
+        )
     }
 }
 
@@ -96,45 +117,27 @@ fn walk_children(
 }
 
 fn element_kind(element: &XmlElement) -> ElementKind {
-    match element.name.local_name.as_str() {
-        "sp" if is_text_box(element) => ElementKind::TextBox,
-        "sp" => ElementKind::Shape,
-        "pic" => ElementKind::Picture,
-        "grpSp" => ElementKind::Group,
-        "graphicFrame" => ElementKind::GraphicFrame,
-        "cxnSp" => ElementKind::Connector,
-        _ => ElementKind::Other,
+    match read_shape(
+        element,
+        SpTreePath {
+            sp_tree_path: Vec::new(),
+            group_path: Vec::new(),
+        },
+    )
+    .kind
+    {
+        ShapeKind::TextBox => ElementKind::TextBox,
+        ShapeKind::AutoShape => ElementKind::Shape,
+        ShapeKind::Picture => ElementKind::Picture,
+        ShapeKind::Group => ElementKind::Group,
+        ShapeKind::GraphicFrameChart => ElementKind::GraphicFrameChart,
+        ShapeKind::GraphicFrameTable => ElementKind::GraphicFrameTable,
+        ShapeKind::GraphicFrameDiagram => ElementKind::GraphicFrameDiagram,
+        ShapeKind::GraphicFrameOle => ElementKind::GraphicFrameOle,
+        ShapeKind::GraphicFrameOther => ElementKind::GraphicFrameOther,
+        ShapeKind::Connector => ElementKind::Connector,
+        ShapeKind::Other => ElementKind::Other,
     }
-}
-
-fn is_text_box(element: &XmlElement) -> bool {
-    first_descendant(element, "cNvSpPr")
-        .and_then(|element| attr(element, "txBox"))
-        .is_some_and(parse_bool)
-}
-
-fn first_descendant<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a XmlElement> {
-    for child in element.children.iter().filter_map(XmlNode::as_element) {
-        if child.name.local_name == local_name {
-            return Some(child);
-        }
-        if let Some(descendant) = first_descendant(child, local_name) {
-            return Some(descendant);
-        }
-    }
-    None
-}
-
-fn attr<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a str> {
-    element
-        .attributes
-        .iter()
-        .find(|attribute| attribute.name.local_name == local_name)
-        .map(|attribute| attribute.value.as_str())
-}
-
-fn parse_bool(value: &str) -> bool {
-    matches!(value, "1" | "true" | "True" | "TRUE")
 }
 
 fn dotted_path(path: &[u32]) -> String {
@@ -190,7 +193,7 @@ fn sp_tree_indexing() {
             (&[3, 1][..], &[3][..], ElementKind::Picture),
             (&[3, 2][..], &[3][..], ElementKind::Other),
             (&[3, 3][..], &[3][..], ElementKind::Connector),
-            (&[4][..], &[][..], ElementKind::GraphicFrame),
+            (&[4][..], &[][..], ElementKind::GraphicFrameOther),
             (&[5][..], &[][..], ElementKind::Other),
         ]
     );

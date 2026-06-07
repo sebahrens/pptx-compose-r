@@ -90,7 +90,11 @@ fn ensure_movable(target: &ResolvedElement) -> Result<()> {
         ElementKind::TextBox
         | ElementKind::Shape
         | ElementKind::Picture
-        | ElementKind::GraphicFrame => Ok(()),
+        | ElementKind::GraphicFrameChart
+        | ElementKind::GraphicFrameTable
+        | ElementKind::GraphicFrameDiagram
+        | ElementKind::GraphicFrameOle
+        | ElementKind::GraphicFrameOther => Ok(()),
         ElementKind::Group | ElementKind::Connector | ElementKind::Other => Err(Error::new(
             ErrorCode::UnsupportedEdit,
             "Target element does not have movable DrawingML bounds.",
@@ -132,7 +136,7 @@ fn xfrm_for_target_mut<'a>(
     element: &'a mut XmlElement,
     target: &ResolvedElement,
 ) -> Result<&'a mut XmlElement> {
-    if target.kind == ElementKind::GraphicFrame {
+    if target.kind.is_graphic_frame() {
         ensure_child_element(element, "xfrm", "p:xfrm");
         return child_element_mut(element, "xfrm").ok_or_else(|| {
             Error::new(

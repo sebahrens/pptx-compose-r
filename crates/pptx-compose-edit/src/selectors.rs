@@ -435,7 +435,11 @@ const fn agent_view_kind_name(kind: ElementKind) -> &'static str {
         ElementKind::Shape => "shape",
         ElementKind::Picture => "image",
         ElementKind::Group => "group",
-        ElementKind::GraphicFrame => "chart",
+        ElementKind::GraphicFrameChart => "chart",
+        ElementKind::GraphicFrameTable => "table",
+        ElementKind::GraphicFrameDiagram => "diagram",
+        ElementKind::GraphicFrameOle => "ole",
+        ElementKind::GraphicFrameOther => "chart",
         ElementKind::Connector | ElementKind::Other => "shape",
     }
 }
@@ -446,7 +450,11 @@ const fn legacy_kind_name(kind: ElementKind) -> Option<&'static str> {
         ElementKind::Shape => None,
         ElementKind::Picture => None,
         ElementKind::Group => None,
-        ElementKind::GraphicFrame => Some("graphic_frame"),
+        ElementKind::GraphicFrameChart
+        | ElementKind::GraphicFrameTable
+        | ElementKind::GraphicFrameDiagram
+        | ElementKind::GraphicFrameOle
+        | ElementKind::GraphicFrameOther => Some("graphic_frame"),
         ElementKind::Connector => Some("connector"),
         ElementKind::Other => Some("other"),
     }
@@ -546,6 +554,9 @@ fn element_view_kind_guards_resolve_for_each_emitted_kind() {
         ("slide-1:pic-5", "image"),
         ("slide-1:group-6", "group"),
         ("slide-1:graphic-7", "chart"),
+        ("slide-1:graphic-11", "table"),
+        ("slide-1:graphic-12", "diagram"),
+        ("slide-1:graphic-13", "ole"),
         ("slide-1:shape-8", "shape"),
         ("slide-1:cxn-9", "shape"),
         ("slide-1:oth-10", "shape"),
@@ -570,6 +581,9 @@ fn legacy_kind_guard_aliases_still_resolve() {
     let document = fixture_document();
     for (id, guard_kind) in [
         ("slide-1:graphic-7", "graphic_frame"),
+        ("slide-1:graphic-11", "graphic_frame"),
+        ("slide-1:graphic-12", "graphic_frame"),
+        ("slide-1:graphic-13", "graphic_frame"),
         ("slide-1:cxn-9", "connector"),
         ("slide-1:oth-10", "other"),
     ] {
@@ -633,5 +647,5 @@ fn presentation_xml() -> &'static [u8] {
 
 #[cfg(test)]
 fn slide_xml() -> &'static [u8] {
-    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="4" name="Title 1"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:p><a:r><a:t>Quarterly Results</a:t></a:r></a:p></p:txBody></p:sp><p:pic><p:nvPicPr><p:cNvPr id="5" name="Picture 1"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill/><p:spPr/></p:pic><p:grpSp><p:nvGrpSpPr><p:cNvPr id="6" name="Group 1"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:grpSp><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="Chart 1"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic/></p:graphicFrame><p:sp><p:nvSpPr><p:cNvPr id="8" name="Shape 1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/></p:sp><p:cxnSp><p:nvCxnSpPr><p:cNvPr id="9" name="Connector 1"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr/></p:cxnSp><p:contentPart><p:nvContentPartPr><p:cNvPr id="10" name="Unknown 1"/></p:nvContentPartPr></p:contentPart></p:spTree></p:cSld></p:sld>"#
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="4" name="Title 1"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:p><a:r><a:t>Quarterly Results</a:t></a:r></a:p></p:txBody></p:sp><p:pic><p:nvPicPr><p:cNvPr id="5" name="Picture 1"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill/><p:spPr/></p:pic><p:grpSp><p:nvGrpSpPr><p:cNvPr id="6" name="Group 1"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:grpSp><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="7" name="Chart 1"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"/></a:graphic></p:graphicFrame><p:sp><p:nvSpPr><p:cNvPr id="8" name="Shape 1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr/></p:sp><p:cxnSp><p:nvCxnSpPr><p:cNvPr id="9" name="Connector 1"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr/></p:cxnSp><p:contentPart><p:nvContentPartPr><p:cNvPr id="10" name="Unknown 1"/></p:nvContentPartPr></p:contentPart><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="11" name="Table 1"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl/></a:graphicData></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="12" name="Diagram 1"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:graphic></p:graphicFrame><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="13" name="OLE 1"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/presentationml/2006/ole"/></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#
 }
