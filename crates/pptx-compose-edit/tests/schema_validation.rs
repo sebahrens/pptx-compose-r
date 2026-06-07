@@ -112,6 +112,19 @@ fn patch_schema_rejects_unknown_text_box_style_keys() {
 }
 
 #[test]
+fn patch_schema_rejects_set_alt_text_alt_text_alias() {
+    assert_schema_rejects(
+        patch_json_schema().expect("patch schema emits"),
+        patch_with_operation(json!({
+            "operation_id": "op-1",
+            "op": "set_alt_text",
+            "element_id": "slide-1:shape-4",
+            "alt_text": "Readable description"
+        })),
+    );
+}
+
+#[test]
 fn parse_patch_rejects_unknown_text_box_style_keys_as_invalid_input() {
     let error = parse_patch(patch_with_operation(json!({
         "operation_id": "op-1",
@@ -122,6 +135,22 @@ fn parse_patch_rejects_unknown_text_box_style_keys_as_invalid_input() {
         "run_style": { "underline": true }
     })))
     .expect_err("unknown run_style key is rejected during patch parse");
+
+    assert_eq!(
+        error.code(),
+        pptx_compose_core::error::ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn parse_patch_rejects_set_alt_text_alt_text_alias_as_invalid_input() {
+    let error = parse_patch(patch_with_operation(json!({
+        "operation_id": "op-1",
+        "op": "set_alt_text",
+        "element_id": "slide-1:shape-4",
+        "alt_text": "Readable description"
+    })))
+    .expect_err("set_alt_text alt_text alias is rejected during patch parse");
 
     assert_eq!(
         error.code(),

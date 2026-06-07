@@ -167,7 +167,6 @@ Optional fields:
 
 - `title`
 - `description`
-- `alt_text` as a shorthand mapped to the appropriate OOXML non-visual property.
 
 ### `add_image`
 

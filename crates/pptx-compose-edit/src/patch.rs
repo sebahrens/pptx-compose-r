@@ -506,8 +506,6 @@ pub struct SetAltTextOperation {
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub alt_text: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
@@ -1235,7 +1233,6 @@ fn all_op_names_matches_operation_variants() {
             selector: None,
             title: None,
             description: Some("description".to_owned()),
-            alt_text: None,
         }),
         Operation::SetDocumentMetadata(SetDocumentMetadataOperation {
             operation_id: "op-5".to_owned(),

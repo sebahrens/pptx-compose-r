@@ -20,7 +20,6 @@ pub struct SetAltText {
     pub element_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    pub alt_text: Option<String>,
 }
 
 impl From<&SetAltTextOperation> for SetAltText {
@@ -30,7 +29,6 @@ impl From<&SetAltTextOperation> for SetAltText {
             element_id: operation.target_element_id().to_owned(),
             title: operation.title.clone(),
             description: operation.description.clone(),
-            alt_text: operation.alt_text.clone(),
         }
     }
 }
@@ -118,10 +116,10 @@ impl SetAltText {
     }
 
     fn validate_fields(&self) -> Result<()> {
-        if self.title.is_none() && self.description.is_none() && self.alt_text.is_none() {
+        if self.title.is_none() && self.description.is_none() {
             return Err(Error::new(
                 ErrorCode::InvalidInput,
-                "set_alt_text requires at least one of title, description, or alt_text.",
+                "set_alt_text requires at least one of title or description.",
             )
             .with_location(self.location(None)));
         }
@@ -186,11 +184,7 @@ fn rewrite_cnv_pr(
         .with_location(operation.location(Some(target)))
     })?;
 
-    if let Some(description) = operation
-        .description
-        .as_ref()
-        .or(operation.alt_text.as_ref())
-    {
+    if let Some(description) = operation.description.as_ref() {
         set_attribute(cnv_pr, "descr", description);
     }
     if let Some(title) = &operation.title {
@@ -342,7 +336,6 @@ fn sets_descr_title() {
         element_id: target.element_id.clone(),
         title: Some("Accessible title".to_owned()),
         description: Some("Readable description".to_owned()),
-        alt_text: None,
     };
 
     let effects = operation
@@ -372,7 +365,6 @@ fn sets_descr_title() {
         element_id: target.element_id.clone(),
         title: None,
         description: None,
-        alt_text: None,
     };
     let error = empty
         .validate(&package, &target)

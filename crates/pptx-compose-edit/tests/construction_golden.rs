@@ -598,7 +598,6 @@ mod construction {
             element_id: target.element_id.clone(),
             title: Some("Accessible title".to_owned()),
             description: Some("Readable description".to_owned()),
-            alt_text: None,
         };
 
         operation.apply(&mut package, &target)?;
