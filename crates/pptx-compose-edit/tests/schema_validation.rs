@@ -8,9 +8,11 @@ use pptx_compose_edit::{
 };
 use pptx_compose_json::{
     agent_view::{
-        AgentView, Capabilities, PresentationView,
+        AgentView, Capabilities, FindTextScope, PresentationView,
         pagination::ViewMeta,
-        views::{ViewMode, ViewRequest, build_view, package_from_pptx_bytes},
+        views::{
+            FindTextRequest, ViewMode, ViewRequest, build_view, find_text, package_from_pptx_bytes,
+        },
     },
     schema_versions::{
         AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION, ERROR_SCHEMA, ERROR_VERSION, PATCH_REPORT_SCHEMA,
@@ -21,8 +23,8 @@ use pptx_compose_json::{
         ErrorCode, ErrorEnvelope, ErrorStatus, ErrorView, OperationReport, OperationStatus,
         OperationTarget, PatchReport, PatchStatus, PatchValidationSummary, ResultEnvelope,
         ResultStatus, Severity, Summary, ValidationReport, ValidationStatus,
-        agent_view_json_schema, error_json_schema, patch_report_json_schema, result_json_schema,
-        validation_report_json_schema,
+        agent_view_json_schema, error_json_schema, find_text_json_schema, patch_report_json_schema,
+        result_json_schema, validation_report_json_schema,
     },
 };
 use serde_json::{Value, json};
@@ -32,6 +34,10 @@ fn emitted_json_instances_validate_against_published_schemas() {
     assert_schema_accepts(
         agent_view_json_schema().expect("agent view schema emits"),
         serde_json::to_value(agent_view()).expect("agent view serializes"),
+    );
+    assert_schema_accepts(
+        find_text_json_schema().expect("find-text schema emits"),
+        find_text_result(),
     );
     assert_schema_accepts(
         patch_json_schema().expect("patch schema emits"),
@@ -210,6 +216,26 @@ fn agent_view() -> AgentView {
         media: Vec::new(),
         validation: None,
     }
+}
+
+fn find_text_result() -> Value {
+    let pkg = package_from_pptx_bytes(include_bytes!(
+        "../../../fixtures/real-world/worldbank-cpf-concept-note.pptx"
+    ))
+    .expect("fixture package parses");
+    serde_json::to_value(
+        find_text(
+            &pkg,
+            FindTextRequest {
+                query: "World Bank".to_owned(),
+                scope: FindTextScope::Deck,
+                cursor: None,
+                limit: Some(2),
+            },
+        )
+        .expect("find-text result builds"),
+    )
+    .expect("find-text result serializes")
 }
 
 fn patch() -> Patch {

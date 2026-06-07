@@ -47,7 +47,7 @@ use super::{
     pagination::{CursorScope, ViewMeta, bounded_limit, cursor_offset, paginate},
 };
 use crate::{
-    schema_versions::{AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION},
+    schema_versions::{AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION, FIND_TEXT_SCHEMA, FIND_TEXT_VERSION},
     schemas::{
         FindingCategory, FindingCode, FindingView, JsonError, Severity, Summary, ValidationReport,
         ValidationStatus,
@@ -330,8 +330,8 @@ pub fn find_text_with_revision(
     let (page, meta, omitted_count) = match_page(matches, limit, start, scope)?;
 
     Ok(FindTextResult {
-        schema: "pptx-compose.find_text.v1".to_owned(),
-        version: 1,
+        schema: FIND_TEXT_SCHEMA.to_owned(),
+        version: FIND_TEXT_VERSION,
         document_id: context.document_id,
         revision: context.revision,
         query: req.query,

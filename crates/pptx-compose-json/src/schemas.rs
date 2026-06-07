@@ -4,10 +4,11 @@ use serde_json::Value;
 
 use pptx_compose_core::error::Error;
 
-use crate::agent_view::AgentView;
+use crate::agent_view::{AgentView, FindTextResult};
 use crate::schema_versions::{
-    AGENT_VIEW_SCHEMA, ERROR_SCHEMA, ERROR_VERSION, PATCH_REPORT_SCHEMA, PATCH_REPORT_VERSION,
-    RESULT_SCHEMA, RESULT_VERSION, VALIDATION_REPORT_SCHEMA, VALIDATION_REPORT_VERSION,
+    AGENT_VIEW_SCHEMA, ERROR_SCHEMA, ERROR_VERSION, FIND_TEXT_SCHEMA, PATCH_REPORT_SCHEMA,
+    PATCH_REPORT_VERSION, RESULT_SCHEMA, RESULT_VERSION, VALIDATION_REPORT_SCHEMA,
+    VALIDATION_REPORT_VERSION,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -257,6 +258,10 @@ pub enum JsonError {
 
 pub fn agent_view_json_schema() -> Result<Value, JsonError> {
     schema_value::<AgentView>(AGENT_VIEW_SCHEMA)
+}
+
+pub fn find_text_json_schema() -> Result<Value, JsonError> {
+    schema_value::<FindTextResult>(FIND_TEXT_SCHEMA)
 }
 
 pub fn patch_report_json_schema() -> Result<Value, JsonError> {

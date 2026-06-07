@@ -2,16 +2,20 @@ use std::{fmt, str::FromStr};
 
 use pptx_compose::{
     AgentViewOptions,
-    capabilities::{CapabilitiesOptions, capabilities},
+    capabilities::{CapabilitiesOptions, capabilities, capabilities_json_schema},
     core::error::{Error, ErrorCode},
     edit::patch::{PATCH_SCHEMA, PATCH_VERSION, patch_json_schema},
     json::{
         agent_view::views::ViewMode,
         schema_versions::{
-            AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION, ERROR_SCHEMA, ERROR_VERSION,
-            PATCH_REPORT_SCHEMA, PATCH_REPORT_VERSION,
+            AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION, CAPABILITIES_SCHEMA, CAPABILITIES_VERSION,
+            ERROR_SCHEMA, ERROR_VERSION, FIND_TEXT_SCHEMA, FIND_TEXT_VERSION, PATCH_REPORT_SCHEMA,
+            PATCH_REPORT_VERSION,
         },
-        schemas::{JsonError, agent_view_json_schema, error_json_schema, patch_report_json_schema},
+        schemas::{
+            JsonError, agent_view_json_schema, error_json_schema, find_text_json_schema,
+            patch_report_json_schema,
+        },
     },
 };
 use schemars::JsonSchema;
@@ -392,9 +396,17 @@ fn session_view(
 
 fn schema_resource(name: &str, version: &str) -> Result<Value, Error> {
     match name {
+        "capabilities" => {
+            require_schema_version(name, version, CAPABILITIES_VERSION)?;
+            capabilities_json_schema().map_err(json_error)
+        }
         "agent-view" => {
             require_schema_version(name, version, AGENT_VIEW_VERSION)?;
             agent_view_json_schema().map_err(json_error)
+        }
+        "find-text" => {
+            require_schema_version(name, version, FIND_TEXT_VERSION)?;
+            find_text_json_schema().map_err(json_error)
         }
         "patch" => {
             require_schema_version(name, version, PATCH_VERSION)?;
@@ -426,7 +438,9 @@ fn require_schema_version(name: &str, version: &str, expected: u32) -> Result<()
 
 fn schema_resource_descriptors() -> Vec<ResourceDescriptor> {
     [
+        ("capabilities", CAPABILITIES_SCHEMA, CAPABILITIES_VERSION),
         ("agent-view", AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION),
+        ("find-text", FIND_TEXT_SCHEMA, FIND_TEXT_VERSION),
         ("patch", PATCH_SCHEMA, PATCH_VERSION),
         ("patch-report", PATCH_REPORT_SCHEMA, PATCH_REPORT_VERSION),
         ("error", ERROR_SCHEMA, ERROR_VERSION),
@@ -618,7 +632,9 @@ mod tests {
     fn schema_descriptors_use_independent_schema_versions() {
         let resources = schema_resource_descriptors();
         let expected = [
+            ("capabilities-schema", CAPABILITIES_VERSION),
             ("agent-view-schema", AGENT_VIEW_VERSION),
+            ("find-text-schema", FIND_TEXT_VERSION),
             ("patch-schema", PATCH_VERSION),
             ("patch-report-schema", PATCH_REPORT_VERSION),
             ("error-schema", ERROR_VERSION),
@@ -643,8 +659,12 @@ mod tests {
 
     #[test]
     fn schema_resources_check_versions_per_schema() {
+        schema_resource("capabilities", &schema_version(CAPABILITIES_VERSION))
+            .expect("capabilities schema reads at its own version");
         schema_resource("agent-view", &schema_version(AGENT_VIEW_VERSION))
             .expect("agent-view schema reads at its own version");
+        schema_resource("find-text", &schema_version(FIND_TEXT_VERSION))
+            .expect("find-text schema reads at its own version");
         schema_resource("patch", &schema_version(PATCH_VERSION))
             .expect("patch schema reads at its own version");
         schema_resource("patch-report", &schema_version(PATCH_REPORT_VERSION))

@@ -10,8 +10,9 @@ use crate::{
     },
     json::schema_versions::{
         AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION, CAPABILITIES_SCHEMA, CAPABILITIES_VERSION,
-        ERROR_SCHEMA, ERROR_VERSION, PATCH_REPORT_SCHEMA, PATCH_REPORT_VERSION, RESULT_SCHEMA,
-        RESULT_VERSION, VALIDATION_REPORT_SCHEMA, VALIDATION_REPORT_VERSION,
+        ERROR_SCHEMA, ERROR_VERSION, FIND_TEXT_SCHEMA, FIND_TEXT_VERSION, PATCH_REPORT_SCHEMA,
+        PATCH_REPORT_VERSION, RESULT_SCHEMA, RESULT_VERSION, VALIDATION_REPORT_SCHEMA,
+        VALIDATION_REPORT_VERSION,
     },
 };
 
@@ -34,6 +35,11 @@ pub const SCHEMA_CAPABILITIES: &[SchemaCapabilityInfo] = &[
         name: "agent-view-v1",
         schema: AGENT_VIEW_SCHEMA,
         version: AGENT_VIEW_VERSION,
+    },
+    SchemaCapabilityInfo {
+        name: "find-text-v1",
+        schema: FIND_TEXT_SCHEMA,
+        version: FIND_TEXT_VERSION,
     },
     SchemaCapabilityInfo {
         name: "patch-v1",
@@ -347,6 +353,9 @@ mod tests {
         assert!(document.raw_xml_enabled);
         assert!(document.schemas.iter().any(|schema| {
             schema.name == "patch-v1" && schema.schema == "pptx-compose.patch.v1"
+        }));
+        assert!(document.schemas.iter().any(|schema| {
+            schema.name == "find-text-v1" && schema.schema == "pptx-compose.find_text.v1"
         }));
         assert!(
             document

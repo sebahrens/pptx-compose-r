@@ -29,8 +29,8 @@ use pptx_compose::{
         },
         schemas::{
             JsonError, ResultEnvelope, ResultStatus, Severity, ValidationReport,
-            agent_view_json_schema, error_json_schema, patch_report_json_schema,
-            result_json_schema, validation_report_json_schema,
+            agent_view_json_schema, error_json_schema, find_text_json_schema,
+            patch_report_json_schema, result_json_schema, validation_report_json_schema,
         },
     },
 };
@@ -304,6 +304,7 @@ fn schema(args: cli::SchemaArgs, sink: OutputSink) -> Result<(), CliError> {
     let schema = match args.name.as_str() {
         "capabilities-v1" => capabilities_json_schema().map_err(schema_error)?,
         "agent-view-v1" => agent_view_json_schema().map_err(schema_error)?,
+        "find-text-v1" => find_text_json_schema().map_err(schema_error)?,
         "patch-v1" => patch_json_schema().map_err(CliError::from_error)?,
         "media-manifest-v1" => media_manifest_json_schema().map_err(CliError::from_error)?,
         "patch-report-v1" => patch_report_json_schema().map_err(schema_error)?,
