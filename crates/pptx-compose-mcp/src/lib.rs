@@ -849,6 +849,9 @@ impl PptxServer {
                 "pptx_import_media accepts either media_path or inline, not both.",
             ))),
             (Some(media_path), None) => {
+                self.sessions
+                    .check_revision(&input.session_id, input.expected_revision)
+                    .map_err(outputs::map_error)?;
                 let media_path = self
                     .permission_policy
                     .check_read(&media_path)
@@ -865,6 +868,9 @@ impl PptxServer {
                 Ok(Json(outputs::ImportMediaOutput::imported(handle)))
             }
             (None, Some(inline)) => {
+                self.sessions
+                    .check_revision(&input.session_id, input.expected_revision)
+                    .map_err(outputs::map_error)?;
                 let bytes = decode_inline_media(&inline).map_err(outputs::map_error)?;
                 let handle = self
                     .sessions
@@ -985,6 +991,18 @@ impl PptxServer {
     ) -> Result<Json<outputs::ExportOutput>, rmcp::model::CallToolResult> {
         let input = input.0;
         let transaction_id = outputs::transaction_id();
+        if input.output_path.is_none() && !input.inline {
+            return Err(outputs::map_error(
+                pptx_compose::core::error::Error::new(
+                    pptx_compose::core::error::ErrorCode::InvalidInput,
+                    "pptx_export requires output_path unless inline is explicitly true.",
+                )
+                .with_suggestion("Set output_path for file export, or set inline=true for a size-limited JSON export."),
+            ));
+        }
+        self.sessions
+            .check_revision(&input.session_id, input.expected_revision)
+            .map_err(outputs::map_error)?;
         let changed_parts = self
             .sessions
             .changed_parts(&input.session_id)
@@ -1026,15 +1044,6 @@ impl PptxServer {
             )));
         }
 
-        if !input.inline {
-            return Err(outputs::map_error(
-                pptx_compose::core::error::Error::new(
-                    pptx_compose::core::error::ErrorCode::InvalidInput,
-                    "pptx_export requires output_path unless inline is explicitly true.",
-                )
-                .with_suggestion("Set output_path for file export, or set inline=true for a size-limited JSON export."),
-            ));
-        }
         let bytes = self
             .sessions
             .export_bytes(&input.session_id, input.expected_revision)
@@ -1258,6 +1267,8 @@ pub async fn run_server(server: PptxServer) -> Result<(), rmcp::service::ServerI
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use pptx_compose::core::error::ErrorCode;
 
     use super::*;
@@ -1345,6 +1356,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stale_import_media_rejects_before_decoding_bad_inline() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+        server
+            .sessions()
+            .record_apply(&opened.session_id, opened.revision, false, true)
+            .expect("test revision increments");
+        let oversized_encoded =
+            "A".repeat(MAX_INLINE_MEDIA_BYTES.div_ceil(3).saturating_mul(4) + 4);
+
+        for data in ["!!!!".to_owned(), oversized_encoded] {
+            let result = server
+                .pptx_import_media(rmcp::handler::server::wrapper::Parameters(
+                    ImportMediaInput {
+                        session_id: opened.session_id.clone(),
+                        expected_revision: opened.revision,
+                        media_path: None,
+                        inline: Some(InlineMediaInput {
+                            encoding: "base64".to_owned(),
+                            data,
+                        }),
+                        content_type: "image/png".to_owned(),
+                    },
+                ))
+                .await;
+
+            let Err(error) = result else {
+                panic!("stale bad inline import is rejected");
+            };
+            let envelope = error
+                .structured_content
+                .expect("stale inline error has structured content");
+            assert_eq!(error.is_error, Some(true));
+            assert_eq!(envelope["error"]["code"], ErrorCode::StalePatch.as_str());
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_import_media_rejects_before_checking_missing_path() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+        server
+            .sessions()
+            .record_apply(&opened.session_id, opened.revision, false, true)
+            .expect("test revision increments");
+        let missing_path = std::env::temp_dir().join(format!(
+            "pptx-compose-mcp-missing-media-{}-{}.png",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+
+        let result = server
+            .pptx_import_media(rmcp::handler::server::wrapper::Parameters(
+                ImportMediaInput {
+                    session_id: opened.session_id,
+                    expected_revision: opened.revision,
+                    media_path: Some(missing_path.to_string_lossy().into_owned()),
+                    inline: None,
+                    content_type: "image/png".to_owned(),
+                },
+            ))
+            .await;
+
+        let Err(error) = result else {
+            panic!("stale missing-path import is rejected");
+        };
+        let envelope = error
+            .structured_content
+            .expect("stale path error has structured content");
+        assert_eq!(error.is_error, Some(true));
+        assert_eq!(envelope["error"]["code"], ErrorCode::StalePatch.as_str());
+    }
+
+    #[tokio::test]
     async fn import_media_rejects_inline_content_type_mismatch() {
         let server = PptxServer::default();
         let opened = open_fixture_session(&server);
@@ -1408,6 +1496,46 @@ mod tests {
         assert_eq!(error.is_error, Some(true));
         assert_eq!(envelope["error"]["code"], ErrorCode::StalePatch.as_str());
         assert_eq!(envelope["error"]["location"]["current_revision"], 2);
+    }
+
+    #[tokio::test]
+    async fn stale_export_rejects_before_checking_existing_output_path() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+        server
+            .sessions()
+            .record_apply(&opened.session_id, opened.revision, false, true)
+            .expect("test revision increments");
+        let output_path = std::env::temp_dir().join(format!(
+            "pptx-compose-mcp-existing-output-{}-{}.pptx",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        fs::write(&output_path, b"existing output").expect("existing output fixture");
+
+        let result = server
+            .pptx_export(rmcp::handler::server::wrapper::Parameters(ExportInput {
+                session_id: opened.session_id,
+                client_request_id: None,
+                expected_revision: opened.revision,
+                output_path: Some(output_path.to_string_lossy().into_owned()),
+                inline: false,
+                overwrite: false,
+            }))
+            .await;
+
+        fs::remove_file(&output_path).expect("remove output fixture");
+        let Err(error) = result else {
+            panic!("stale existing-path export is rejected");
+        };
+        let envelope = error
+            .structured_content
+            .expect("stale export path error has structured content");
+        assert_eq!(error.is_error, Some(true));
+        assert_eq!(envelope["error"]["code"], ErrorCode::StalePatch.as_str());
     }
 
     #[test]

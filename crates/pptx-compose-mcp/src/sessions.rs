@@ -303,6 +303,7 @@ impl SessionStore {
         content_type: &str,
     ) -> Result<MediaHandle> {
         let media_path = media_path.as_ref();
+        self.check_revision(session_id, expected_revision)?;
         let bytes = fs::read(media_path).map_err(|source| {
             Error::with_source(
                 ErrorCode::InvalidInput,
