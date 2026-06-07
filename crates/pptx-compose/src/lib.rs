@@ -843,6 +843,7 @@ fn json_error(error: pptx_compose_json::schemas::JsonError) -> Error {
         pptx_compose_json::schemas::JsonError::ResourceLimitExceeded(message) => {
             Error::resource_limit_exceeded(message)
         }
+        pptx_compose_json::schemas::JsonError::Core(error) => error,
         pptx_compose_json::schemas::JsonError::NotFound { kind, id } => Error::new(
             ErrorCode::SelectorNotFound,
             format!("{kind} `{id}` was not found."),

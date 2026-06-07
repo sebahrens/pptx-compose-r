@@ -45,6 +45,34 @@ fn json_errors_parse_failures_emit_one_error_envelope() {
 }
 
 #[test]
+fn inspect_full_malformed_slide_xml_preserves_core_error_code() {
+    let fixture = repo_root().join("fixtures/malformed/broken-slide-xml.pptx");
+    let output = run_cli_raw([
+        "--json-errors",
+        "inspect",
+        fixture_str(&fixture),
+        "--detail",
+        "full",
+    ]);
+
+    assert_ne!(
+        output.status.code(),
+        Some(50),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+
+    let stderr_text = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    let envelope: serde_json::Value =
+        serde_json::from_str(&stderr_text).expect("stderr is one JSON document");
+    assert_eq!(envelope["schema"], "pptx-compose.error.v1");
+    assert_eq!(envelope["status"], "error");
+    assert_ne!(envelope["error"]["code"], "invalid_input");
+}
+
+#[test]
 fn inspect_slides_accepts_single_range_and_list_scopes() {
     let root = unique_dir();
     let deck = root.join("three-slides.pptx");

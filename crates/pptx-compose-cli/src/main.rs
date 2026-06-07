@@ -314,6 +314,7 @@ fn schema_error(error: JsonError) -> CliError {
         JsonError::ResourceLimitExceeded(message) => {
             CliError::from_error(Error::resource_limit_exceeded(message))
         }
+        JsonError::Core(error) => CliError::from_error(error),
         JsonError::NotFound { kind, id } => CliError::from_error(Error::new(
             ErrorCode::InvalidInput,
             format!("{kind} `{id}` was not found."),

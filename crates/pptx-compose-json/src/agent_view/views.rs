@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+#[cfg(test)]
+use pptx_compose_core::error::ErrorCode;
 use pptx_compose_core::{
     error::Error,
     opc::{
@@ -1278,7 +1280,7 @@ const fn is_false(value: &bool) -> bool {
 }
 
 fn core_error(error: Error) -> JsonError {
-    JsonError::Projection(error.message().to_owned())
+    JsonError::Core(error)
 }
 
 pub fn package_from_pptx_bytes(bytes: &[u8]) -> Result<PptxPackage, JsonError> {
@@ -1714,7 +1716,10 @@ fn summary_views_do_not_parse_slide_xml() {
 
     let err = build_view(&pkg, request_for(&pkg, ViewMode::SlideDetail, None))
         .expect_err("slide detail still parses its target slide");
-    assert!(matches!(err, JsonError::Projection(_)));
+    assert!(matches!(
+        err,
+        JsonError::Core(error) if error.code() != ErrorCode::InvalidInput
+    ));
 }
 
 #[cfg(test)]

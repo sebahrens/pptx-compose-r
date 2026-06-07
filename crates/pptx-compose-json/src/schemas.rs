@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use pptx_compose_core::error::Error;
+
 use crate::agent_view::AgentView;
 use crate::schema_versions::{
     AGENT_VIEW_SCHEMA, ERROR_SCHEMA, ERROR_VERSION, PATCH_REPORT_SCHEMA, PATCH_REPORT_VERSION,
@@ -242,13 +244,14 @@ pub enum ErrorCode {
     InternalError,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum JsonError {
     SerializeSchema(String),
     InvalidCursor(String),
     MalformedLegacyEnvelope(String),
     NotFound { kind: &'static str, id: String },
     Projection(String),
+    Core(Error),
     ResourceLimitExceeded(String),
 }
 

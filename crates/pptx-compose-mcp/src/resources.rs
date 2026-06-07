@@ -582,6 +582,7 @@ fn write_query(
 fn json_error(error: JsonError) -> Error {
     match error {
         JsonError::ResourceLimitExceeded(message) => Error::resource_limit_exceeded(message),
+        JsonError::Core(error) => error,
         other => Error::new(
             ErrorCode::InvalidInput,
             format!("Could not build resource view: {other:?}."),
