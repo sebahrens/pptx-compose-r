@@ -171,6 +171,20 @@ fn open_options_apply_resource_limits_at_facade_boundary() {
 }
 
 #[test]
+fn from_bytes_limit_rejects_oversized_non_zip_before_sniff() {
+    let bytes = b"this is not a zip package";
+    let options = OpenOptions::with_resource_limits(ResourceLimits {
+        max_compressed_package_bytes: u64::try_from(bytes.len() - 1).expect("test length fits u64"),
+        ..ResourceLimits::default()
+    });
+
+    let error = PresentationDocument::from_bytes_with_options(bytes, options)
+        .expect_err("compressed package size limit must run before package sniffing");
+
+    assert_eq!(error.code(), ErrorCode::ResourceLimitExceeded);
+}
+
+#[test]
 fn compressed_limit_rejects_path_and_reader_before_zip_parse() {
     let bytes = include_bytes!("../../../fixtures/minimal.pptx");
     let options = OpenOptions::with_resource_limits(ResourceLimits {

@@ -134,7 +134,10 @@ impl PresentationDocument {
     }
 
     pub fn from_bytes_with_options(bytes: impl AsRef<[u8]>, options: OpenOptions) -> Result<Self> {
-        let source_bytes = bytes.as_ref().to_vec();
+        let bytes = bytes.as_ref();
+        let compressed_package_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        ensure_facade_compressed_package_size(compressed_package_bytes, options.resource_limits())?;
+        let source_bytes = bytes.to_vec();
         sniff_package(&mut Cursor::new(source_bytes.as_slice()))?;
         let entries = from_bytes_with_options(
             &source_bytes,
