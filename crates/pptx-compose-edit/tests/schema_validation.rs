@@ -3,7 +3,8 @@
 use pptx_compose_edit::{
     media_inputs::media_manifest_json_schema,
     patch::{
-        Operation, PATCH_SCHEMA, PATCH_VERSION, Patch, ReplaceTextOperation, patch_json_schema,
+        Operation, PATCH_SCHEMA, PATCH_VERSION, Patch, ReplaceTextOperation, parse_patch,
+        patch_json_schema,
     },
 };
 use pptx_compose_json::{
@@ -82,6 +83,50 @@ fn emitted_schema_rejects_out_of_schema_instance() {
     instance["unexpected"] = json!(true);
 
     assert_schema_rejects(result_json_schema().expect("result schema emits"), instance);
+}
+
+#[test]
+fn patch_schema_rejects_unknown_text_box_style_keys() {
+    assert_schema_rejects(
+        patch_json_schema().expect("patch schema emits"),
+        patch_with_operation(json!({
+            "operation_id": "op-1",
+            "op": "add_text_box",
+            "slide_id": "slide-1",
+            "text": "Hello",
+            "bounds": { "x": 0, "y": 0, "cx": 100, "cy": 100 },
+            "style": { "underline": true }
+        })),
+    );
+    assert_schema_rejects(
+        patch_json_schema().expect("patch schema emits"),
+        patch_with_operation(json!({
+            "operation_id": "op-1",
+            "op": "replace_text",
+            "element_id": "slide-1:shape-4",
+            "text": "Updated title",
+            "mode": "run_scoped",
+            "run_style": { "underline": true }
+        })),
+    );
+}
+
+#[test]
+fn parse_patch_rejects_unknown_text_box_style_keys_as_invalid_input() {
+    let error = parse_patch(patch_with_operation(json!({
+        "operation_id": "op-1",
+        "op": "replace_text",
+        "element_id": "slide-1:shape-4",
+        "text": "Updated title",
+        "mode": "run_scoped",
+        "run_style": { "underline": true }
+    })))
+    .expect_err("unknown run_style key is rejected during patch parse");
+
+    assert_eq!(
+        error.code(),
+        pptx_compose_core::error::ErrorCode::InvalidInput
+    );
 }
 
 #[test]
@@ -236,6 +281,17 @@ fn find_text_result() -> Value {
         .expect("find-text result builds"),
     )
     .expect("find-text result serializes")
+}
+
+fn patch_with_operation(operation: Value) -> Value {
+    json!({
+        "schema": PATCH_SCHEMA,
+        "version": PATCH_VERSION,
+        "document_id": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "base_revision": 1,
+        "client_request_id": "request-1",
+        "operations": [operation]
+    })
 }
 
 fn patch() -> Patch {

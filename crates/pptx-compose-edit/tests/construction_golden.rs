@@ -312,7 +312,6 @@ mod construction {
                 font_family: Some("Aptos".to_owned()),
                 color_hex: Some("112233".to_owned()),
                 align: Some(TextAlign::Center),
-                extra: Default::default(),
             }),
         };
 
@@ -427,56 +426,12 @@ mod construction {
                 font_family: None,
                 color_hex: None,
                 align: None,
-                extra: Default::default(),
             }),
         };
 
         let error = operation
             .validate(&package, &target)
             .expect_err("whole-element mode rejects run_style");
-
-        assert_eq!(
-            error.code(),
-            pptx_compose_core::error::ErrorCode::UnsupportedEdit
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn replace_text_run_scoped_rejects_unknown_run_style_keys() -> Result<()> {
-        let package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
-        let target = target(ElementKind::TextBox);
-        let operation = ReplaceText {
-            operation_id: "op-replace-text".to_owned(),
-            element_id: target.element_id.clone(),
-            text: "Updated".to_owned(),
-            current_text_match: None,
-            mode: ReplaceTextMode::RunScoped,
-            format_policy: FormatPolicy::PreserveExistingRuns,
-            overflow_policy: OverflowPolicy::Allow,
-            allow_formatting_simplification: false,
-            run: Some(RunSelector {
-                paragraph_index: 0,
-                run_index: 0,
-                run_end_index: None,
-                text_hash: None,
-            }),
-            run_style: Some(TextBoxStyle {
-                font_size_pt: None,
-                bold: None,
-                italic: None,
-                font_family: None,
-                color_hex: None,
-                align: None,
-                extra: [("underline".to_owned(), serde_json::json!(true))]
-                    .into_iter()
-                    .collect(),
-            }),
-        };
-
-        let error = operation
-            .validate(&package, &target)
-            .expect_err("unknown run_style key is rejected");
 
         assert_eq!(
             error.code(),

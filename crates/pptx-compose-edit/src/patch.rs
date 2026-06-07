@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashSet},
-    error, fmt,
-};
+use std::{collections::HashSet, error, fmt};
 
 use pptx_compose_core::{
     error::{Error, ErrorCode, ErrorLocation, Result},
@@ -609,6 +606,7 @@ pub struct Bounds {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TextBoxStyle {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size_pt: Option<u32>,
@@ -622,8 +620,6 @@ pub struct TextBoxStyle {
     pub color_hex: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub align: Option<TextAlign>,
-    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
-    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]

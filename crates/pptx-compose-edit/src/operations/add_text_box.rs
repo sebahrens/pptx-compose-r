@@ -116,13 +116,6 @@ pub(crate) fn validate_style(label: &str, style: Option<&TextBoxStyle>) -> Resul
         return Ok(());
     };
 
-    if let Some(key) = style.extra.keys().next() {
-        return Err(Error::new(
-            ErrorCode::UnsupportedEdit,
-            format!("{label} field {key} is not supported in V1."),
-        ));
-    }
-
     if let Some(color) = &style.color_hex {
         let valid = color.len() == 6 && color.bytes().all(|byte| byte.is_ascii_hexdigit());
         if !valid {
@@ -489,7 +482,6 @@ fn builds_template() {
             font_family: Some("Aptos".to_owned()),
             color_hex: Some("112233".to_owned()),
             align: Some(TextAlign::Center),
-            extra: Default::default(),
         }),
         insert: None,
     };
@@ -524,18 +516,15 @@ fn builds_template() {
     assert!(slide_xml.contains(r#"<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" dirty="0" sz="1800" b="1" i="0"><a:solidFill><a:srgbClr val="112233"/></a:solidFill><a:latin typeface="Aptos"/></a:rPr><a:t>Hello</a:t></a:r></a:p>"#));
     assert!(slide_xml.contains(r#"<a:t>World</a:t>"#));
 
-    let unknown_style = serde_json::from_value::<AddTextBoxOperation>(serde_json::json!({
+    let error = serde_json::from_value::<AddTextBoxOperation>(serde_json::json!({
         "operation_id": "op-unknown",
         "slide_id": "slide-1",
         "text": "Bad style",
         "bounds": { "x": 0, "y": 0, "cx": 1, "cy": 1 },
         "style": { "shadow": true }
     }))
-    .expect("unknown style keys are preserved for operation validation");
-    let error = AddTextBox::from(&unknown_style)
-        .validate()
-        .expect_err("unknown style key is unsupported");
-    assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+    .expect_err("unknown style keys are rejected during operation parse");
+    assert!(error.to_string().contains("unknown field `shadow`"));
 
     let invalid_bounds = AddTextBox {
         operation_id: "op-bounds".to_owned(),
