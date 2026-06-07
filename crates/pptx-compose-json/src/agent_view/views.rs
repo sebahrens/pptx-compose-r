@@ -40,10 +40,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    AgentView, Bounds, Capabilities, Editable, EditableSupport, ElementKind, ElementSelector,
-    ElementView, FindTextResult, FindTextScope, ImageView, IntrinsicSizePx, Paragraph,
-    PresentationView, Run, SelectorGuards, SlideView, StyleSummary, TextMatch, TextSpan, TextView,
-    TruncationMarker, XmlLocation,
+    AgentView, Bounds, Capabilities, Editable, EditableSupport, ElementKind, ElementPageView,
+    ElementSelector, ElementView, FindTextResult, FindTextScope, ImageView, IntrinsicSizePx,
+    Paragraph, PresentationView, Run, SelectorGuards, SlideView, StyleSummary, TextMatch, TextSpan,
+    TextView, TruncationMarker, XmlLocation,
     pagination::{CursorScope, ViewMeta, bounded_limit, cursor_offset, paginate},
 };
 use crate::{
@@ -59,6 +59,7 @@ pub type PptxPackage = PresentationDocument;
 const TEXT_PREVIEW_CHARS: usize = 4_096;
 const PARAGRAPH_PREVIEW_CHARS: usize = 1_024;
 const RUN_PREVIEW_CHARS: usize = 1_024;
+const EMBEDDED_SLIDE_ELEMENT_LIMIT: u32 = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -544,7 +545,10 @@ fn page_slide_summaries(
     let slides = if include_elements {
         let mut media = BTreeMap::<String, ImageView>::new();
         page.into_iter()
-            .map(|slide| project_slide(context.pkg, slide, &mut media).map(|slide| slide.detail))
+            .map(|slide| {
+                let slide = project_slide(context.pkg, slide, &mut media)?;
+                cap_embedded_slide_elements(&slide, &context.document_id, context.revision)
+            })
             .collect::<Result<Vec<_>, _>>()?
     } else {
         page.into_iter()
@@ -607,6 +611,41 @@ fn project_media_page(
     ))
 }
 
+fn cap_embedded_slide_elements(
+    slide: &SlideProjection,
+    document_id: &str,
+    revision: u32,
+) -> Result<SlideView, JsonError> {
+    let slide_id = slide.summary.id.as_str();
+    let scope = CursorScope {
+        document_id,
+        revision,
+        mode: ViewMode::SlideDetail.as_token(),
+        collection: Some(slide_id),
+    };
+    let (elements, meta, omitted_count) = paginate(
+        &slide.detail.elements,
+        EMBEDDED_SLIDE_ELEMENT_LIMIT,
+        None,
+        scope,
+    )?;
+    let mut detail = slide.summary.clone();
+    detail.elements = elements.into_iter().cloned().collect();
+    if meta.truncated {
+        detail.elements_page = Some(ElementPageView {
+            mode: meta.mode,
+            limit: meta.limit,
+            next_cursor: meta.next_cursor,
+            truncated: meta.truncated,
+            omitted_count,
+            detail: format!(
+                "Request slide_detail for {slide_id} and pass next_cursor to continue elements."
+            ),
+        });
+    }
+    Ok(detail)
+}
+
 fn project_slide(
     pkg: &PptxPackage,
     slide: &Slide,
@@ -667,6 +706,7 @@ fn project_slide_summary(pkg: &PptxPackage, slide: &Slide) -> Result<SlideView, 
             .unwrap_or_default(),
         part_checksum: part_checksum(part.bytes()),
         elements: Vec::new(),
+        elements_page: None,
     })
 }
 
@@ -1652,6 +1692,31 @@ fn slide_detail_paginates_elements_with_working_cursor() {
 }
 
 #[cfg(test)]
+#[test]
+fn slide_page_embedded_elements_are_capped_with_marker() {
+    let slide = slide_projection_with_elements(EMBEDDED_SLIDE_ELEMENT_LIMIT + 3);
+    let document_id = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    let page_slide =
+        cap_embedded_slide_elements(&slide, document_id, 1).expect("embedded elements are capped");
+
+    assert_eq!(
+        page_slide.elements.len(),
+        EMBEDDED_SLIDE_ELEMENT_LIMIT as usize
+    );
+    let elements_page = page_slide
+        .elements_page
+        .expect("capped element list has pagination marker");
+    assert_eq!(elements_page.mode, "slide_detail");
+    assert_eq!(elements_page.limit, EMBEDDED_SLIDE_ELEMENT_LIMIT);
+    assert!(elements_page.truncated);
+    assert_eq!(elements_page.omitted_count, 3);
+    assert!(elements_page.next_cursor.is_some());
+    assert!(elements_page.detail.contains("slide_detail"));
+    assert!(elements_page.detail.contains("slide-1"));
+}
+
+#[cfg(test)]
 fn presentation_xml() -> &'static [u8] {
     br#"<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rSlide"/></p:sldIdLst></p:presentation>"#
 }
@@ -1764,6 +1829,7 @@ fn slide_projection_with_elements(count: u32) -> SlideProjection {
         part_checksum: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             .to_owned(),
         elements: Vec::new(),
+        elements_page: None,
     };
     let mut detail = summary.clone();
     detail.elements = (0..count).map(test_element).collect();

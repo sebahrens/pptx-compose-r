@@ -57,6 +57,19 @@ pub struct SlideView {
     pub layout_part: String,
     pub part_checksum: String,
     pub elements: Vec<ElementView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elements_page: Option<ElementPageView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ElementPageView {
+    pub mode: String,
+    pub limit: u32,
+    pub next_cursor: Option<String>,
+    pub truncated: bool,
+    pub omitted_count: u32,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -498,6 +511,7 @@ pub mod binary {
                     text: None,
                     image: Some(reference_image()),
                 }],
+                elements_page: None,
             }],
             warnings: Vec::new(),
             media: Vec::new(),
