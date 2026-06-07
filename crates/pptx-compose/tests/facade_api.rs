@@ -1009,6 +1009,81 @@ fn guarded_selector_replace_text_applies_and_rejects_stale_fingerprint() {
 }
 
 #[test]
+fn inspect_element_guards_resolve_for_replace_text_dry_run() {
+    let bytes = include_bytes!("../../../fixtures/real-world/worldbank-macro-economic-update.pptx");
+    let document = PresentationDocument::from_bytes(bytes).expect("fixture opens");
+    let view = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-2".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide_detail builds");
+    let element = view["slides"][0]["elements"]
+        .as_array()
+        .expect("slide_detail exposes elements")
+        .iter()
+        .find(|element| {
+            element["editable"]["text"]["supported"]
+                .as_bool()
+                .unwrap_or(false)
+                && element["text"]["plain"]
+                    .as_str()
+                    .is_some_and(|plain| plain == "Authors")
+        })
+        .expect("slide-2 Authors element exists");
+
+    let mut editable = PresentationDocument::from_bytes(bytes).expect("fixture opens");
+    let patch = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(bytes),
+        "base_revision": 1,
+        "client_request_id": "inspect-guard-parity",
+        "operations": [{
+            "operation_id": "replace-authors",
+            "op": "replace_text",
+            "selector": {
+                "type": "element_id",
+                "id": element["id"],
+                "guards": {
+                    "slide_id": element["slide_id"],
+                    "kind": element["kind"],
+                    "part": element["part"],
+                    "text_hash": element["text"]["text_hash"],
+                    "fingerprint": element["fingerprint"]
+                }
+            },
+            "match": element["text"]["plain"],
+            "text": "Authors"
+        }]
+    }))
+    .expect("inspect-guarded patch parses");
+
+    let output = editable
+        .apply_patch_with_diff(
+            patch,
+            MediaInputs::default(),
+            ApplyPatchOptions {
+                dry_run: true,
+                validate: true,
+            },
+        )
+        .expect("inspect-derived guarded selector dry-run succeeds");
+
+    assert_eq!(output.report.status, PatchStatus::DryRunSuccess);
+    assert_eq!(output.report.changed_parts, vec!["ppt/slides/slide2.xml"]);
+    assert_eq!(
+        output.report.operation_reports[0].target.element_id,
+        "slide-2:shape-2"
+    );
+}
+
+#[test]
 fn add_image_write_reopens_with_content_type_and_relationship() {
     let bytes = text_deck();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
