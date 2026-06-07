@@ -175,6 +175,7 @@ Minimum stable error codes:
 - `unsupported_media_type`
 - `invalid_bounds`
 - `parse_error`
+- `malformed_xml`
 - `validation_failed`
 - `stale_patch`
 - `selector_not_found`
