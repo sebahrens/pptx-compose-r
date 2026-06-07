@@ -890,6 +890,7 @@ fn project_element(
         editable: editable(
             core_kind,
             text.is_some() && core_kind.supports_replace_text(),
+            shape.cnvpr_id.is_some(),
             image_support,
         ),
         fingerprint: fingerprint(&FingerprintInput {
@@ -1240,6 +1241,7 @@ enum ImageEditSupport {
 fn editable(
     core_kind: CoreElementKind,
     has_text: bool,
+    has_cnvpr: bool,
     image_support: ImageEditSupport,
 ) -> Editable {
     let (image_supported, image_reason) = match image_support {
@@ -1258,8 +1260,8 @@ fn editable(
         reason: bounds_reason.map(str::to_owned),
     });
     let alt_text = Some(EditableSupport {
-        supported: true,
-        reason: None,
+        supported: has_cnvpr,
+        reason: (!has_cnvpr).then(|| "no_cnvpr".to_owned()),
     });
     let image =
         (!matches!(image_support, ImageEditSupport::NotPicture)).then_some(EditableSupport {
@@ -1781,6 +1783,69 @@ fn bounds_editability_matches_move_resize_supported_kinds() {
 
 #[cfg(test)]
 #[test]
+fn alt_text_editability_matches_cnvpr_presence() {
+    use pptx_compose_core::{
+        opc::{
+            package::{OFFICE_DOCUMENT_REL_TYPE, Package},
+            part_name::PartName,
+            relationships::{Relationship, RelationshipSource},
+        },
+        pptx::presentation::PresentationDocument,
+    };
+
+    const SLIDE_REL_TYPE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+
+    let presentation_part = PartName::from_zip_entry("ppt/presentation.xml").expect("part name");
+
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("[Content_Types].xml", content_types_xml().to_vec())
+        .expect("content types part inserts");
+    package
+        .insert_zip_entry("ppt/presentation.xml", presentation_xml().to_vec())
+        .expect("presentation part inserts");
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", no_cnvpr_slide_xml().to_vec())
+        .expect("slide part inserts");
+
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        OFFICE_DOCUMENT_REL_TYPE,
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlide",
+        SLIDE_REL_TYPE,
+        "slides/slide1.xml",
+    ));
+
+    let pkg = PresentationDocument::open(package).expect("presentation opens");
+    let value = build_view(&pkg, request_for(&pkg, ViewMode::SlideDetail, None))
+        .expect("slide detail builds");
+    let elements = value["slides"][0]["elements"]
+        .as_array()
+        .expect("elements array");
+
+    let supported = elements
+        .iter()
+        .find(|element| element["xml_location"]["cnvpr_name"] == "Supported Shape")
+        .expect("shape with cNvPr is projected");
+    assert_eq!(supported["editable"]["alt_text"]["supported"], true);
+    assert_eq!(supported["editable"]["alt_text"].get("reason"), None);
+
+    let unsupported = elements
+        .iter()
+        .find(|element| element["xml_location"]["cnvpr_id"] == 0)
+        .expect("shape without cNvPr is projected");
+    assert_eq!(unsupported["editable"]["alt_text"]["supported"], false);
+    assert_eq!(unsupported["editable"]["alt_text"]["reason"], "no_cnvpr");
+}
+
+#[cfg(test)]
+#[test]
 fn slide_detail_paginates_elements_with_working_cursor() {
     let slide = slide_projection_with_elements(3);
     let document_id = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -1883,6 +1948,11 @@ fn graphic_frame_slide_xml() -> &'static [u8] {
 #[cfg(test)]
 fn group_connector_slide_xml() -> &'static [u8] {
     br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:grpSp><p:nvGrpSpPr><p:cNvPr id="12" name="Unsupported Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:grpSpPr><p:sp><p:nvSpPr><p:cNvPr id="13" name="Nested Shape"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:spPr></p:sp></p:grpSp><p:cxnSp><p:nvCxnSpPr><p:cNvPr id="14" name="Unsupported Connector"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:spPr></p:cxnSp></p:spTree></p:cSld></p:sld>"#
+}
+
+#[cfg(test)]
+fn no_cnvpr_slide_xml() -> &'static [u8] {
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="15" name="Supported Shape"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:spPr></p:sp><p:sp><p:spPr><a:xfrm><a:off x="1000" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:spPr></p:sp></p:spTree></p:cSld></p:sld>"#
 }
 
 #[cfg(test)]
