@@ -1,0 +1,1 @@
+Open the deck through MCP, attempt a mutation with a stale base_revision, and report the stale_patch error without exporting.

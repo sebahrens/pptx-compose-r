@@ -1,0 +1,40 @@
+{
+  "schema": "pptx-compose.mcp_eval_transcript.v1",
+  "version": 1,
+  "case": "stale-revision",
+  "tools": [
+    {
+      "name": "pptx_open",
+      "arguments": { "path": "{input}" },
+      "expect": { "status": "success", "result_fields": ["session_id", "document_id", "revision"] }
+    },
+    {
+      "name": "pptx_get_document_summary",
+      "arguments": { "session_id": "{session_id}" },
+      "expect": { "status": "success", "view_mode": "deck_summary" }
+    },
+    {
+      "name": "pptx_apply_patch",
+      "arguments": { "session_id": "{session_id}", "patch": "{expected_patch}", "dry_run": false },
+      "expect": {
+        "status": "error",
+        "error": {
+          "code": "stale_patch",
+          "state_changed": false
+        },
+        "revision_increment": 0
+      }
+    },
+    {
+      "name": "pptx_close",
+      "arguments": { "session_id": "{session_id}" },
+      "expect": { "status": "success" }
+    }
+  ],
+  "output_invariants": {
+    "read_only": true,
+    "stale_patch_rejected": true,
+    "mutates_output": false,
+    "exports_output": false
+  }
+}

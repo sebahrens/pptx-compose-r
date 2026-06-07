@@ -7,10 +7,11 @@ use std::{
 
 use serde_json::Value;
 
-const MCP_CASES: [&str; 4] = [
+const MCP_CASES: [&str; 5] = [
     "inspect-large-deck",
     "patch-after-pagination",
     "media-import-add-image",
+    "stale-revision",
     "validation-error-explain",
 ];
 
@@ -48,7 +49,37 @@ fn mcp_eval_corpus_contains_required_cases() {
                 .is_some_and(|tools| !tools.is_empty()),
             "{case_name}: transcript has tool steps"
         );
+        if case_name == "stale-revision" {
+            assert_stale_revision_transcript(&transcript);
+        }
     }
+}
+
+fn assert_stale_revision_transcript(transcript: &Value) {
+    let tools = transcript["tools"]
+        .as_array()
+        .expect("stale-revision: tools is an array");
+    let stale_step = tools
+        .iter()
+        .find(|step| {
+            step["name"] == "pptx_apply_patch"
+                && step["expect"]["status"] == "error"
+                && step["expect"]["error"]["code"] == "stale_patch"
+        })
+        .expect("stale-revision: stale apply step is present");
+
+    assert_eq!(
+        stale_step["expect"]["error"]["state_changed"], false,
+        "stale-revision: stale patch does not mutate state"
+    );
+    assert_eq!(
+        stale_step["expect"]["revision_increment"], 0,
+        "stale-revision: stale patch does not increment revision"
+    );
+    assert!(
+        tools.iter().all(|step| step["name"] != "pptx_export"),
+        "stale-revision: rejected stale flow does not export"
+    );
 }
 
 fn read_json(path: &Path, case_name: &str) -> Value {
