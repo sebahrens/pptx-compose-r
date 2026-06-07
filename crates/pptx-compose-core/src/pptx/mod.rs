@@ -4,4 +4,5 @@ pub mod picture;
 pub mod presentation;
 pub mod shape;
 pub mod slide;
+pub mod table_style;
 pub mod text;
