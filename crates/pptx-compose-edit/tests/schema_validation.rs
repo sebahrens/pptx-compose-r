@@ -87,6 +87,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         &pkg,
         ViewRequest {
             mode: ViewMode::SlideDetail,
+            include_elements: false,
             slide_id: Some("slide-1".to_owned()),
             slide_ids: Vec::new(),
             element_id: None,
@@ -103,6 +104,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
     for request in [
         ViewRequest {
             mode: ViewMode::DeckSummary,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: None,
@@ -111,6 +113,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         },
         ViewRequest {
             mode: ViewMode::SlidePage,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: None,
@@ -119,6 +122,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         },
         ViewRequest {
             mode: ViewMode::SlideDetail,
+            include_elements: false,
             slide_id: Some("slide-1".to_owned()),
             slide_ids: Vec::new(),
             element_id: None,
@@ -127,6 +131,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         },
         ViewRequest {
             mode: ViewMode::ElementDetail,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: Some(element_id),
@@ -135,6 +140,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         },
         ViewRequest {
             mode: ViewMode::MediaMetadata,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: None,
@@ -143,6 +149,7 @@ fn all_agent_view_modes_validate_against_published_schema() {
         },
         ViewRequest {
             mode: ViewMode::ValidationReport,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: None,

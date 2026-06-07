@@ -22,6 +22,7 @@ impl OpenOptions {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentViewOptions {
     pub mode: pptx_compose_json::agent_view::views::ViewMode,
+    pub include_elements: bool,
     pub slide_id: Option<String>,
     pub slide_ids: Vec<String>,
     pub element_id: Option<String>,
@@ -40,6 +41,7 @@ impl Default for AgentViewOptions {
     fn default() -> Self {
         Self {
             mode: pptx_compose_json::agent_view::views::ViewMode::DeckSummary,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: None,

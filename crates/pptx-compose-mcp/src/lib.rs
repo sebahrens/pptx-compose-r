@@ -755,6 +755,7 @@ impl PptxServer {
                 } else {
                     ViewMode::SlidePage
                 },
+                include_elements: input.slide_id.is_none(),
                 slide_id: input.slide_id,
                 slide_ids: Vec::new(),
                 element_id: None,

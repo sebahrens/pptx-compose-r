@@ -87,6 +87,8 @@ impl ViewMode {
 #[serde(deny_unknown_fields)]
 pub struct ViewRequest {
     pub mode: ViewMode,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub include_elements: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slide_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -133,6 +135,7 @@ pub fn build_view(pkg: &PptxPackage, req: ViewRequest) -> Result<Value, JsonErro
             let (slides, meta, omitted_count) = page_slide_summaries(
                 &context,
                 &req.slide_ids,
+                req.include_elements,
                 limit,
                 req.cursor.as_deref(),
                 scope,
@@ -513,16 +516,23 @@ fn substring_by_char_span(text: &str, span: TextSpan) -> String {
 fn page_slide_summaries(
     context: &ViewContext,
     slide_ids: &[String],
+    include_elements: bool,
     limit: u32,
     cursor: Option<&str>,
     scope: CursorScope<'_>,
 ) -> Result<(Vec<SlideView>, ViewMeta, u32), JsonError> {
     let slide_refs = scoped_slide_refs(context, slide_ids)?;
     let (page, meta, omitted_count) = paginate(&slide_refs, limit, cursor, scope)?;
-    let slides = page
-        .into_iter()
-        .map(|slide| project_slide_summary(context.pkg, slide))
-        .collect::<Result<Vec<_>, _>>()?;
+    let slides = if include_elements {
+        let mut media = BTreeMap::<String, ImageView>::new();
+        page.into_iter()
+            .map(|slide| project_slide(context.pkg, slide, &mut media).map(|slide| slide.detail))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        page.into_iter()
+            .map(|slide| project_slide_summary(context.pkg, slide))
+            .collect::<Result<Vec<_>, _>>()?
+    };
     Ok((slides, meta, omitted_count))
 }
 
@@ -1233,6 +1243,10 @@ fn trim_part(part_name: &str) -> String {
     part_name.trim_start_matches('/').to_owned()
 }
 
+const fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn core_error(error: Error) -> JsonError {
     JsonError::Projection(error.message().to_owned())
 }
@@ -1327,6 +1341,7 @@ fn all_modes() {
         &pkg,
         ViewRequest {
             mode: ViewMode::DeckSummary,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: None,
@@ -1374,6 +1389,7 @@ fn all_modes() {
         &pkg,
         ViewRequest {
             mode: ViewMode::ElementDetail,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: Some("slide-1:missing-999".to_owned()),
@@ -1640,6 +1656,7 @@ fn summary_views_do_not_parse_slide_xml() {
         &pkg,
         ViewRequest {
             mode: ViewMode::DeckSummary,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: None,
@@ -1654,6 +1671,7 @@ fn summary_views_do_not_parse_slide_xml() {
         &pkg,
         ViewRequest {
             mode: ViewMode::SlidePage,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: None,
@@ -1771,6 +1789,7 @@ fn request_for(
         .map(pptx_compose_core::pptx::slide::Slide::agent_id);
     ViewRequest {
         mode,
+        include_elements: false,
         slide_id: matches!(mode, ViewMode::SlideDetail)
             .then(|| slide_id.clone())
             .flatten(),

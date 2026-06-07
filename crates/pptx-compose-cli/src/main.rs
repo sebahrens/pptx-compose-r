@@ -331,6 +331,7 @@ fn inspect_view_options(args: &cli::InspectArgs) -> Result<AgentViewOptions, Cli
     let mut options = AgentViewOptions::default();
     if matches!(args.detail, Some(cli::InspectDetail::Full)) {
         options.mode = ViewMode::SlidePage;
+        options.include_elements = true;
     }
     if let Some(slides) = &args.slides {
         let slide_ids = parse_slide_scope(slides)?;

@@ -387,6 +387,7 @@ fn session_view(
         .package
         .to_agent_json_with_options(AgentViewOptions {
             mode,
+            include_elements: false,
             slide_id,
             slide_ids: Vec::new(),
             element_id,

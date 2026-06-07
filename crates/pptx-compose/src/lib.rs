@@ -228,6 +228,7 @@ impl PresentationDocument {
             &model,
             ViewRequest {
                 mode: options.mode,
+                include_elements: options.include_elements,
                 slide_id: options.slide_id,
                 slide_ids: options.slide_ids,
                 element_id: options.element_id,

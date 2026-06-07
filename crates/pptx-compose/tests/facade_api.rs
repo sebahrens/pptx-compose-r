@@ -303,11 +303,100 @@ fn find_text_returns_selector_ready_hits() {
 }
 
 #[test]
+fn inspect_find_text_and_apply_use_identical_selector_guards() {
+    let bytes = text_deck();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let full_inspect = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlidePage,
+            include_elements: true,
+            slide_id: None,
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("full deck inspect builds");
+    let scoped_inspect = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("scoped inspect builds");
+    let find_hit = document
+        .find_text(FindTextRequest {
+            query: "Original".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds")
+        .matches
+        .into_iter()
+        .next()
+        .expect("text hit exists");
+
+    let full_element = inspect_element(&full_inspect, &find_hit.element_id);
+    let scoped_element = inspect_element(&scoped_inspect, &find_hit.element_id);
+    let full_text_hash = full_element["text"]["text_hash"]
+        .as_str()
+        .expect("full inspect element has text hash");
+    let scoped_text_hash = scoped_element["text"]["text_hash"]
+        .as_str()
+        .expect("scoped inspect element has text hash");
+    let full_fingerprint = full_element["fingerprint"]
+        .as_str()
+        .expect("full inspect element has fingerprint");
+    let scoped_fingerprint = scoped_element["fingerprint"]
+        .as_str()
+        .expect("scoped inspect element has fingerprint");
+
+    assert_eq!(full_text_hash, find_hit.text_hash);
+    assert_eq!(scoped_text_hash, find_hit.text_hash);
+    assert_eq!(full_fingerprint, find_hit.fingerprint);
+    assert_eq!(scoped_fingerprint, find_hit.fingerprint);
+
+    let patch = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(&bytes),
+        "base_revision": 1,
+        "client_request_id": "inspect-guard-parity",
+        "operations": [{
+            "operation_id": "replace-from-inspect",
+            "op": "replace_text",
+            "selector": {
+                "type": "element_id",
+                "id": full_element["id"],
+                "guards": {
+                    "slide_id": full_element["slide_id"],
+                    "kind": full_element["kind"],
+                    "part": full_element["part"],
+                    "text_hash": full_text_hash,
+                    "fingerprint": full_fingerprint
+                }
+            },
+            "text": "Updated from inspect guards"
+        }]
+    }))
+    .expect("inspect-guarded patch parses");
+    document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("inspect-guarded patch applies");
+}
+
+#[test]
 fn agent_view_rejects_huge_page_limit() {
     let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
     let error = document
         .to_agent_json_with_options(AgentViewOptions {
             mode: ViewMode::SlidePage,
+            include_elements: false,
             slide_id: None,
             slide_ids: Vec::new(),
             element_id: None,
@@ -397,6 +486,7 @@ fn agent_text_view_does_not_emit_unaddressable_run_or_paragraph_ids() {
     let view = document
         .to_agent_json_with_options(AgentViewOptions {
             mode: ViewMode::SlideDetail,
+            include_elements: false,
             slide_id: Some("slide-1".to_owned()),
             slide_ids: Vec::new(),
             element_id: None,
@@ -859,6 +949,7 @@ fn external_link_image_view_flag_matches_replace_image_rejection() {
     let view = document
         .to_agent_json_with_options(AgentViewOptions {
             mode: ViewMode::SlideDetail,
+            include_elements: false,
             slide_id: Some("slide-1".to_owned()),
             slide_ids: Vec::new(),
             element_id: None,
@@ -910,6 +1001,7 @@ fn graphic_frame_kind_view_and_no_edit_round_trip_are_stable() {
     let view = document
         .to_agent_json_with_options(AgentViewOptions {
             mode: ViewMode::SlideDetail,
+            include_elements: false,
             slide_id: Some("slide-1".to_owned()),
             slide_ids: Vec::new(),
             element_id: None,
@@ -1378,6 +1470,20 @@ fn document_id_from_entries(entries: &[RawEntry]) -> String {
         .collect::<Vec<_>>();
 
     provenance_document_id(&ordinary_parts, content_types_bytes)
+}
+
+fn inspect_element<'a>(view: &'a Value, element_id: &str) -> &'a Value {
+    view["slides"]
+        .as_array()
+        .expect("inspect view has slides")
+        .iter()
+        .flat_map(|slide| {
+            slide["elements"]
+                .as_array()
+                .expect("inspect slide has elements")
+        })
+        .find(|element| element["id"] == element_id)
+        .unwrap_or_else(|| panic!("inspect view should include {element_id}"))
 }
 
 fn media_inputs(media_ref: &str, content_type: &str, bytes: Vec<u8>) -> MediaInputs {
