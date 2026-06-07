@@ -4,7 +4,7 @@
 
 This repo is not meant to remain a TypeScript PPTX-to-JSON package. It is being reverse engineered into a cleanroom Rust implementation for AI-agent-safe PPTX round-tripping.
 
-The existing `src/`, `lib/`, `bin/`, and Jest tests are legacy observation material only. The TypeScript implementation will be deleted ASAP once the Rust replacement is viable. Do not build new product behavior in TypeScript unless the task explicitly says to measure or preserve current observable behavior.
+The existing `src/`, `lib/`, `bin/`, and Jest tests are legacy observation material only. The Rust `pptx-compose` CLI and `pptx-compose-mcp` server are built and under test; the TypeScript implementation will be deleted once the Rust runtime satisfies the spec suite. Do not build new product behavior in TypeScript unless the task explicitly says to measure or preserve current observable behavior.
 
 ## Authority Order
 
@@ -29,7 +29,7 @@ This is an OPC/PPTX package engine plus agent runtime contract, not a generic XM
 
 ## QA Agent Mandate
 
-If you are reviewing or testing this project, your job is to prove the future Rust crate can be safely used by agents through CLI or MCP. Focus on the specs, not on preserving the old TypeScript structure.
+If you are reviewing or testing this project, your job is to prove the Rust CLI/MCP runtime can be safely used by agents. Focus on the specs, not on preserving the old TypeScript structure.
 
 Ask these questions:
 
@@ -75,11 +75,13 @@ If the answer depends on manually editing raw XML or legacy path-keyed JSON for 
 
 ## Legacy Commands
 
-Only for observing the current package:
+Driving the runtime: use `pptx-compose` and `pptx-compose-mcp` through the bounded inspect -> find-text -> patch -> dry-run/apply -> validate workflow documented in [`AGENTS.md`](AGENTS.md) and the local `pptx-compose` skill.
+
+Only for observing the legacy TypeScript package:
 
 ```bash
 npm test
 npm run build
 ```
 
-These are not the future acceptance criteria. The future acceptance criteria are the spec invariants, CLI/MCP contracts, agent schemas, and runtime evals.
+These are not Rust runtime acceptance criteria. The acceptance criteria are the spec invariants, CLI/MCP contracts, agent schemas, and runtime evals.
