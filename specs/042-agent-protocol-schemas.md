@@ -34,6 +34,28 @@ Required top-level fields:
 }
 ```
 
+Post-V1 metadata inspection may add this optional top-level shape:
+
+```json
+{
+  "metadata": {
+    "core_properties": {
+      "part": "docProps/core.xml",
+      "part_checksum": "sha256:...",
+      "title": "Quarterly Results",
+      "subject": null,
+      "creator": "Research Team",
+      "keywords": "finance; q4"
+    }
+  }
+}
+```
+
+The `part_checksum` is the raw-byte checksum defined in
+[046](046-provenance-and-hashing.md) and is suitable for
+`set_document_metadata` selector guards. Missing core-property elements are
+reported as `null` in the view.
+
 ## Slide View
 
 Slide entries must include stable identity and provenance:
@@ -149,6 +171,45 @@ Required fields:
 
 Each operation must include `operation_id` and `op`. Patches are atomic. Dry-run and apply must use the same report schema.
 
+Post-V1 operations appear in `capabilities.operations` only after their
+implementation ships. The first post-V1 operation schema is
+`set_document_metadata`:
+
+```json
+{
+  "operation_id": "op-metadata-title",
+  "op": "set_document_metadata",
+  "selector": {
+    "type": "core_properties",
+    "part": "docProps/core.xml",
+    "guards": {
+      "part_checksum": "sha256:..."
+    }
+  },
+  "match": {
+    "title": "Old deck title"
+  },
+  "metadata": {
+    "title": "New deck title",
+    "subject": "Board update",
+    "creator": "Research Team",
+    "keywords": "finance; q4"
+  }
+}
+```
+
+`metadata` MUST contain at least one settable field. Initial implementation
+fields are `title`, `subject`, `creator`, and `keywords`; these map to
+`dc:title`, `dc:subject`, `dc:creator`, and `cp:keywords` in
+`docProps/core.xml`. `category` (`cp:category`) and `description`
+(`dc:description`) are reserved deferred fields and MUST be rejected until the
+schema explicitly opts them in. Unknown fields are rejected by default.
+
+`match` is optional and maps settable metadata field names to expected current
+string values. Missing elements do not satisfy a string `match`; a later schema
+may add an explicit null/absence guard if agents need that distinction. Guard
+mismatches return `selector_guard_failed`.
+
 ## Selector Schema
 
 Canonical element selectors use this shape:
@@ -174,6 +235,25 @@ Supported selector types in V1:
 - `media_part`
 
 Query/fuzzy selectors are post-V1 unless a later spec defines ambiguity handling.
+
+`set_document_metadata` adds a post-V1 part-scoped selector:
+
+```json
+{
+  "type": "core_properties",
+  "part": "docProps/core.xml",
+  "guards": {
+    "part_checksum": "sha256:..."
+  }
+}
+```
+
+This selector resolves only the OPC core-properties part and produces a
+part-scoped resolved target, not a slide, media part, or shape-tree element.
+`part` MUST be `docProps/core.xml`. `guards.part_checksum`, when present, is the
+current raw-byte `part_checksum` of that part as defined in [046](046-provenance-and-hashing.md).
+Missing core properties return `selector_not_found`; checksum mismatch returns
+`selector_guard_failed`.
 
 Phase 2 run-scoped text replacement extends only `element_id` selectors. The
 owning element is still selected by `type: "element_id"` and `id`, while the run
