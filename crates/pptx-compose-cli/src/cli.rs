@@ -49,9 +49,6 @@ pub enum Commands {
     FindText(FindTextArgs),
     Validate(ValidateArgs),
     Apply(ApplyArgs),
-    ToJson(LegacyToJsonArgs),
-    ToPptx(LegacyToPptxArgs),
-    Convert(LegacyConvertArgs),
     #[command(subcommand)]
     Media(MediaCmd),
     Schema(SchemaArgs),
@@ -149,32 +146,6 @@ pub struct ApplyArgs {
     pub no_backup: bool,
     #[arg(long)]
     pub deterministic: bool,
-}
-
-#[derive(Args, Debug, Eq, PartialEq)]
-pub struct LegacyToJsonArgs {
-    pub input: PathBuf,
-    pub output: PathBuf,
-    #[arg(long)]
-    pub compat_json: bool,
-}
-
-#[derive(Args, Debug, Eq, PartialEq)]
-pub struct LegacyToPptxArgs {
-    pub input: PathBuf,
-    pub output: PathBuf,
-    #[arg(long)]
-    pub compat_json: bool,
-    #[arg(long)]
-    pub overwrite: bool,
-}
-
-#[derive(Args, Debug, Eq, PartialEq)]
-pub struct LegacyConvertArgs {
-    pub input: PathBuf,
-    pub output: PathBuf,
-    #[arg(long)]
-    pub compat_json: bool,
 }
 
 #[derive(Debug, Eq, PartialEq, Subcommand)]
@@ -361,9 +332,6 @@ fn spec_071_documents_command_variants() {
         "find-text",
         "validate",
         "apply",
-        "to-json",
-        "to-pptx",
-        "convert",
         "media",
         "schema",
     ];

@@ -9,7 +9,6 @@ mod permissions;
 use clap::{Parser, error::ErrorKind};
 use cli::{Cli, Commands, MediaCmd};
 use commands::apply::apply;
-use commands::legacy::{run_convert, run_to_json, run_to_pptx};
 use exit::exit_code_for;
 use output::{OutputDest, OutputSink};
 use permissions::{PathIntent, PermissionContext};
@@ -84,9 +83,6 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Commands::FindText(args) => find_text(args, &permissions, sink, open_options),
         Commands::Validate(args) => validate(args, &permissions, sink, open_options),
         Commands::Apply(args) => apply(args, &permissions, open_options),
-        Commands::ToJson(args) => run_to_json(args, &permissions, open_options),
-        Commands::ToPptx(args) => run_to_pptx(args, &permissions),
-        Commands::Convert(args) => run_convert(args, &permissions, open_options),
         Commands::Media(MediaCmd::List(args)) => media_list(args, &permissions, sink, open_options),
         Commands::Media(MediaCmd::Get(args)) => media_get(args, &permissions, sink, open_options),
         Commands::Schema(args) => schema(args, sink),

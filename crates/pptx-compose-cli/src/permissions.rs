@@ -18,8 +18,6 @@ pub(crate) struct PermissionContext {
 pub(crate) enum PathIntent {
     InputPptx,
     OutputPptx,
-    LegacyJsonInput,
-    LegacyJsonOutput,
     MediaInput,
     ReportOutput,
     DiffOutput,
@@ -182,8 +180,6 @@ impl PathIntent {
         match self {
             Self::InputPptx => "input PPTX",
             Self::OutputPptx => "output PPTX",
-            Self::LegacyJsonInput => "legacy JSON input",
-            Self::LegacyJsonOutput => "legacy JSON output",
             Self::MediaInput => "media input",
             Self::ReportOutput => "report output",
             Self::DiffOutput => "diff output",
@@ -192,10 +188,7 @@ impl PathIntent {
     }
 
     const fn allows_stdio(self) -> bool {
-        matches!(
-            self,
-            Self::ReportOutput | Self::DiffOutput | Self::LegacyJsonOutput
-        )
+        matches!(self, Self::ReportOutput | Self::DiffOutput)
     }
 }
 

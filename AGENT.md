@@ -4,7 +4,7 @@
 
 This repo is not meant to remain a TypeScript PPTX-to-JSON package. It is being reverse engineered into a cleanroom Rust implementation for AI-agent-safe PPTX round-tripping.
 
-The existing `src/`, `lib/`, `bin/convert`, and Jest tests are legacy observation material only. The TypeScript implementation will be deleted ASAP once the Rust replacement is viable. Do not build new product behavior in TypeScript unless the task explicitly says to measure or preserve current observable behavior.
+The existing `src/`, `lib/`, `bin/`, and Jest tests are legacy observation material only. The TypeScript implementation will be deleted ASAP once the Rust replacement is viable. Do not build new product behavior in TypeScript unless the task explicitly says to measure or preserve current observable behavior.
 
 ## Authority Order
 

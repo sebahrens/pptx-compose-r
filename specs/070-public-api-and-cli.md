@@ -83,14 +83,4 @@ pptx-compose validate input.pptx
 pptx-compose schema patch-v1
 ```
 
-### Legacy conversion commands (separate compat scope)
-
-`to-json`, `to-pptx`, and the `convert` alias reproduce the legacy TypeScript package's whole-deck JSON round-trip. They are **not** part of the normative V1 agent CLI in 071; they are a distinct compatibility unit specified by observable current behavior ([002](002-observable-current-behavior.md)) and gated by the legacy-parity fixtures in [080](080-testing-and-fixtures.md). They are tracked as their own epic and may ship later than the core agent CLI.
-
-```bash
-pptx-compose to-json input.pptx output.json --compat-json
-pptx-compose to-pptx input.json output.pptx --compat-json
-pptx-compose convert input.pptx output.json   # alias
-```
-
 Exit codes for all commands follow the single normative table in [CLI agent contract](071-cli-agent-contract.md#exit-codes). The MCP server is a separate public agent interface specified in [MCP server contract](072-mcp-server-contract.md); it must not be inferred from CLI commands alone.

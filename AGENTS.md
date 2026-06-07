@@ -47,9 +47,7 @@ is the CLI export/write step; it must validate edited output before the final
 write by default and must not overwrite existing files unless `--overwrite` is
 explicit. `find-text` may be scoped with `--slide-id slide-N`; its matches carry
 selector guards (`slide_id`, `kind`, `part`, `text_hash`, `fingerprint`) that
-paste directly into a `replace_text` operation. Agents performing V1 edits must
-use `inspect`/`apply`, not the legacy `to-json`, `to-pptx`, or `convert`
-compatibility commands.
+paste directly into a `replace_text` operation.
 
 CLI discipline: primary machine JSON goes to stdout or the explicit output path;
 human progress and logs go to stderr; commands must not mix prose into JSON

@@ -251,10 +251,6 @@ pptx-compose schema find-text-v1
 
 `schema` prints JSON Schema to stdout.
 
-### Legacy conversion commands (out of core scope)
-
-`to-json`, `to-pptx`, and the `convert` alias exist for legacy parity with the TypeScript package's whole-deck JSON round-trip. They are intentionally **outside** this normative agent contract: their behavior is pinned by observable current behavior ([002](002-observable-current-behavior.md)) and the legacy fixtures in [080](080-testing-and-fixtures.md), not by the command rules above, and they are scoped as a separate compatibility epic (see [070](070-public-api-and-cli.md#legacy-conversion-commands-separate-compat-scope)). Agents performing V1 edits must use `inspect`/`apply`, never the legacy conversion path.
-
 ## Exit Codes
 
 Exit codes are coarse buckets; agents should read the JSON `error.code` ([044](044-results-validation-errors.md#error-envelope)) for precise semantics. This table is the **sole normative** CLI exit mapping (the summary in [070](070-public-api-and-cli.md) is non-normative and defers here). Each row lists the 044 error codes that roll up into that exit.

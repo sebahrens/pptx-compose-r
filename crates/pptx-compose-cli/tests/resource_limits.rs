@@ -41,14 +41,12 @@ fn global_compressed_limit_changes_inspect_open_limit() {
 fn global_uncompressed_limit_changes_open_limit() {
     let root = unique_dir();
     let input = root.join("input.pptx");
-    let output = root.join("out.json");
     fs::write(&input, minimal_package::<0>([])).expect("package writes");
 
     let output_result = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
-        .args(["--json-errors", "--max-uncompressed-bytes", "10", "to-json"])
+        .args(["--json-errors", "--max-uncompressed-bytes", "10", "inspect"])
         .arg(&input)
-        .arg(&output)
-        .arg("--compat-json")
+        .args(["--format", "agent-json"])
         .output()
         .expect("pptx-compose should run");
 
@@ -60,7 +58,6 @@ fn global_uncompressed_limit_changes_open_limit() {
 fn global_part_count_limit_changes_open_limit() {
     let root = unique_dir();
     let input = root.join("input.pptx");
-    let output = root.join("out.json");
     fs::write(
         &input,
         minimal_package([("docProps/core.xml", b"<cp/>".as_slice())]),
@@ -68,10 +65,9 @@ fn global_part_count_limit_changes_open_limit() {
     .expect("package writes");
 
     let output_result = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
-        .args(["--json-errors", "--max-part-count", "1", "to-json"])
+        .args(["--json-errors", "--max-part-count", "1", "inspect"])
         .arg(&input)
-        .arg(&output)
-        .arg("--compat-json")
+        .args(["--format", "agent-json"])
         .output()
         .expect("pptx-compose should run");
 
@@ -83,7 +79,6 @@ fn global_part_count_limit_changes_open_limit() {
 fn global_media_limit_changes_open_limit() {
     let root = unique_dir();
     let input = root.join("input.pptx");
-    let output = root.join("out.json");
     fs::write(
         &input,
         minimal_package([("ppt/media/image1.png", b"abcdef".as_slice())]),
@@ -91,10 +86,9 @@ fn global_media_limit_changes_open_limit() {
     .expect("package writes");
 
     let output_result = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
-        .args(["--json-errors", "--max-media-bytes", "5", "to-json"])
+        .args(["--json-errors", "--max-media-bytes", "5", "inspect"])
         .arg(&input)
-        .arg(&output)
-        .arg("--compat-json")
+        .args(["--format", "agent-json"])
         .output()
         .expect("pptx-compose should run");
 
