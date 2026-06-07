@@ -92,6 +92,36 @@ Paginated outputs must use opaque cursors and explicit truncation fields:
 
 Long text, notes, part lists, validation findings, and media inventories must be truncated rather than silently omitted. Truncated fields must indicate how to request more detail.
 
+## Element Kinds
+
+`Element.kind` uses the canonical agent-view `ElementKind` vocabulary:
+
+- `text_box`
+- `shape`
+- `image`
+- `group`
+- `chart`
+- `table`
+- `diagram`
+- `ole`
+
+For OOXML `p:graphicFrame` elements, the kind derives from
+`a:graphic/a:graphicData/@uri`:
+
+- `http://schemas.openxmlformats.org/drawingml/2006/chart` -> `chart`
+- `http://schemas.openxmlformats.org/drawingml/2006/table` -> `table`
+- `http://schemas.openxmlformats.org/drawingml/2006/diagram` -> `diagram`
+- `http://schemas.openxmlformats.org/presentationml/2006/ole` and other
+  graphic-frame OLE URIs ending in `/ole` -> `ole`
+
+Graphic-frame subkinds expose frame-level geometry and non-visual properties
+only. `move_resize_element` and `set_alt_text` are supported for `chart`,
+`table`, `diagram`, and `ole` because they mutate only `p:graphicFrame/p:xfrm`
+or `p:cNvPr`. `replace_text` is not supported for any graphic-frame subkind;
+chart data, table cells, SmartArt/diagram content, and embedded OLE payloads
+follow the editability boundaries in
+[048. Editability Catalogue](048-editability-catalogue.md).
+
 ## Binary Handling
 
 Binary data should be referenced by media part, checksum, or caller-provided media handle. Inline base64 export may exist as an explicit option, not the default.

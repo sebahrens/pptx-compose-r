@@ -101,12 +101,29 @@ Element entries must include enough provenance for agents to target and recover 
 }
 ```
 
-The canonical element kind vocabulary is `text_box`, `image`, `shape`, `group`,
-`table`, and `chart`. Selector `guards.kind` uses this same vocabulary, so an
-agent can copy an `Element View.kind` value directly into a guarded element
-selector. OOXML graphic frames that are exposed as chart elements use `chart`,
-and connector or otherwise unsupported drawing elements exposed as generic
-shape elements use `shape`.
+The canonical element kind vocabulary is `text_box`, `shape`, `image`, `group`,
+`chart`, `table`, `diagram`, and `ole`. Selector `guards.kind` uses this same
+vocabulary, so an agent can copy an `Element View.kind` value directly into a
+guarded element selector. Connector or otherwise unsupported drawing elements
+that are exposed as generic shape elements use `shape`.
+
+For OOXML `p:graphicFrame` elements, `kind` MUST be derived from
+`a:graphic/a:graphicData/@uri`:
+
+| `a:graphicData/@uri` | `ElementKind` |
+| --- | --- |
+| `http://schemas.openxmlformats.org/drawingml/2006/chart` | `chart` |
+| `http://schemas.openxmlformats.org/drawingml/2006/table` | `table` |
+| `http://schemas.openxmlformats.org/drawingml/2006/diagram` | `diagram` |
+| `http://schemas.openxmlformats.org/presentationml/2006/ole` and other graphic-frame OLE URIs ending in `/ole` | `ole` |
+
+The V1 agent-view schema already permits the full vocabulary above, so this
+clarification does not bump `pptx-compose.agent_view.v1` or `version: 1`.
+Graphic-frame subkinds are editable only at the frame level: `move_resize_element`
+and `set_alt_text` are allowed for `chart`, `table`, `diagram`, and `ole`;
+`replace_text` is not allowed for any graphic-frame subkind. The detailed
+editability rationale is normative in
+[048. Editability Catalogue](048-editability-catalogue.md).
 
 ## Text Element View
 
