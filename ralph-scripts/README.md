@@ -9,7 +9,7 @@ this **cleanroom Rust** PPTX engine.
 | Mode | Prompt | What it does |
 |------|--------|--------------|
 | **plan** | `PROMPT_plan.md` | Multi-round, stateful drill-down: **one epic per round**, decomposed into **true atomic beads** — each carrying parent epic, spec ref, target crate/files, the exact Rust change, and a single `cargo` acceptance check. **Bounded and self-stopping** (see below). |
-| **build** | `PROMPT_build.md` | Implements exactly one ready `tier:task` in Rust per iteration (`cargo build`/`test`/`clippy` must pass), closes the bead, commits. Epics are skipped; if nothing buildable is ready it auto-pivots to plan mode. |
+| **build** | `PROMPT_build.md` | Opt-in automation mode that implements exactly one ready non-epic bead per iteration (`cargo build`/`test`/`clippy` must pass), closes the bead, and commits the scoped change. Epics are skipped; if nothing buildable is ready it auto-pivots to plan mode. |
 
 ## Usage
 
@@ -25,6 +25,12 @@ this **cleanroom Rust** PPTX engine.
 ./loop.sh codex plan 2    # use OpenAI Codex instead of Claude
 ./loop.sh --help          # full flag reference
 ```
+
+Running `loop.sh` or `run.sh` in build mode is explicit authority for the spawned
+agent to commit the completed bead's scoped change. Outside this opt-in ralph
+build context, the repository's conservative Beads policy still applies: agents
+must not commit or push unless the current user or active profile clearly allows
+it. Ralph never authorizes pushing to git or Dolt remotes.
 
 Stop early: `touch .ralph-exit` in the repo root (consumed after the current round).
 Override the target repo with `PROJECT_DIR=/path/to/repo`.

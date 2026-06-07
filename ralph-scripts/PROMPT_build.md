@@ -42,6 +42,20 @@ NOT use blake3). Pin exact versions; pin `jsonschema` tightly (0.x).
 
 ## Workflow
 
+### Commit authority
+
+This prompt is used only by `ralph-scripts/loop.sh` and `run.sh` build mode.
+Running those scripts in build mode is explicit opt-in authority for the spawned
+agent to commit the single completed bead's scoped change after validation and
+`bd close`. The authority is intentionally narrow:
+
+- commit only the files needed for this one bead;
+- do not commit unrelated working-tree changes;
+- do not push git or Dolt remotes;
+- outside this ralph build-mode prompt, follow the repository's conservative
+  Beads policy and do not commit unless the current user or active profile
+  clearly allows it.
+
 ### 1. Find your task
 
 ```bash
@@ -112,8 +126,11 @@ bd close <id> --reason "Implemented: brief description of what was done"
 
 ### 6. Commit
 
+This commit step is authorized only in the opt-in ralph build-mode context
+described above.
+
 ```bash
-git add -A
+git add <changed-files-for-this-bead>
 git commit -m "[<id>] Brief description of change"
 ```
 
