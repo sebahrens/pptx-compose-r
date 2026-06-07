@@ -236,6 +236,25 @@ fn schema_prints_published_schema() {
 }
 
 #[test]
+fn schema_serves_every_advertised_capability_schema() {
+    let output = run_cli(["capabilities"]);
+    let capabilities = parse_stdout(&output);
+    let schemas = capabilities["schemas"]
+        .as_array()
+        .expect("capabilities schemas is an array");
+
+    for schema in schemas {
+        let name = schema["name"]
+            .as_str()
+            .expect("capabilities schema name is a string");
+        let output = run_cli_owned(vec!["schema".to_owned(), name.to_owned()]);
+        let published_schema = parse_stdout(&output);
+        assert_eq!(published_schema["$id"], schema["schema"]);
+        assert_eq!(published_schema["type"], "object");
+    }
+}
+
+#[test]
 fn media_list_and_get_extract_sanitized_package_media() {
     let root = unique_dir();
     let fixture = repo_root().join("fixtures/legacy/sample.pptx");

@@ -1258,6 +1258,7 @@ dependencies = [
  "pptx-compose-core",
  "pptx-compose-edit",
  "pptx-compose-json",
+ "schemars",
  "serde",
  "serde_json",
  "sha2",

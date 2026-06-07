@@ -90,7 +90,9 @@ pptx-compose schema patch-v1
 pptx-compose schema media-manifest-v1
 pptx-compose schema patch-report-v1
 pptx-compose schema validation-report-v1
+pptx-compose schema result-v1
 pptx-compose schema error-v1
+pptx-compose schema capabilities-v1
 ```
 
 `schema` prints JSON Schema to stdout.

@@ -1,4 +1,6 @@
+use schemars::JsonSchema;
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::{
     core::{error::ErrorCode, zip::limits::ResourceLimits},
@@ -13,7 +15,59 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+use pptx_compose_json::schemas::JsonError;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SchemaCapabilityInfo {
+    pub name: &'static str,
+    pub schema: &'static str,
+    pub version: u32,
+}
+
+pub const SCHEMA_CAPABILITIES: &[SchemaCapabilityInfo] = &[
+    SchemaCapabilityInfo {
+        name: "capabilities-v1",
+        schema: CAPABILITIES_SCHEMA,
+        version: CAPABILITIES_VERSION,
+    },
+    SchemaCapabilityInfo {
+        name: "agent-view-v1",
+        schema: AGENT_VIEW_SCHEMA,
+        version: AGENT_VIEW_VERSION,
+    },
+    SchemaCapabilityInfo {
+        name: "patch-v1",
+        schema: PATCH_SCHEMA,
+        version: PATCH_VERSION,
+    },
+    SchemaCapabilityInfo {
+        name: "media-manifest-v1",
+        schema: MEDIA_MANIFEST_SCHEMA,
+        version: MEDIA_MANIFEST_VERSION,
+    },
+    SchemaCapabilityInfo {
+        name: "patch-report-v1",
+        schema: PATCH_REPORT_SCHEMA,
+        version: PATCH_REPORT_VERSION,
+    },
+    SchemaCapabilityInfo {
+        name: "validation-report-v1",
+        schema: VALIDATION_REPORT_SCHEMA,
+        version: VALIDATION_REPORT_VERSION,
+    },
+    SchemaCapabilityInfo {
+        name: "result-v1",
+        schema: RESULT_SCHEMA,
+        version: RESULT_VERSION,
+    },
+    SchemaCapabilityInfo {
+        name: "error-v1",
+        schema: ERROR_SCHEMA,
+        version: ERROR_VERSION,
+    },
+];
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilitiesDocument {
     pub schema: String,
@@ -28,34 +82,34 @@ pub struct CapabilitiesDocument {
     pub default_limits: DefaultLimits,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilitiesStatus {
     Success,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackageInfo {
     pub name: String,
     pub version: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CommandCapability {
     pub name: String,
     pub read_only: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OperationCapability {
     pub op: String,
     pub dry_run: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SchemaCapability {
     pub name: String,
@@ -63,7 +117,7 @@ pub struct SchemaCapability {
     pub version: u32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExitCodeCapability {
     pub exit: i32,
@@ -71,7 +125,7 @@ pub struct ExitCodeCapability {
     pub error_codes: Vec<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DefaultLimits {
     pub max_compressed_package_bytes: u64,
@@ -140,6 +194,21 @@ pub fn capabilities(options: CapabilitiesOptions) -> CapabilitiesDocument {
     }
 }
 
+pub fn capabilities_json_schema() -> Result<Value, JsonError> {
+    let schema = schemars::schema_for!(CapabilitiesDocument);
+    let mut value =
+        serde_json::to_value(schema).map_err(|err| JsonError::SerializeSchema(err.to_string()))?;
+
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "$id".to_owned(),
+            Value::String(CAPABILITIES_SCHEMA.to_owned()),
+        );
+    }
+
+    Ok(value)
+}
+
 fn command_capabilities() -> Vec<CommandCapability> {
     [
         ("capabilities", true),
@@ -180,31 +249,14 @@ fn operation_capabilities() -> Vec<OperationCapability> {
 }
 
 fn schema_capabilities() -> Vec<SchemaCapability> {
-    [
-        ("capabilities-v1", CAPABILITIES_SCHEMA, CAPABILITIES_VERSION),
-        ("agent-view-v1", AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION),
-        ("patch-v1", PATCH_SCHEMA, PATCH_VERSION),
-        (
-            "media-manifest-v1",
-            MEDIA_MANIFEST_SCHEMA,
-            MEDIA_MANIFEST_VERSION,
-        ),
-        ("patch-report-v1", PATCH_REPORT_SCHEMA, PATCH_REPORT_VERSION),
-        (
-            "validation-report-v1",
-            VALIDATION_REPORT_SCHEMA,
-            VALIDATION_REPORT_VERSION,
-        ),
-        ("result-v1", RESULT_SCHEMA, RESULT_VERSION),
-        ("error-v1", ERROR_SCHEMA, ERROR_VERSION),
-    ]
-    .into_iter()
-    .map(|(name, schema, version)| SchemaCapability {
-        name: name.to_owned(),
-        schema: schema.to_owned(),
-        version,
-    })
-    .collect()
+    SCHEMA_CAPABILITIES
+        .iter()
+        .map(|capability| SchemaCapability {
+            name: capability.name.to_owned(),
+            schema: capability.schema.to_owned(),
+            version: capability.version,
+        })
+        .collect()
 }
 
 fn exit_code_capabilities() -> Vec<ExitCodeCapability> {

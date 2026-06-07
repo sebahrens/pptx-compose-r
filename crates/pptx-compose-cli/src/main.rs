@@ -15,6 +15,7 @@ use output::{OutputDest, OutputSink};
 use permissions::{PathIntent, PermissionContext};
 use pptx_compose::{
     AgentViewOptions, MediaPartInfo, OpenOptions, PresentationDocument,
+    capabilities::{SCHEMA_CAPABILITIES, capabilities_json_schema},
     core::{
         error::{Error, ErrorCode, ErrorDetails, ErrorLocation},
         zip::limits::ResourceLimits,
@@ -29,7 +30,7 @@ use pptx_compose::{
         schemas::{
             JsonError, ResultEnvelope, ResultStatus, Severity, ValidationReport,
             agent_view_json_schema, error_json_schema, patch_report_json_schema,
-            validation_report_json_schema,
+            result_json_schema, validation_report_json_schema,
         },
     },
 };
@@ -279,16 +280,23 @@ fn media_get(
 
 fn schema(args: cli::SchemaArgs, sink: OutputSink) -> Result<(), CliError> {
     let schema = match args.name.as_str() {
+        "capabilities-v1" => capabilities_json_schema().map_err(schema_error)?,
         "agent-view-v1" => agent_view_json_schema().map_err(schema_error)?,
         "patch-v1" => patch_json_schema().map_err(CliError::from_error)?,
         "media-manifest-v1" => media_manifest_json_schema().map_err(CliError::from_error)?,
         "patch-report-v1" => patch_report_json_schema().map_err(schema_error)?,
         "validation-report-v1" => validation_report_json_schema().map_err(schema_error)?,
+        "result-v1" => result_json_schema().map_err(schema_error)?,
         "error-v1" => error_json_schema().map_err(schema_error)?,
         _ => {
+            let expected = SCHEMA_CAPABILITIES
+                .iter()
+                .map(|capability| capability.name)
+                .collect::<Vec<_>>()
+                .join(", ");
             return Err(CliError::invalid_input(
                 InvalidInputCause::CliArgument,
-                "Unknown schema name. Expected one of: agent-view-v1, patch-v1, media-manifest-v1, patch-report-v1, validation-report-v1, error-v1.",
+                format!("Unknown schema name. Expected one of: {expected}."),
             ));
         }
     };
