@@ -212,8 +212,6 @@ Flags:
 | `--overwrite` | Permit replacing an existing `--output`, `--report`, or `--diff` path. |
 | `--in-place` | Write back to `INPUT.pptx` atomically. If `--output` is present it must be the same path as `INPUT.pptx`. |
 | `--no-backup` | Suppress the default `INPUT.pptx.bak` backup. Valid only with `--in-place`. |
-| `--deterministic` | Accepted for CLI stability; deterministic ZIP framing/order/metadata is already the default write profile. |
-
 Rules:
 
 - Must be atomic: never leave a partial output at `--output`.
@@ -278,6 +276,6 @@ Exit codes are coarse buckets; agents should read the JSON `error.code` ([044](0
 ## Idempotency and Retries
 
 - `inspect`, `validate`, and dry-run are read-only and idempotent.
-- `apply` is idempotent only for the same input bytes, patch bytes, media bytes, deterministic options, and `client_request_id`.
+- `apply` is idempotent only for the same input bytes, patch bytes, media bytes, default deterministic write profile, and `client_request_id`.
 - Existing outputs are not overwritten unless `--overwrite` is explicit.
 - `--if-output-document-id sha256:...` may allow conditional overwrite.

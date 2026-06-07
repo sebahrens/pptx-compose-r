@@ -521,8 +521,8 @@ fn refuses_existing_output_without_overwrite() {
 
 #[cfg(test)]
 #[test]
-fn overwrite_succeeds_and_deterministic_selects_mode() {
-    test_support::overwrite_succeeds_and_deterministic_selects_mode();
+fn overwrite_succeeds_and_default_selects_deterministic_mode() {
+    test_support::overwrite_succeeds_and_default_selects_deterministic_mode();
 }
 
 #[cfg(test)]
@@ -658,7 +658,7 @@ mod test_support {
         fs::write(&patch, valid_noop_patch()).expect("patch fixture writes");
         fs::write(&output, b"original-output").expect("existing output writes");
 
-        let args = args(&input, &patch, &output, false, false);
+        let args = args(&input, &patch, &output, false);
         let err = apply(args, &permissions(&root), OpenOptions::default())
             .expect_err("existing output must fail");
 
@@ -675,7 +675,7 @@ mod test_support {
         fs::remove_dir_all(root).expect("test dir removes");
     }
 
-    pub(super) fn overwrite_succeeds_and_deterministic_selects_mode() {
+    pub(super) fn overwrite_succeeds_and_default_selects_deterministic_mode() {
         let root = unique_dir();
         let input = root.join("input.pptx");
         let patch = root.join("patch.json");
@@ -686,7 +686,7 @@ mod test_support {
         fs::write(&patch, valid_noop_patch()).expect("patch fixture writes");
         fs::write(&output, b"replace-me").expect("existing output writes");
 
-        let args = args(&input, &patch, &output, true, true);
+        let args = args(&input, &patch, &output, true);
         let write_options = write_options_from_args(&args);
         assert_eq!(write_options.mode, WriteMode::Deterministic);
 
@@ -711,7 +711,7 @@ mod test_support {
             .expect("input fixture writes");
         fs::write(&patch, valid_noop_patch()).expect("patch fixture writes");
 
-        let args = args(&input, &patch, &output, false, false);
+        let args = args(&input, &patch, &output, false);
         let write_options = write_options_from_args(&args);
         assert_eq!(write_options.mode, WriteMode::Deterministic);
 
@@ -730,13 +730,13 @@ mod test_support {
         fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
 
         apply(
-            args(&input, &patch, &first_output, false, false),
+            args(&input, &patch, &first_output, false),
             &permissions(&root),
             OpenOptions::default(),
         )
         .expect("first apply succeeds");
         apply(
-            args(&input, &patch, &second_output, false, false),
+            args(&input, &patch, &second_output, false),
             &permissions(&root),
             OpenOptions::default(),
         )
@@ -759,7 +759,7 @@ mod test_support {
         fs::write(&input, &input_bytes).expect("input fixture writes");
         fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
 
-        let mut args = args(&input, &patch, &input, false, false);
+        let mut args = args(&input, &patch, &input, false);
         args.in_place = true;
         let write_options = write_options_from_args(&args);
         assert!(
@@ -792,7 +792,7 @@ mod test_support {
         fs::write(&input, &input_bytes).expect("input fixture writes");
         fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
 
-        let mut args = args(&input, &patch, &input, false, false);
+        let mut args = args(&input, &patch, &input, false);
         args.output = None;
         args.in_place = true;
         apply(args, &permissions(&root), OpenOptions::default())
@@ -822,7 +822,7 @@ mod test_support {
         fs::write(&input, &input_bytes).expect("input fixture writes");
         fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
 
-        let mut args = args(&input, &patch, &output, false, false);
+        let mut args = args(&input, &patch, &output, false);
         args.in_place = true;
         let err = apply(args, &permissions(&root), OpenOptions::default())
             .expect_err("in-place apply with different output must fail");
@@ -850,7 +850,7 @@ mod test_support {
         fs::write(&input, &input_bytes).expect("input fixture writes");
         fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
 
-        let mut args = args(&input, &patch, &input, false, false);
+        let mut args = args(&input, &patch, &input, false);
         args.in_place = true;
         args.no_backup = true;
         apply(args, &permissions(&root), OpenOptions::default())
@@ -879,7 +879,7 @@ mod test_support {
         fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
         precreate_atomic_temp_outputs(&input);
 
-        let mut args = args(&input, &patch, &input, false, false);
+        let mut args = args(&input, &patch, &input, false);
         args.in_place = true;
         let err = apply(args, &permissions(&root), OpenOptions::default())
             .expect_err("pre-created atomic temp output forces write failure");
@@ -912,7 +912,7 @@ mod test_support {
         fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
 
         apply(
-            args(&input, &patch, &output, false, false),
+            args(&input, &patch, &output, false),
             &permissions_with_temp(&workspace, &temp_dir, false),
             OpenOptions::default(),
         )
@@ -952,7 +952,7 @@ mod test_support {
             .expect("input fixture writes");
         fs::write(&patch, valid_noop_patch()).expect("patch fixture writes");
 
-        let mut args = args(&input, &patch, &output, false, false);
+        let mut args = args(&input, &patch, &output, false);
         args.dry_run = true;
         args.report = Some(report.clone());
         args.diff = Some(diff.clone());
@@ -990,7 +990,7 @@ mod test_support {
         fs::write(&input, &input_bytes).expect("input fixture writes");
         fs::write(&patch, invalid_multi_op_patch(&input_bytes)).expect("patch fixture writes");
 
-        let mut args = args(&input, &patch, &output, false, false);
+        let mut args = args(&input, &patch, &output, false);
         args.dry_run = true;
         args.output = None;
         args.report = Some(report.clone());
@@ -1025,7 +1025,7 @@ mod test_support {
         fs::write(&input, &input_bytes).expect("input fixture writes");
         fs::write(&patch, one_valid_one_invalid_patch(&input_bytes)).expect("patch fixture writes");
 
-        let mut args = args(&input, &patch, &output, false, false);
+        let mut args = args(&input, &patch, &output, false);
         args.report = Some(report.clone());
 
         let err = apply(args, &permissions(&root), OpenOptions::default())
@@ -1066,7 +1066,7 @@ mod test_support {
         fs::write(&input, &input_bytes).expect("input fixture writes");
         fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
 
-        let mut args = args(&input, &patch, &output, false, false);
+        let mut args = args(&input, &patch, &output, false);
         args.report = Some(report.clone());
         args.diff = Some(diff.clone());
         apply(args, &permissions(&root), OpenOptions::default())
@@ -1144,7 +1144,7 @@ mod test_support {
         )
         .expect("manifest writes");
 
-        let mut args = args(&input, &patch, &output, false, false);
+        let mut args = args(&input, &patch, &output, false);
         args.dry_run = true;
         args.output = None;
         args.report = Some(report.clone());
@@ -1204,7 +1204,7 @@ mod test_support {
             fs::write(&patch, add_image_patch(&input_bytes)).expect("patch fixture writes");
             fs::write(&manifest, manifest_json).expect("manifest writes");
 
-            let mut args = args(&input, &patch, &output, false, false);
+            let mut args = args(&input, &patch, &output, false);
             args.dry_run = true;
             args.output = None;
             args.media_manifest = Some(manifest);
@@ -1248,7 +1248,7 @@ mod test_support {
         )
         .expect("manifest writes");
 
-        let mut args = args(&input, &patch, &output, false, false);
+        let mut args = args(&input, &patch, &output, false);
         args.dry_run = true;
         args.output = None;
         args.media_manifest = Some(manifest);
@@ -1288,7 +1288,7 @@ mod test_support {
         )
         .expect("manifest writes");
 
-        let mut args = args(&input, &patch, &output, false, false);
+        let mut args = args(&input, &patch, &output, false);
         args.dry_run = true;
         args.output = None;
         args.report = Some(report.clone());
@@ -1335,7 +1335,7 @@ mod test_support {
         )
         .expect("manifest writes");
 
-        let mut args = args(&input, &patch, &output, false, false);
+        let mut args = args(&input, &patch, &output, false);
         args.dry_run = true;
         args.output = None;
         args.report = Some(report.clone());
@@ -1374,7 +1374,7 @@ mod test_support {
         )
         .expect("manifest writes");
 
-        let mut args = args(&input, &patch, &output, false, false);
+        let mut args = args(&input, &patch, &output, false);
         args.dry_run = true;
         args.output = None;
         args.media_manifest = Some(manifest);
@@ -1387,13 +1387,7 @@ mod test_support {
         fs::remove_dir_all(root).expect("test dir removes");
     }
 
-    fn args(
-        input: &Path,
-        patch: &Path,
-        output: &Path,
-        overwrite: bool,
-        deterministic: bool,
-    ) -> ApplyArgs {
+    fn args(input: &Path, patch: &Path, output: &Path, overwrite: bool) -> ApplyArgs {
         ApplyArgs {
             input: input.to_path_buf(),
             patch: patch.to_path_buf(),
@@ -1407,7 +1401,6 @@ mod test_support {
             overwrite,
             in_place: false,
             no_backup: false,
-            deterministic,
         }
     }
 

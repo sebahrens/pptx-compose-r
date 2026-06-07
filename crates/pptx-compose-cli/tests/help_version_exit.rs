@@ -61,7 +61,6 @@ fn spec_071_documents_apply_flags() {
         "--overwrite",
         "--in-place",
         "--no-backup",
-        "--deterministic",
     ] {
         assert!(stdout.contains(flag), "apply help must expose {flag}");
         assert!(spec.contains(flag), "spec 071 must document {flag}");

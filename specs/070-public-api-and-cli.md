@@ -37,7 +37,7 @@ Semantics:
 - The default is **`WriteMode::Preserve`**. In preserve mode every clean (non-dirty) part is written byte-for-byte from its `raw` bytes; only dirty parts (020 dirty-tracking) are serialized.
 - `WriteMode::Deterministic` normalizes ZIP entry order, timestamps, compression settings, and content-type/relationship ordering (011 "Deterministic Output") and serializes dirty parts with the deterministic serialization profile. It must **never** re-serialize a clean part: clean-part *payload* bytes are still copied from `raw`, so `part_checksum`/`document_id` (046) are unchanged; only ZIP framing/order may differ. Where preserve and deterministic conflict for a clean part, preserve wins for that part's payload.
 - `OpenOptions` carries the resource limits and security policy from [ZIP I/O and security](011-zip-io-and-security.md); it does not carry a write mode.
-- The CLI exposes mode via `--deterministic` for explicit reproducible pipelines; agent `apply` writes default to deterministic output so repeated eval runs are byte-comparable. See [CLI agent contract](071-cli-agent-contract.md).
+- Agent `apply` writes default to deterministic output so repeated eval runs are byte-comparable. See [CLI agent contract](071-cli-agent-contract.md).
 
 Required methods:
 
