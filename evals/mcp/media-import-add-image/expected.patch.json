@@ -13,9 +13,7 @@
       "content_type": "image/png",
       "bounds": { "x": 914400, "y": 914400, "cx": 1828800, "cy": 1371600 },
       "name": "Imported image",
-      "alt_text": "Imported inline PNG",
-      "fit": "contain",
-      "dedupe": "never"
+      "alt_text": "Imported inline PNG"
     }
   ]
 }

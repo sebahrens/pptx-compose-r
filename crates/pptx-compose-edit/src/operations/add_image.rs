@@ -55,8 +55,8 @@ impl From<&AddImageOperation> for AddImage {
             bounds: operation.bounds.clone(),
             name: operation.name.clone(),
             alt_text: operation.alt_text.clone(),
-            fit: operation.fit.unwrap_or(ImageFit::Stretch),
-            dedupe: operation.dedupe.unwrap_or(ImageDedupe::Never),
+            fit: ImageFit::Stretch,
+            dedupe: ImageDedupe::Never,
             insert: operation.insert.clone(),
         }
     }

@@ -60,7 +60,7 @@ Anything whose correctness depends on a cache, a proprietary layout algorithm, a
 
 | Feature | OOXML location | Status | Rationale | Preservation risk |
 | --- | --- | --- | --- | --- |
-| Add image | `p:spTree` (`p:pic`), `ppt/media/imageN.ext`, `slideN.xml.rels`, `[Content_Types].xml` | v1-edit (`add_image`) | Atomic fixed cross-part set. Rejects `fit != stretch` and `dedupe != never`. Emits `a:stretch` fill. | Medium: the canonical multi-part edit; consistency validated atomically. |
+| Add image | `p:spTree` (`p:pic`), `ppt/media/imageN.ext`, `slideN.xml.rels`, `[Content_Types].xml` | v1-edit (`add_image`) | Atomic fixed cross-part set. Public V1 patches expose no `fit` or `dedupe` fields; the operation emits `a:stretch` fill and creates a new media part. | Medium: the canonical multi-part edit; consistency validated atomically. |
 | Replace image | `p:pic/p:blipFill/a:blip@r:embed` | v1-edit (`replace_image`) | Retargets `r:embed`; preserves `a:srcRect`, fill, effects, `a:xfrm`. Refcount-deletes old media at refcount 0. Rejects `r:link`. | Low: only the blip target changes. |
 | Intrinsic dimension read (PNG/JPEG/GIF) | media binary headers | v1-read | Reads PNG IHDR, JPEG SOF, GIF header. | None. |
 | GIF capability advertisement | agent view default capabilities | v1-edit hygiene fix | Operations accept GIF; advertised set must match (advertise `image/gif`, recommended, or strip from ops). | None. |

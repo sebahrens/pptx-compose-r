@@ -1626,22 +1626,18 @@ fn add_image_dry_run_uses_edit_layer_validation() {
         ErrorCode::InvalidBounds,
         "invalid-bounds",
     );
-    assert_add_image_dry_run_failure(
+    assert_add_image_patch_parse_failure(
         &bytes,
         serde_json::json!({
             "fit": "contain"
         }),
-        media_inputs("hero", "image/png", tiny_png()),
-        ErrorCode::UnsupportedEdit,
         "unsupported-fit",
     );
-    assert_add_image_dry_run_failure(
+    assert_add_image_patch_parse_failure(
         &bytes,
         serde_json::json!({
             "dedupe": "checksum"
         }),
-        media_inputs("hero", "image/png", tiny_png()),
-        ErrorCode::UnsupportedEdit,
         "unsupported-dedupe",
     );
     assert_add_image_dry_run_failure(
@@ -1780,6 +1776,33 @@ fn assert_add_image_dry_run_failure(
         serde_json::json!(operation_id)
     );
     assert_eq!(operation_error.location["operation"], "add_image");
+}
+
+fn assert_add_image_patch_parse_failure(
+    bytes: &[u8],
+    operation_override: serde_json::Value,
+    operation_id: &str,
+) {
+    let mut operation = serde_json::json!({
+        "operation_id": operation_id,
+        "op": "add_image",
+        "slide_id": "slide-1",
+        "media_ref": "hero",
+        "content_type": "image/png",
+        "bounds": { "x": 0, "y": 0, "cx": 914400, "cy": 914400 }
+    });
+    merge_object(&mut operation, operation_override);
+    let error = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(bytes),
+        "base_revision": 1,
+        "client_request_id": operation_id,
+        "operations": [operation]
+    }))
+    .expect_err("unsupported add_image schema field is rejected before dry-run");
+
+    assert_eq!(error.code(), ErrorCode::InvalidInput);
 }
 
 fn merge_object(target: &mut serde_json::Value, patch: serde_json::Value) {

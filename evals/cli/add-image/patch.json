@@ -18,9 +18,7 @@
         "cy": 1371600
       },
       "name": "Hero image",
-      "alt_text": "A staged image",
-      "fit": "stretch",
-      "dedupe": "never"
+      "alt_text": "A staged image"
     }
   ]
 }

@@ -183,9 +183,11 @@ Optional fields:
 
 - `name`
 - `alt_text`
-- `fit`: `stretch` by default. `contain`, `cover`, and `original_size` are optional and must be rejected when unsupported.
-- `dedupe`: `never` by default. Checksum-based reuse is opt-in.
 - `insert`: same `z_order` semantics as `add_text_box`; omitted means `"front"`.
+
+V1 always emits a stretched fill and always creates a new media part. Public V1
+patches do not include `fit` or `dedupe` fields until non-stretch sizing or
+checksum reuse is implemented.
 
 ### `replace_image`
 

@@ -92,7 +92,9 @@ Relationship `Id` allocation follows the rId policy in [content types and relati
 </p:pic>
 ```
 
-- `fit: stretch` (041 default) is realized by the `a:stretch`/`a:fillRect` fill above. `contain`, `cover`, and `original_size` are not realized in V1 and must be rejected with `unsupported_edit` rather than emitting a different fill.
+- V1 always realizes image sizing with the `a:stretch`/`a:fillRect` fill above.
+  Public V1 patches do not expose a `fit` field until non-stretch sizing is
+  implemented.
 - `noChangeAspect="1"` is fixed for V1-inserted pictures.
 
 ## `p:sp` Template (add_text_box)

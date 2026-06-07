@@ -566,10 +566,6 @@ pub struct AddImageOperation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alt_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fit: Option<ImageFit>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dedupe: Option<ImageDedupe>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub insert: Option<InsertOptions>,
 }
 
@@ -1253,8 +1249,6 @@ fn all_op_names_matches_operation_variants() {
             bounds,
             name: None,
             alt_text: None,
-            fit: None,
-            dedupe: None,
             insert: None,
         }),
         Operation::ReplaceImage(ReplaceImageOperation {
@@ -1268,6 +1262,37 @@ fn all_op_names_matches_operation_variants() {
     let variant_names = variants.map(|operation| operation.op_name());
 
     assert_eq!(variant_names, ALL_OP_NAMES);
+}
+
+#[cfg(test)]
+#[test]
+fn add_image_rejects_unimplemented_fit_and_dedupe_fields() {
+    for field in ["fit", "dedupe"] {
+        let mut operation = serde_json::json!({
+            "operation_id": format!("add-image-{field}"),
+            "op": "add_image",
+            "slide_id": "slide-1",
+            "media_ref": "image-1",
+            "content_type": "image/png",
+            "bounds": { "x": 1, "y": 2, "cx": 3, "cy": 4 }
+        });
+        operation
+            .as_object_mut()
+            .expect("operation is an object")
+            .insert(field.to_owned(), serde_json::json!("stretch"));
+
+        let error = parse_patch(serde_json::json!({
+            "schema": PATCH_SCHEMA,
+            "version": PATCH_VERSION,
+            "document_id": "sha256:current",
+            "base_revision": 3,
+            "client_request_id": format!("agent-run-{field}"),
+            "operations": [operation]
+        }))
+        .expect_err("unimplemented add_image schema field is rejected");
+
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+    }
 }
 
 #[cfg(test)]

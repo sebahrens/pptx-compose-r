@@ -92,7 +92,7 @@ const PROMPTS: &[PromptSpec] = &[
         name: "add_image_to_slide",
         title: "Add image to slide",
         description: "Stage media and produce add_image patches without inlining binary resources.",
-        text: "Inspect the target slide resource and choose EMU bounds from existing layout context. Stage media with pptx_import_media to obtain a media_ref and metadata. Build an add_image operation with slide_id, media_ref, content_type, bounds, optional name, alt_text, fit, and dedupe. Dry-run before apply, then validate and export. Resource reads expose metadata only by default and should not inline binary bytes.",
+        text: "Inspect the target slide resource and choose EMU bounds from existing layout context. Stage media with pptx_import_media to obtain a media_ref and metadata. Build an add_image operation with slide_id, media_ref, content_type, bounds, optional name, and alt_text. Dry-run before apply, then validate and export. Resource reads expose metadata only by default and should not inline binary bytes.",
     },
     PromptSpec {
         name: "explain_validation_errors",
