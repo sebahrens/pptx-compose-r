@@ -821,11 +821,7 @@ fn project_element(
     let shape = read_shape(element, path.clone());
     let text = first_descendant(element, "txBody").map(project_text);
     let text_hash = text.as_ref().map(|text| text.text_hash.clone());
-    let mut image_support = if core_kind == CoreElementKind::Picture {
-        ImageEditSupport::Unresolved
-    } else {
-        ImageEditSupport::NotPicture
-    };
+    let mut image_support = ImageEditSupport::Unresolved;
     let image = if core_kind == CoreElementKind::Picture {
         match read_picture(element, path.clone(), slide_rels, package) {
             Ok(picture) if !picture.external => {
@@ -1234,7 +1230,6 @@ fn default_capabilities() -> Capabilities {
 enum ImageEditSupport {
     Embedded,
     ExternalLink,
-    NotPicture,
     Unresolved,
 }
 
@@ -1247,27 +1242,25 @@ fn editable(
     let (image_supported, image_reason) = match image_support {
         ImageEditSupport::Embedded => (true, None),
         ImageEditSupport::ExternalLink => (false, Some("external_link".to_owned())),
-        ImageEditSupport::NotPicture => (false, Some("not_picture".to_owned())),
         ImageEditSupport::Unresolved => (false, None),
     };
     let (bounds_supported, bounds_reason) = bounds_edit_support(core_kind);
-    let text = has_text.then_some(EditableSupport {
+    let text = (has_text && core_kind.supports_replace_text()).then_some(EditableSupport {
         supported: true,
         reason: None,
     });
-    let bounds = (bounds_supported || bounds_reason.is_some()).then_some(EditableSupport {
+    let bounds = (bounds_supported && has_cnvpr).then_some(EditableSupport {
         supported: bounds_supported,
         reason: bounds_reason.map(str::to_owned),
     });
-    let alt_text = Some(EditableSupport {
-        supported: has_cnvpr,
-        reason: (!has_cnvpr).then(|| "no_cnvpr".to_owned()),
+    let alt_text = has_cnvpr.then_some(EditableSupport {
+        supported: true,
+        reason: None,
     });
-    let image =
-        (!matches!(image_support, ImageEditSupport::NotPicture)).then_some(EditableSupport {
-            supported: image_supported,
-            reason: image_reason,
-        });
+    let image = (core_kind == CoreElementKind::Picture).then_some(EditableSupport {
+        supported: image_supported,
+        reason: image_reason,
+    });
 
     Editable {
         text,
@@ -1625,6 +1618,7 @@ fn image_editability_matches_embedded_and_external_picture_support() {
         .expect("embedded picture is projected");
     assert_eq!(embedded["editable"]["image"]["supported"], true);
     assert_eq!(embedded["editable"]["image"].get("reason"), None);
+    assert_eq!(embedded["editable"].get("text"), None);
     assert_eq!(embedded["image"]["relationship_id"], "rEmbed");
 
     let linked = elements
@@ -1633,6 +1627,7 @@ fn image_editability_matches_embedded_and_external_picture_support() {
         .expect("linked picture is projected");
     assert_eq!(linked["editable"]["image"]["supported"], false);
     assert_eq!(linked["editable"]["image"]["reason"], "external_link");
+    assert_eq!(linked["editable"].get("text"), None);
     assert_eq!(linked.get("image"), None);
 
     assert_eq!(
@@ -1642,6 +1637,94 @@ fn image_editability_matches_embedded_and_external_picture_support() {
             .expect("embedded media part remains present")
             .bytes(),
         b"embedded image bytes"
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn editable_maps_are_kind_appropriate_for_text_and_picture_elements() {
+    use pptx_compose_core::{
+        opc::{
+            package::{OFFICE_DOCUMENT_REL_TYPE, Package},
+            part_name::PartName,
+            relationships::{Relationship, RelationshipSource},
+        },
+        pptx::{media::IMAGE_REL_TYPE, presentation::PresentationDocument},
+    };
+
+    const SLIDE_REL_TYPE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+
+    let presentation_part = PartName::from_zip_entry("ppt/presentation.xml").expect("part name");
+    let slide_part = PartName::from_zip_entry("ppt/slides/slide1.xml").expect("part name");
+
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("[Content_Types].xml", content_types_xml().to_vec())
+        .expect("content types part inserts");
+    package
+        .insert_zip_entry("ppt/presentation.xml", presentation_xml().to_vec())
+        .expect("presentation part inserts");
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", editable_map_slide_xml().to_vec())
+        .expect("slide part inserts");
+    package
+        .insert_zip_entry("ppt/media/image1.png", b"embedded image bytes".to_vec())
+        .expect("media part inserts");
+    package
+        .content_types_mut()
+        .insert_default("png", "image/png");
+
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        OFFICE_DOCUMENT_REL_TYPE,
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlide",
+        SLIDE_REL_TYPE,
+        "slides/slide1.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(slide_part),
+        "rEmbed",
+        IMAGE_REL_TYPE,
+        "../media/image1.png",
+    ));
+
+    let pkg = PresentationDocument::open(package).expect("presentation opens");
+    let value = build_view(&pkg, request_for(&pkg, ViewMode::SlideDetail, None))
+        .expect("slide detail builds");
+    let elements = value["slides"][0]["elements"]
+        .as_array()
+        .expect("elements array");
+
+    let text = elements
+        .iter()
+        .find(|element| element["xml_location"]["cnvpr_name"] == "Editable Text")
+        .expect("text box is projected");
+    assert_eq!(
+        text["editable"],
+        serde_json::json!({
+            "text": { "supported": true },
+            "bounds": { "supported": true },
+            "alt_text": { "supported": true }
+        })
+    );
+
+    let image = elements
+        .iter()
+        .find(|element| element["xml_location"]["cnvpr_name"] == "Editable Picture")
+        .expect("picture is projected");
+    assert_eq!(
+        image["editable"],
+        serde_json::json!({
+            "bounds": { "supported": true },
+            "alt_text": { "supported": true },
+            "image": { "supported": true }
+        })
     );
 }
 
@@ -1759,19 +1842,21 @@ fn bounds_editability_matches_move_resize_supported_kinds() {
         .as_array()
         .expect("elements array");
 
-    for (name, supported, reason) in [
-        ("Unsupported Group", false, Some("group")),
-        ("Unsupported Connector", false, Some("connector")),
-        ("Nested Shape", true, None),
+    for (name, bounds) in [
+        ("Unsupported Group", None),
+        ("Unsupported Connector", None),
+        (
+            "Nested Shape",
+            Some(serde_json::json!({ "supported": true })),
+        ),
     ] {
         let element = elements
             .iter()
             .find(|element| element["xml_location"]["cnvpr_name"] == name)
             .unwrap_or_else(|| panic!("{name} should be projected"));
-        assert_eq!(element["editable"]["bounds"]["supported"], supported);
-        match reason {
-            Some(reason) => assert_eq!(element["editable"]["bounds"]["reason"], reason),
-            None => assert_eq!(element["editable"]["bounds"].get("reason"), None),
+        match bounds {
+            Some(bounds) => assert_eq!(element["editable"]["bounds"], bounds),
+            None => assert_eq!(element["editable"].get("bounds"), None),
         }
     }
 
@@ -1840,8 +1925,7 @@ fn alt_text_editability_matches_cnvpr_presence() {
         .iter()
         .find(|element| element["xml_location"]["cnvpr_id"] == 0)
         .expect("shape without cNvPr is projected");
-    assert_eq!(unsupported["editable"]["alt_text"]["supported"], false);
-    assert_eq!(unsupported["editable"]["alt_text"]["reason"], "no_cnvpr");
+    assert_eq!(unsupported["editable"].get("alt_text"), None);
 }
 
 #[cfg(test)]
@@ -1938,6 +2022,11 @@ fn content_types_xml() -> &'static [u8] {
 #[cfg(test)]
 fn picture_slide_xml() -> &'static [u8] {
     br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:pic><p:nvPicPr><p:cNvPr id="5" name="Embedded Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rEmbed"/></p:blipFill><p:spPr/></p:pic><p:pic><p:nvPicPr><p:cNvPr id="6" name="Linked Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:link="rLink"/></p:blipFill><p:spPr/></p:pic></p:spTree></p:cSld></p:sld>"#
+}
+
+#[cfg(test)]
+fn editable_map_slide_xml() -> &'static [u8] {
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="4" name="Editable Text"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:spPr><p:txBody><a:p><a:r><a:t>Quarterly Results</a:t></a:r></a:p></p:txBody></p:sp><p:pic><p:nvPicPr><p:cNvPr id="5" name="Editable Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rEmbed"/></p:blipFill><p:spPr><a:xfrm><a:off x="1000" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:spPr></p:pic></p:spTree></p:cSld></p:sld>"#
 }
 
 #[cfg(test)]
