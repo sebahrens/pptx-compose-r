@@ -793,6 +793,45 @@ fn find_text_pages_many_matches_without_unbounded_page() {
 }
 
 #[test]
+fn find_text_cursor_is_scoped_to_query_and_search_scope() {
+    let document = PresentationDocument::from_bytes(repeated_text_deck(150)).expect("deck opens");
+    let first = document
+        .find_text(FindTextRequest {
+            query: "a".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: Some(100),
+        })
+        .expect("first page succeeds");
+    let cursor = first
+        .view
+        .next_cursor
+        .expect("truncated find_text response has cursor");
+
+    let query_error = document
+        .find_text(FindTextRequest {
+            query: "aa".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: Some(cursor.clone()),
+            limit: Some(100),
+        })
+        .expect_err("cursor from another query is rejected");
+    assert_eq!(query_error.code(), ErrorCode::InvalidInput);
+
+    let scope_error = document
+        .find_text(FindTextRequest {
+            query: "a".to_owned(),
+            scope: FindTextScope::Slide {
+                slide_id: "slide-1".to_owned(),
+            },
+            cursor: Some(cursor),
+            limit: Some(100),
+        })
+        .expect_err("cursor from another search scope is rejected");
+    assert_eq!(scope_error.code(), ErrorCode::InvalidInput);
+}
+
+#[test]
 fn find_text_rejects_huge_page_limit() {
     let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
     let error = document

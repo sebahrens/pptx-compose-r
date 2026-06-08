@@ -318,11 +318,12 @@ pub fn find_text_with_revision(
     let context = ViewContext::new(pkg, revision)?;
     let mode = "find_text";
     let limit = bounded_limit(mode, req.limit)?;
+    let cursor_collection = find_text_cursor_collection(&req.query, &req.scope);
     let scope = CursorScope {
         document_id: &context.document_id,
         revision: context.revision,
         mode,
-        collection: None,
+        collection: Some(&cursor_collection),
     };
     let start = cursor_offset(req.cursor.as_deref(), scope)?;
     let matches = collect_text_matches(&context, &req.query, &req.scope, start, limit)?;
@@ -416,6 +417,14 @@ impl<'a> ViewContext<'a> {
             validation: payload.validation,
         }
     }
+}
+
+fn find_text_cursor_collection(query: &str, scope: &FindTextScope) -> String {
+    let scope_key = match scope {
+        FindTextScope::Deck => "deck".to_owned(),
+        FindTextScope::Slide { slide_id } => format!("slide:{slide_id}"),
+    };
+    format!("query:{}:{query}\0scope:{scope_key}", query.len())
 }
 
 fn collect_text_matches(
