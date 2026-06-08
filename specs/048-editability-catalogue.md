@@ -9,7 +9,7 @@ Cleanroom rule: every status below is derived from the OOXML/Open Packaging Conv
 - **v1-edit** — an editable V1 operation ships for this feature.
 - **v1-read** — exposed in the agent view in V1; not editable.
 - **deferred** — editable in principle, explicitly out of V1, scheduled in a later phase with a stated prerequisite.
-- **preserve-only** — never edited in V1; byte-preserved through edits. Some are preserve-only permanently (charts, SmartArt body, animations, masters), others only until a deferred op lands.
+- **preserve-only** — never edited in V1; byte-preserved through edits. Some are preserve-only permanently (chart data/workbook authoring, SmartArt structure/layout authoring, animations, masters), others only until a deferred op lands.
 - **reject-at-parse** — cannot be opened for editing; must fail with a clear error (e.g. encryption).
 
 ## Editability Gate
@@ -26,13 +26,13 @@ Anything whose correctness depends on a cache, a proprietary layout algorithm, a
 | Feature | OOXML location | Status | Rationale | Preservation risk |
 | --- | --- | --- | --- | --- |
 | Whole-element text replace (text box / shape) | `p:sp/p:txBody/a:p/a:r/a:t` | v1-edit (`replace_text`) | Gated to `text_box`/`shape`. Plain-text, whole-element rewrite. | High: nuke-and-rebuild collapses multi-run `rPr` to the first run and drops `a:fld`/`a:hlinkClick`/`a:hlinkMouseOver`/`a:br`. Reported via `formatting_simplified`. |
-| Run-scoped in-place text replace | `a:r/a:t` (single run) | deferred (Phase 2 — the gate) | Mutates one run, preserves siblings + hyperlinks/fields/breaks. | Low by design; this primitive exists to remove the high risk above. |
-| Run properties write (size/bold/italic/color/family) | `a:rPr @sz @b @i`, `a:solidFill/a:srgbClr`, `a:latin@typeface` | v1-edit on new text only; deferred elsewhere | Settable in `add_text_box`. Overrides in `replace_text` only on the run-scoped mode. | Medium: writing onto the whole-element path would widen the lossy blast radius — forbidden. |
+| Run-scoped in-place text replace | `a:r/a:t` (single run) | v1-edit (`replace_text` with `mode: run_scoped`) | Mutates one run, preserves siblings + hyperlinks/fields/breaks. | Low by design; this primitive exists to remove the high risk above. |
+| Run properties write (size/bold/italic/color/family) | `a:rPr @sz @b @i`, `a:solidFill/a:srgbClr`, `a:latin@typeface` | v1-edit on new text and run-scoped replacement | Settable in `add_text_box`. Overrides in `replace_text` only on the run-scoped mode. | Medium: writing onto the whole-element path would widen the lossy blast radius — forbidden. |
 | Run properties read | `a:rPr @sz @b @i @u`, `a:solidFill/a:srgbClr`, `a:latin@typeface`, `@lang` | v1-read | Surfaced as a run-style summary for context. | None (read-only). |
 | Advanced run props (strike/cap/baseline/char-spacing) | `a:rPr @strike @cap @baseline @spc` | preserve-only | Not read or written; `@dirty` defaults to 0 on synthesized runs. | Preserved only if the run is untouched. |
 | Paragraph props (align/indent/spacing/line-spacing) | `a:pPr @algn @marL @lvl @indent`, `a:lnSpc`, `a:spcBef/spcAft` | preserve-only (align writable on new boxes) | Only `algn` is writable, and only in `add_text_box`. | Lost if a paragraph is rewritten by whole-element `replace_text`. |
 | Bullets / numbering / list styles | `a:pPr/a:buChar|buAutoNum|buNone`, `a:txBody/a:lstStyle` | deferred / preserve-only | Auto-numbering needs cross-paragraph sync. `add_text_box` writes an empty `lstStyle`. | Lost if a paragraph is rewritten. |
-| Hyperlinks / fields / soft breaks | `a:r/a:hlinkClick`, `a:p/a:fld`, `a:p/a:br` | preserve-only (deferred edit via Phase 2) | Detected to raise `formatting_simplified`; survive only when the run structure is not rewritten. Hyperlink editing also needs rel management. | High: lost through a whole-element paragraph rewrite. |
+| Hyperlinks / fields / soft breaks | `a:r/a:hlinkClick`, `a:p/a:fld`, `a:p/a:br` | preserve-only, preserved by run-scoped text | Detected to raise `formatting_simplified`; survive only when the run structure is not rewritten. Hyperlink editing also needs rel management. | High: lost through a whole-element paragraph rewrite. |
 | Text body props (wrap/anchor/inset/autofit) | `a:txBody/a:bodyPr`, `a:spAutoFit/normAutoFit` | preserve-only | Not read; `add_text_box` hardcodes `wrap=square` + `spAutoFit`. | Preserved on existing shapes. |
 
 ## Geometry
@@ -74,7 +74,7 @@ Anything whose correctness depends on a cache, a proprietary layout algorithm, a
 | Feature | OOXML location | Status | Rationale | Preservation risk |
 | --- | --- | --- | --- | --- |
 | Detection + geometry | `p:graphicFrame/a:graphic/a:graphicData[@uri=…table]/a:tbl` | v1-read (+ `move_resize` on frame) | Classified as `table` (kind fix); frame geometry editable. | Low (frame only). |
-| Cell text read | `a:tbl/a:tr/a:tc/a:txBody` | deferred | The slide text reader is cell-agnostic and reusable for read. | None. |
+| Cell text read | `a:tbl/a:tr/a:tc/a:txBody` | v1-read | The slide text reader is cell-agnostic and reusable for read. | None. |
 | Cell text replace (non-merged) | `a:tc/a:txBody` | v1-edit (`replace_text` with `cell`) | Uses the run-scoped primitive + a table-style inheritance read model (`a:tblStyleLst`/`a:tblStyle`/`a:tblPr`); reads `gridSpan`/`rowSpan`/`vMerge` only to refuse merged cells. | High without the style model: clone-first-`rPr`-or-default would fabricate overriding `rPr`. Never touch `a:tblGrid`. |
 | Structural edits (rows/cols/merge/widths/borders/fills) | `a:tblGrid/a:gridCol`, `a:tr@h`, `a:tc@gridSpan`, `a:vMerge`, `a:tcPr`, `a:tblPr` | deferred (very high) | Merge topology and `tblGrid`↔cell-count consistency must be validated atomically or PowerPoint rejects/misrenders. Needs a merge-semantics spec first. | Very high. |
 
@@ -83,7 +83,8 @@ Anything whose correctness depends on a cache, a proprietary layout algorithm, a
 | Feature | OOXML location | Status | Rationale | Preservation risk |
 | --- | --- | --- | --- | --- |
 | Detection + geometry + alt text | `p:graphicFrame[graphicData uri=…chart]` | v1-read (+ `move_resize`, `set_alt_text`) | Classified as `chart`; frame geometry and alt text editable. | Low (frame/cNvPr only). |
-| Title / axis / series / category text + values | `ppt/charts/chartN.xml` `c:tx`/`c:numCache`/`c:strCache`/`c:v`, `c:f` | preserve-only (permanent for V1+) | Dual-location: cache `c:v` vs embedded workbook via `c:f` in `ppt/embeddings/*.xlsx`. Editing the cache without the workbook is silently overwritten by PowerPoint on reopen. | Fatal to faithfulness. Chart-text READ is a possible inspection-only post-V1 feature. |
+| Existing visible title / axis / legend / data-label / series / category text | `ppt/charts/chartN.xml` `c:tx`/`c:strCache`/`c:v`, backing workbook cells referenced by `c:f` where labels are workbook-backed | v1-read + v1-edit when companion chart/workbook label state can be kept consistent | Existing visible chart text is release-blocking agent-visible content. Text edits must update every required chart XML cache and workbook label cell together, or fail with `unsupported_edit`. | High: editing only the chart cache is overwritten by PowerPoint; editing label text must not imply data/value authoring. |
+| Chart data values / workbook authoring | `ppt/charts/chartN.xml` `c:numCache`/`c:v`, `c:f`, `ppt/embeddings/*.xlsx` data ranges | preserve-only (authoring out of V1) | Changing numeric data, series structure, formulas, workbook layout, or chart type is chart authoring, not text editing. | Fatal to faithfulness if partial. |
 | Embedded workbooks / OLE objects | `ppt/embeddings/*.xlsx|oleObject*.bin`, `p:oleObj` | preserve-only (permanent) | Opaque nested OPC/CFBF blobs; never executed (security). | Byte-preserved. |
 
 ## SmartArt
@@ -91,7 +92,8 @@ Anything whose correctness depends on a cache, a proprietary layout algorithm, a
 | Feature | OOXML location | Status | Rationale | Preservation risk |
 | --- | --- | --- | --- | --- |
 | Detection + geometry + alt text | `p:graphicFrame[graphicData uri=…diagram]`, `ppt/diagrams/*` | v1-read (+ `move_resize`, `set_alt_text`) | Classified as `diagram`; frame geometry and alt text editable; all diagram parts byte-preserved. | Low (frame/cNvPr only). |
-| Text / node / layout / color editing | `ppt/diagrams/data#.xml` `dgm:pt/a:txBody`, `layout#.xml`, `colors#.xml`, cached `ppt/drawings/drawing#.xml` | preserve-only (permanent for V1+) | Requires data↔layout↔cached-drawing consistency + PowerPoint's proprietary layout algorithm and cache regeneration (infeasible in OSS). | Editing without regen breaks rendering in non-PowerPoint viewers. Node-text READ is the only plausible post-V1 step. |
+| Existing visible SmartArt text | `ppt/diagrams/data#.xml` `dgm:pt/a:txBody`, cached/rendered diagram text where present | v1-read + v1-edit when diagram data and rendered/cache text can be kept consistent | Existing visible SmartArt text is release-blocking agent-visible content. Text edits must keep diagram data and any rendered/cache text synchronized, or fail with `unsupported_edit`. | High: editing only one representation breaks rendering or round-trip faithfulness. |
+| SmartArt node / layout / color / structure authoring | `ppt/diagrams/data#.xml`, `layout#.xml`, `colors#.xml`, cached `ppt/drawings/drawing#.xml` | preserve-only (authoring out of V1) | Adding/removing/reordering nodes, restyling, and re-layout require data↔layout↔cache consistency plus PowerPoint layout behavior. | Very high; unsupported authoring must not corrupt the deck. |
 
 ## Deck / Layout
 
@@ -107,9 +109,9 @@ Anything whose correctness depends on a cache, a proprietary layout algorithm, a
 
 | Feature | OOXML location | Status | Rationale | Preservation risk |
 | --- | --- | --- | --- | --- |
-| Document metadata | `docProps/core.xml` (`dc:title`/`dc:subject`/`dc:creator`/`cp:keywords`; deferred fields `cp:category`/`dc:description`) | deferred (FIRST post-V1 edit op: `set_document_metadata`) | Standalone part: no `txBody`, no run model, no rels/content-type coupling. Uses a part-scoped `core_properties` selector, `operation_id`, patch-level document/revision guards, and optional field-value/`part_checksum` guards. Initial settable fields are title, subject, creator, and keywords; category and description stay reserved until their schema task opts them in. | Low — does not need the run-scoped primitive. |
+| Document metadata | `docProps/core.xml` (`dc:title`/`dc:subject`/`dc:creator`/`cp:keywords`; deferred fields `cp:category`/`dc:description`) | v1-edit (`set_document_metadata`) | Standalone part: no `txBody`, no run model, no rels/content-type coupling. Uses a part-scoped `core_properties` selector, `operation_id`, patch-level document/revision guards, and optional field-value/`part_checksum` guards. Initial settable fields are title, subject, creator, and keywords; category and description stay reserved until their schema task opts them in. | Low — does not need the run-scoped primitive. |
 | App / custom metadata | `docProps/app.xml` (application stats), `docProps/custom.xml` | preserve-only | `app.xml` stats go stale after lifecycle ops and require a separate regeneration policy; custom properties need a typed property schema. `set_document_metadata` must not touch either part. | Preserved as blobs. |
-| Speaker notes | `ppt/notesSlides/notesSlideN.xml` | deferred (Phase 3) | Pre-authorized by 001 for "simple note text". Needs slide→rels→notes resolution (absent today) + the run-scoped primitive. | Mirrors slide `txBody`; inherits whole-element risk until Phase 2. |
+| Speaker notes | `ppt/notesSlides/notesSlideN.xml` | v1-edit for supported text (`replace_text`) | Pre-authorized by 001 for "simple note text". Uses slide→rels→notes resolution and the same text replacement modes as slide shapes. | Mirrors slide `txBody`; whole-element replacement remains lossy, run-scoped replacement is preferred. |
 | Notes / handout masters | `ppt/notesMasters/*`, `ppt/handoutMasters/*` | preserve-only | Master edits out of scope. | Preserved. |
 | Comments | `ppt/comments/comment#.xml`, `ppt/commentAuthors.xml`; legacy comment shapes | preserve-only | Byte-preserved; no validation that author refs resolve (post-V1 validation gap). | Preserved. |
 | Custom XML / `mc:AlternateContent` / external rels / signatures | `customXml/*`, `mc:AlternateContent`, rels `TargetMode=External`, signature parts | preserve-only | Opaque parts. Edits invalidate package signatures (must warn per spec 090). External rels not target-validated (warning only). | Preserved. |

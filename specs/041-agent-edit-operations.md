@@ -87,20 +87,18 @@ Required fields:
 Optional fields:
 
 - `match`: exact current text guard. If present and the current text differs, validation fails.
-- `mode`: `whole_element` by default. V1 exposes structured paragraph/run text
-  for context only; it must not emit paragraph/run IDs because no paragraph/run
-  replacement mode exists yet.
+- `mode`: `whole_element` by default; `run_scoped` edits one inspected run in
+  place using `selector.run` or the operation-level `run` coordinate.
 - `format_policy`: `preserve_existing_runs`, `preserve_first_run`, or `single_run_default_style`.
 - `allow_formatting_simplification`: explicit confirmation for lossy
-  whole-element rewrites after the run-scoped mode is implemented. This field is
-  ignored by V1 implementations that only warn, but Phase 2 implementations MUST
-  reject lossy `whole_element` rewrites unless it is `true`.
-- `run_style`: accepted only with `mode: run_scoped`; see Phase 3 run-property
-  overrides below.
+  whole-element rewrites. Implementations with `run_scoped` support MUST reject
+  lossy `whole_element` rewrites unless it is `true`.
+- `run_style`: accepted only with `mode: run_scoped`; supported fields are
+  `font_size_pt`, `bold`, `italic`, `color_hex`, `font_family`, and paragraph
+  `align` (`left`, `center`, `right`).
 
-V1 `replace_text` supports only `mode: whole_element`; no paragraph-, run-, or
-span-scoped replacement mode exists in V1. Whole-element replacement is a
-plain-text, lossy rewrite of the selected text body. The implementation filters
+`replace_text` has two shipped text-body modes. `whole_element` is a plain-text,
+potentially lossy rewrite of the selected text body. The implementation filters
 the existing `a:txBody` down to `bodyPr`/`lstStyle`, clones the first run's
 `a:rPr` onto every rebuilt run when the format policy preserves formatting, and
 resynthesizes `a:p`/`a:r`/`a:t` by splitting the new text. As a consequence:
@@ -114,10 +112,19 @@ documented V1 contract. The warning MUST be emitted whenever the original
 (`a:fld`, `a:hlinkClick`, `a:hlinkMouseOver`, or `a:br`) that the rewrite cannot
 preserve. Run-property overrides (size/bold/italic/color/family/align) MUST NOT
 be added to this whole-element path; on `mode: whole_element` they fail
-validation. They are gated behind the future run-scoped mode specified in Phase
-2 and tracked separately from V1 by the deferred run-scoped primitive task.
+validation.
 
-Newlines in replacement text must have a documented mapping. V1 maps `\n` to PowerPoint paragraphs (hard breaks), never soft `a:br` breaks, and reports the chosen mapping in the patch report. Targets that are not `text_box` or `shape` (graphic frames, groups, connectors) return `unsupported_edit`.
+Newlines in whole-element replacement text must have a documented mapping. V1
+maps `\n` to PowerPoint paragraphs (hard breaks), never soft `a:br` breaks, and
+reports the chosen mapping in the patch report. For `mode: run_scoped`, `text`
+is literal run text and line-break characters (`\n` or `\r`) are invalid unless a
+future soft-break operation is added.
+
+Targets include text-capable `text_box`/`shape` elements, table cells addressed
+with `cell: { "row": N, "col": N }`, supported slide speaker-notes text, and
+existing visible chart/SmartArt text addressed by their text-specific selectors.
+Chart data/workbook authoring, SmartArt structure/layout/cache authoring, OLE
+payloads, groups, and connectors remain unsupported for `replace_text`.
 
 ### `add_text_box`
 
@@ -131,7 +138,7 @@ Optional fields:
 
 - `name`
 - `alt_text`
-- `style`: implementation-defined basic font/fill options. V1 validates `font_size_pt`, `bold`, `italic`, `color_hex`, `font_family`, and `align` (`l`/`ctr`/`r`).
+- `style`: implementation-defined basic font/fill options. V1 validates `font_size_pt`, `bold`, `italic`, `color_hex`, `font_family`, and `align` (`left`/`center`/`right`).
 - `insert`: `{ "z_order": "front" }` by default.
 
 Supported V1 style fields must be explicit in implementation docs. Unknown style fields fail validation rather than being silently ignored.
@@ -204,43 +211,43 @@ V1 `replace_image` behavior is always `retarget_picture`: create a media part an
 
 See [agent protocol schemas](042-agent-protocol-schemas.md) and [media staging and references](043-media-staging-and-refs.md) for normative schema details.
 
-## Phased Post-V1 Operations
+## Specialized Operation Semantics
 
-These operations are explicitly out of V1. They are listed here so the full editable surface is specified, but each ships only behind its own phase gate, schema, guards, and negative tests. The phases are ordered by dependency, not by priority. The [editability catalogue](048-editability-catalogue.md) is the exhaustive feature-by-feature mapping.
+This section records operation details that were originally written as phase
+gates. The current implementation advertises `set_document_metadata` and
+supports `replace_text` run-scoped mode, table-cell text, and notes text. Treat
+those entries as current V1 semantics, not deferred work. Later operation phases
+must not contradict these shipped contracts. The [editability catalogue](048-editability-catalogue.md)
+is the exhaustive feature-by-feature mapping.
 
-The hard rule: no text-bearing breadth (notes, table cells, run-property overrides) ships before the **run-scoped text mode** exists. The only post-V1 edit op that may precede it is document-metadata editing, because it has no text body.
+### `replace_text` run-scoped mode
 
-### Phase 2 — `replace_text` run-scoped mode (the gate)
-
-A new `mode: run_scoped` for `replace_text` (the only existing V1 mode is
-`whole_element`). This supersedes and refines the deferred implementation task
-`pptx-compose-z5hj`; do not define a separate run-preserving replacement mode.
+`mode: run_scoped` for `replace_text` edits one inspected run in place. Do not
+define a separate run-preserving replacement mode.
 
 Scope:
 
-- Applies only to `text_box` and generic `shape` elements whose text is stored
-  in an `a:txBody` inside the resolved presentation shape. Notes text, table
-  cells, SmartArt, charts, groups, and graphic frames remain unsupported until
-  their own phase gates.
-- Targets one `a:r` or an inclusive range of adjacent `a:r` children within one
-  `a:p`, not the whole `a:txBody`. A range is allowed only when all addressed
-  runs are in the same paragraph.
+- Applies to inspected runs in text-capable shapes and text boxes. Table cells
+  and notes use the same single-run coordinate model when the operation target
+  identifies that text body. Existing visible chart and SmartArt text may use
+  the same model when the agent view exposes stable text provenance. Groups, OLE
+  payloads, connectors, chart data/workbook authoring, and SmartArt
+  structure/layout/cache authoring remain unsupported.
+- Targets one `a:r` within one `a:p`, not the whole `a:txBody`. Run ranges are
+  reserved until they are implemented and advertised by schema/capabilities.
 
 Selector addressing:
 
-- Run-scoped replacement extends the resolved element model with a stable run
+- Run-scoped replacement extends the resolved element model with a run
   coordinate:
-  `{ "paragraph_index": u32, "run_index": u32 }` for a single run, or
-  `{ "paragraph_index": u32, "run_index": u32, "run_end_index": u32 }` for an
-  inclusive run range.
+  `{ "paragraph_index": u32, "run_index": u32 }` for a single run.
 - The coordinate lives in the canonical selector as `selector.run`, not as a
   fuzzy text query. `selector.type` remains `element_id`, and the element-level
   guards (`slide_id`, `kind`, `part`, `fingerprint`) still identify the owning
   shape.
 - `selector.run` indexes only literal `a:r` children. `a:br`, `a:fld`, and other
   paragraph children are not counted as runs. A coordinate that names a missing
-  paragraph or run returns `selector_not_found`; a range with `run_end_index <
-  run_index` returns `invalid_input`.
+  paragraph or run returns `selector_not_found`.
 
 Mutation contract:
 
@@ -249,15 +256,11 @@ Mutation contract:
   `a:hlinkClick` and `a:hlinkMouseOver`, MUST remain unchanged in the XML tree;
   serialization may only change escaping required inside the dirty `a:t` text
   node.
-- A range replacement MUST replace the first selected run's `a:t` text with the
-  full replacement text and remove only the additional selected `a:r` siblings
-  in that range. It MUST preserve the first run's `a:rPr` and link children and
-  MUST leave all non-selected siblings untouched.
 - The operation MUST preserve sibling runs and their `a:rPr`, sibling
   `a:hlinkClick`/`a:hlinkMouseOver`, sibling `a:fld`, and sibling `a:br`
   untouched. It MUST NOT rewrite `a:p`, `a:txBody`, `bodyPr`, `lstStyle`, or
   unrelated paragraph children.
-- Replacement text in `run_scoped` mode is literal run text. `\n` is invalid
+- Replacement text in `run_scoped` mode is literal run text. `\n` and `\r` are invalid
   unless a later spec adds a soft-break operation; it MUST NOT be mapped to
   paragraphs or `a:br` by this mode.
 
@@ -266,16 +269,16 @@ Guard semantics:
 - `selector.guards.text_hash` remains an element-level guard over the normalized
   text projection for the whole text body.
 - Run-scoped patches MAY instead use `selector.run.text_hash`, computed over the
-  normalized text of exactly the selected run or selected run range before
+  normalized text of exactly the selected run before
   mutation. When both element-level and run-level hashes are present, both MUST
   match or validation fails with `selector_guard_failed`.
 - The legacy operation-level `match` field guards the whole element text in
-  `whole_element` mode. In `run_scoped` mode it guards the selected run or run
-  range text, not the whole element; mismatch returns `selector_guard_failed`.
+  `whole_element` mode. In `run_scoped` mode it guards the selected run text,
+  not the whole element; mismatch returns `selector_guard_failed`.
 
-Whole-element refusal after Phase 2:
+Whole-element refusal with run-scoped support:
 
-- Once `run_scoped` is implemented, `mode: whole_element` remains available only
+- Since `run_scoped` is implemented, `mode: whole_element` remains available only
   for intentionally plain-text rewrites. If the source `a:txBody` has
   `run_count > 1` or contains `a:fld`, `a:hlinkClick`, `a:hlinkMouseOver`, or
   `a:br`, validation MUST reject the operation with `unsupported_edit` unless
@@ -284,9 +287,7 @@ Whole-element refusal after Phase 2:
   `formatting_simplified` warning and performs the documented lossy
   whole-element rewrite. Confirmation is not allowed to silence the warning.
 
-### Phase 3 — slide-model-independent edits
-
-`set_document_metadata` (may precede Phase 2; needs no text body):
+### `set_document_metadata`
 
 - Required: `operation_id`, `op: "set_document_metadata"`, and at least one
   field under `metadata`.
@@ -345,7 +346,7 @@ Example:
 }
 ```
 
-`replace_text` with a slide selector (needs Phase 2):
+`replace_text` with a slide selector for supported notes text:
 
 - Required: `slide_id` or `selector: { "type": "slide_id", ... }`, `text`, `run`.
   Optional: `match`, `mode`, `format_policy` (same semantics as
@@ -363,9 +364,9 @@ Run-property overrides in `replace_text`:
   selected paragraph's `a:pPr/@algn`; all other fields apply to the first
   selected run's `a:rPr`.
 
-### Phase 4 — table cell text
+### Table cell text
 
-`replace_text` with a table-cell selector (needs Phase 2 + a table-style read model):
+`replace_text` with a table-cell selector:
 
 - Required: `element_id` or `selector: { "type": "element_id", ... }` for the
   graphic-frame table, `cell`: `{ "row": u32, "col": u32 }`, `text`.
@@ -373,7 +374,7 @@ Run-property overrides in `replace_text`:
 - MUST read `gridSpan`/`rowSpan`/`vMerge` and refuse merged cells with `unsupported_edit`. MUST NOT touch `a:tblGrid`.
 - Requires a table-style inheritance read model (`a:tblStyleLst`/`a:tblStyle`/`a:tblPr`) so the run rewrite does not fabricate overriding `rPr` where the cell relies on inherited style.
 
-### Phase 5 — validation hardening, then slide lifecycle
+### Deferred validation hardening, then slide lifecycle
 
 `add_slide`, `duplicate_slide`, `delete_slide`, `move_slide`:
 
@@ -381,9 +382,9 @@ Run-property overrides in `replace_text`:
 - `move_slide` invalidates position-based agent IDs; output validation must flag `slide_order_mismatch`.
 - `add_slide`/`duplicate_slide` require rels + content-type + layout wiring, unique `p:cNvPr` re-id, and explicit media clone/share decisions.
 
-### Permanently preserve-only (never an edit op in V1+)
+### Preserve-only complex payloads
 
-Chart text/values, SmartArt body/structure, masters/layouts/themes, transitions/animations, comments, OLE/embeddings, audio/video, external `r:link` media, and slide backgrounds remain preserve-only. Any attempt to edit them returns `unsupported_edit`. See [048](048-editability-catalogue.md) for rationale (chart dual-location workbook sync and SmartArt proprietary cache regeneration make byte-faithful edits impossible).
+Chart data/value/workbook authoring, SmartArt structure/layout/cache authoring, masters/layouts/themes, transitions/animations, comments, OLE/embeddings, audio/video, external `r:link` media, and slide backgrounds remain preserve-only. Existing visible chart and SmartArt text inspection/editing is V1 scope when text-specific selectors can keep the required companion parts consistent; unsupported chart data or SmartArt authoring edits are not a blanket decision about all visible chart/SmartArt text. See [048](048-editability-catalogue.md) for rationale.
 
 ## Example Image Operation
 

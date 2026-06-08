@@ -26,7 +26,7 @@ Editing is allowed only where two conditions both hold:
 - **(a) Local cross-part consistency** — applying the edit by rewriting one part, or one fixed atomic set of parts, preserves every internal and cross-part invariant. The only sanctioned multi-part set in V1 is `{ media part + slideN.xml.rels + [Content_Types].xml }` for image insertion/replacement.
 - **(b) Faithful re-serialization** — the touched part can be re-serialized without silently corrupting the content that exists in it.
 
-Any target whose correctness depends on a cache, a proprietary layout algorithm, a separate embedded workbook, or a cross-part reference graph (charts, SmartArt, table styling/merge topology, slide lifecycle) fails one of these conditions and is therefore preserve-only or deferred. Every such target returns `unsupported_edit` at apply time rather than producing a corrupt deck.
+Any target whose correctness depends on a cache, a proprietary layout algorithm, a separate embedded workbook, or a cross-part reference graph (chart data/workbook authoring, SmartArt structure/layout/cache authoring, table styling/merge topology, slide lifecycle) fails one of these conditions and is therefore preserve-only or deferred. Existing visible chart and SmartArt text is the narrow V1 exception: it is in scope only when inspection and editing can keep the required chart XML/workbook or diagram data/cache parts consistent. Unsupported chart/SmartArt authoring returns `unsupported_edit` at apply time rather than producing a corrupt deck.
 
 The full feature-by-feature breakdown lives in [048. Editability catalogue](048-editability-catalogue.md). This section is the normative scope boundary; 048 is the exhaustive enumeration that must agree with it.
 
@@ -42,13 +42,22 @@ V1 supports a narrow but reliable set of edits plus the read surface that makes 
 - Read run-level style summaries (size, bold, italic, underline, color, typeface, language) for context.
 - Read image placements, intrinsic dimensions, and media part references.
 - Classify graphic frames into chart, table, diagram/SmartArt, and OLE kinds from `a:graphicData/@uri` (so the agent view stops collapsing every graphic frame to `chart`).
+- Inspect existing visible chart and SmartArt text with stable provenance, while
+  keeping chart data authoring and SmartArt structure/layout authoring distinct
+  from text editing.
 
-**Edit (the six confirmed operations):**
+**Edit (the confirmed operations):**
 
-- `replace_text` — replace the text of a `text_box`/`shape`. Whole-element, plain-text replacement only; multi-run styling collapses and `a:hlinkClick`/`a:fld`/`a:br` are not preserved through a paragraph rewrite. This loss is reported via the `formatting_simplified` warning and is the documented V1 contract.
+- `replace_text` — replace text in text-capable shapes/text boxes, supported
+  table cells, supported notes text, and existing visible chart/SmartArt text
+  when the target exposes stable text selectors. Whole-element replacement is a
+  plain-text rewrite that may collapse rich text and reports
+  `formatting_simplified`; `run_scoped` replacement edits one inspected run in
+  place and preserves sibling formatting/structure.
 - `add_text_box` — append a simple text box to a slide with basic font/fill/alignment style fields.
 - `move_resize_element` — move or resize a `text_box`, `shape`, `picture`, or `graphic_frame`. Graphic-frame geometry edits are faithful because they touch only the frame-level `p:xfrm`, never the chart/SmartArt cache.
 - `set_alt_text` — set title/alt-text metadata on any element with a `p:cNvPr`.
+- `set_document_metadata` — set supported core properties in `docProps/core.xml`.
 - `add_image` — add an image to a slide, atomically updating the media part, relationships, and content types.
 - `replace_image` — retarget the embedded blip of an existing picture while preserving crop, fill, effects, and transform. Linked (`r:link`) pictures are rejected.
 
@@ -67,25 +76,31 @@ Slide lifecycle operations are not V1 requirements. Adding, duplicating, deletin
 
 These are editable in principle but explicitly out of V1. Each is scheduled in a phase (see [041](041-agent-edit-operations.md) and [048](048-editability-catalogue.md)) and stays preserve-only until then:
 
-- **Document metadata** (`docProps/core.xml`: `dc:title`/`dc:subject`/`dc:creator`/`cp:keywords`) — slide-model-independent, no run model, no rels/content-type coupling. The single best first post-V1 edit op.
-- **Non-destructive run-scoped text replacement** — a new `replace_text` mode that mutates individual `a:r`/`a:t` in place and preserves sibling runs, `a:hlinkClick`, `a:fld`, and `a:br`. This is the gate for all further text-bearing breadth; nothing below ships before it.
-- **Speaker-notes text replacement** — pre-authorized by this spec for "simple note text". Needs slide→rels→`notesSlideN.xml` resolution (absent today) plus the run-scoped primitive.
-- **Run-property overrides in `replace_text`** (size/bold/italic/color/family/align) — only on the run-scoped mode, never on the destructive whole-element path.
-- **Table cell-text replacement on non-merged cells** — requires the run-scoped primitive and a table-style inheritance read model; reads `gridSpan`/`rowSpan`/`vMerge` only in order to refuse merged cells; never touches `a:tblGrid`.
 - **Table structural edits** (rows/cols, merge/unmerge, widths, borders, fills) — needs a merge-semantics spec first.
 - **Slide lifecycle** (add/delete/duplicate/reorder) — needs rels + content-type + layout wiring, unique `p:cNvPr` re-id, media clone/share decisions, position-based agent-ID invalidation handling, and the GC validation prerequisite.
+- **Template population and text fitting** — placeholder metadata, fit estimation,
+  fit policies, and alignment rules are specified in [082](082-template-population-and-text-fitting.md)
+  but not yet implemented.
 - **Orphaned-relationship / dangling-comment-author-ref / unreferenced-media GC validation** — harmless in V1 (no delete ops) but a hard prerequisite for lifecycle; build before any delete op.
 
 ## Preserve-Only Areas in V1
 
 These must be byte-preserved through any edit. Some are preserve-only permanently; others are merely not editable yet (see Deferred above):
 
-- **Charts and embedded workbooks** — preserve-only permanently. Chart text lives in two places (`c:numCache`/`c:v` and the embedded `c:f` workbook in `ppt/embeddings/*.xlsx`); editing the cache without the workbook is silently overwritten by PowerPoint on reopen.
-- **SmartArt body and structure** — preserve-only permanently. `dgm:pt` data must stay consistent with PowerPoint's proprietary layout cache (`ppt/drawings/drawing#.xml`), which cannot be regenerated in open source. (Detection, `move_resize`, and `set_alt_text` on the frame are de-facto V1 surface and are faithful because they never touch the cache.)
-- **Tables beyond detection and geometry** — preserve-only in V1; cell-text editing is deferred (see above).
+- **Charts and embedded workbooks** — chart data/workbook authoring remains
+  preserve-only; existing visible chart text inspection/editing is in V1 only
+  through text-specific selectors that keep chart XML and backing workbook label
+  cells consistent.
+- **SmartArt body and structure** — data/layout/cache authoring remains
+  preserve-only; existing visible SmartArt text inspection/editing is in V1 only
+  through text-specific selectors that keep diagram data and rendered/cache text
+  consistent.
+- **Tables beyond detection, geometry, and supported cell text** — preserve-only
+  in V1.
 - **Animations and transitions** — preserve-only permanently in V1+; `p:timing` references `p:cNvPr` ids and there is no reference garbage collection.
 - **Comments** (modern `ppt/comments/*` and `commentAuthors.xml`, legacy comment shapes).
-- **Speaker notes** — preserve-only until the deferred notes-text op ships.
+- **Unsupported speaker-notes structures** beyond the supported simple note text
+  replacement path.
 - **Slide masters, layouts, and themes** (including `clrScheme`/`fontScheme` inheritance).
 - **Slide backgrounds and fills** (`p:bg`/`p:bgPr`).
 - **Shape-level fills, lines, and effects** (gradient/pattern/blip fills, `a:ln`, `a:effectLst`); preset geometry and adjustment handles; connectors and groups.
@@ -99,9 +114,11 @@ These must be byte-preserved through any edit. Some are preserve-only permanentl
 - A full PowerPoint renderer.
 - Pixel-perfect layout computation.
 - Complete ECMA-376 object model coverage.
-- Full chart/table/SmartArt editing in V1 (charts and SmartArt body/structure are non-goals permanently for V1+).
+- Full chart/table/SmartArt editing in V1. Chart data/workbook authoring,
+  SmartArt structure/layout/cache editing, and table structural edits remain
+  out of scope even if later text-specific support is added.
 - Slide add/duplicate/delete/reorder in V1.
-- Run-property styling layered onto the destructive whole-element `replace_text` path (must wait for the run-scoped primitive).
+- Run-property styling layered onto the destructive whole-element `replace_text` path.
 - Generating arbitrary presentations from high-level prose in V1.
 - Byte-for-byte output equality for the entire ZIP when edits are made.
 - Image EXIF/metadata stripping, format conversion, or recompression.

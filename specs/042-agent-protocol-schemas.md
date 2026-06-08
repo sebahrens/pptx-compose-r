@@ -34,7 +34,7 @@ Required top-level fields:
 }
 ```
 
-Post-V1 metadata inspection may add this optional top-level shape:
+Metadata inspection may add this optional top-level shape:
 
 ```json
 {
@@ -73,6 +73,9 @@ Slide entries must include stable identity and provenance:
 }
 ```
 
+`id` uses the one-based user-facing `slide-N` form. `index` is a zero-based
+machine index; find-text results use the same zero-based `slide_index`.
+
 ## Element View
 
 Element entries must include enough provenance for agents to target and recover from errors:
@@ -84,13 +87,13 @@ Element entries must include enough provenance for agents to target and recover 
   "slide_id": "slide-1",
   "part": "ppt/slides/slide1.xml",
   "xml_location": {
-    "sp_tree_path": [3],
+    "sp_tree_path": [1],
     "group_path": [],
     "element_tag": "p:sp",
     "cnvpr_id": 4,
     "cnvpr_name": "Title 1"
   },
-  "z_order": 3,
+  "z_order": 1,
   "bounds": { "x": 914400, "y": 457200, "cx": 7315200, "cy": 914400 },
   "editable": {
     "text": { "supported": true },
@@ -100,6 +103,10 @@ Element entries must include enough provenance for agents to target and recover 
   "fingerprint": "sha256:..."
 }
 ```
+
+`sp_tree_path` is a 1-based drawable-child path, not a raw XML child offset. It
+excludes required shape-tree property elements such as `p:nvGrpSpPr` and
+`p:grpSpPr`. `z_order` uses the same 1-based drawable ordinal space.
 
 `editable` MUST be kind-appropriate: text-capable elements expose `text`,
 picture and graphic-frame media elements expose `image`, and bounded elements
@@ -126,8 +133,10 @@ clarification does not bump `pptx-compose.agent_view.v1` or `version: 1`.
 Graphic-frame subkinds are editable only at the frame level: `move_resize_element`
 and `set_alt_text` are allowed for `chart`, `table`, `diagram`, and `ole`;
 table-cell text uses `replace_text` with a `cell` coordinate. `replace_text`
-does not edit chart, diagram, or OLE payload content. The detailed editability
-rationale is normative in
+may edit existing visible chart and SmartArt text only through text-specific
+selectors that keep required companion parts consistent. It does not edit chart
+data/workbook authoring targets, SmartArt structure/layout/cache authoring
+targets, or OLE payload content. The detailed editability rationale is normative in
 [048. Editability Catalogue](048-editability-catalogue.md).
 
 ## Text Element View
@@ -223,9 +232,8 @@ The supported `run_style` key set is exactly `font_size_pt`, `bold`, `italic`,
 `add_text_box.style.align`: `left`, `center`, or `right`. On `whole_element`
 mode, `run_style` fails validation.
 
-Post-V1 operations appear in `capabilities.operations` only after their
-implementation ships. The first post-V1 operation schema is
-`set_document_metadata`:
+Operations appear in `capabilities.operations` only after their implementation
+ships. `set_document_metadata` is a current V1 operation:
 
 ```json
 {
@@ -285,10 +293,11 @@ Supported selector types in V1:
 - `slide_id`
 - `element_id`
 - `media_part`
+- `core_properties`
 
 Query/fuzzy selectors are post-V1 unless a later spec defines ambiguity handling.
 
-`set_document_metadata` adds a post-V1 part-scoped selector:
+`set_document_metadata` uses a part-scoped selector:
 
 ```json
 {
@@ -307,7 +316,7 @@ current raw-byte `part_checksum` of that part as defined in [046](046-provenance
 Missing core properties return `selector_not_found`; checksum mismatch returns
 `selector_guard_failed`.
 
-Phase 2 run-scoped text replacement extends only `element_id` selectors. The
+Run-scoped text replacement extends only `element_id` selectors. The
 owning element is still selected by `type: "element_id"` and `id`, while the run
 coordinate is carried in `run`:
 

@@ -41,6 +41,42 @@ input.pptx
   -> write output.pptx
 ```
 
+## In-Scope Must-Fix Before Release: SmartArt and Chart Text Editing
+
+**Critical finding (2026-06-08):** SmartArt diagrams contain large amounts of
+visible body text (stored in `ppt/diagrams/data*.xml` and mirrored in
+`ppt/diagrams/drawing*.xml`), and charts carry visible text (titles, axis
+labels, legends, data labels) in their chart XML and embedded workbooks.
+Today the agent view exposes `diagram` and `chart` elements with
+`editable: {alt_text, bounds}` only — there is **no `text` support**, so
+`replace_text` cannot reach this content. For real-world consulting decks this
+silently leaves a large fraction of on-slide text untranslated/unedited even
+though the operation reports success on the shapes it *can* see.
+
+This is a genuine engine-scope gap, not a patch-authoring mistake. Per the
+project owner's directive, this is now **in scope and a release blocker**:
+V1 must not ship until SmartArt and chart **text** is inspectable and editable
+through the bounded agent surface.
+
+Requirements this adds to V1:
+
+- The agent view must expose the editable text inside SmartArt diagrams and
+  charts (as text elements, table-like cells, or chart series/category/title
+  fields), with stable selectors.
+- `replace_text` (or a dedicated equivalent) must be able to edit that text and
+  re-serialize the diagram data/drawing parts and chart XML (plus the embedded
+  workbook cells that back chart labels) consistently, preserving everything
+  else byte-for-byte.
+- `inspect`/`find-text` must report coverage honestly: any on-slide text that is
+  present but not yet editable must be surfaced (not omitted), so callers can see
+  what was left untouched rather than assuming full coverage.
+- Until full editing lands, edits that would leave diagram/chart text stale must
+  be reported via `unsupported_edit`, never silently skipped.
+
+Full chart/SmartArt *authoring* (creating new diagrams, restyling, re-layout)
+remains out of V1. Only text inspection + text editing of existing SmartArt and
+charts is pulled into scope here.
+
 Core guardrails:
 
 - Preserve unmodified XML bytes by default.
@@ -75,7 +111,7 @@ For any Rust rewrite, CLI, or MCP work, QA should verify:
 - Dry-run, apply, validation, diff, and error outputs follow the schemas in `specs/042` through `specs/045`.
 - CLI behavior follows `specs/071-cli-agent-contract.md`: JSON stdout discipline, JSON errors, no prompts, atomic writes, no implicit overwrite.
 - MCP behavior follows `specs/072-mcp-server-contract.md`: scoped tools, sessions/revisions, media handles, structured outputs, and no raw package/XML mutation surface in V1.
-- Negative cases fail safely: stale revision, hallucinated element ID, missing media ref, media checksum mismatch, unsupported chart edit, unsafe path, encrypted deck, signed/macro-containing deck warnings.
+- Negative cases fail safely: stale revision, hallucinated element ID, missing media ref, media checksum mismatch, unsupported chart data/authoring edit, unsafe path, encrypted deck, signed/macro-containing deck warnings.
 
 Do not accept a QA result that only says “the TypeScript tests pass.” That is legacy smoke coverage, not proof that agents can round-trip PPTX safely.
 
@@ -84,7 +120,8 @@ Do not accept a QA result that only says “the TypeScript tests pass.” That i
 - Build Rust-first crate boundaries from [`specs/060-rust-architecture.md`](specs/060-rust-architecture.md).
 - Keep V1 narrow: inspect slides/text/images, replace text, add text box, move/resize, set alt text, add/replace images.
 - Slide add/duplicate/delete/reorder is post-V1 unless the specs are expanded first.
-- Avoid overbuilding rendering, full layout, chart editing, SmartArt editing, or full ECMA-376 coverage in V1.
+- Avoid overbuilding rendering, full layout, chart/SmartArt *authoring* (new diagrams, restyling, re-layout), or full ECMA-376 coverage in V1.
+- **In scope (release blocker):** text inspection and text editing of existing SmartArt diagrams and charts — see "In-Scope Must-Fix Before Release" above. This is the one exception to the "avoid chart/SmartArt editing" line; the prohibition now covers only authoring, not text.
 
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->

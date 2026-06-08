@@ -11,8 +11,8 @@ The agent JSON format is a compact semantic projection for LLMs. It is not a raw
 - Include provenance so patches can be validated.
 - Preserve unknown content by reference rather than dropping it.
 - Emit only IDs that are accepted by V1 patch operations. Structured paragraph
-  and run text may be exposed for context, but paragraph/run IDs must not be
-  emitted until paragraph/run replacement modes are implemented.
+  and run text may be exposed for context; run coordinates are accepted by
+  `replace_text` when `mode` is `run_scoped`.
 
 Agent element IDs are valid for the `document_id` and `revision` that produced the JSON view. CLI workflows that export JSON and apply a later patch must include those fields and reject stale patches unless the implementation can prove the IDs still resolve to the same elements.
 
@@ -40,6 +40,7 @@ Full-deck export is not the primary agent read path for large decks. Agent-facin
       "add_text_box",
       "move_resize_element",
       "set_alt_text",
+      "set_document_metadata",
       "add_image",
       "replace_image"
     ],
@@ -66,13 +67,13 @@ Full-deck export is not the primary agent read path for large decks. Agent-facin
           "slide_id": "slide-1",
           "part": "ppt/slides/slide1.xml",
           "xml_location": {
-            "sp_tree_path": [3],
+            "sp_tree_path": [1],
             "group_path": [],
             "element_tag": "p:sp",
             "cnvpr_id": 4,
             "cnvpr_name": "Title 1"
           },
-          "z_order": 3,
+          "z_order": 1,
           "bounds": { "x": 914400, "y": 457200, "cx": 7315200, "cy": 914400 },
           "editable": {
             "text": { "supported": true },
@@ -103,13 +104,13 @@ Full-deck export is not the primary agent read path for large decks. Agent-facin
           "slide_id": "slide-1",
           "part": "ppt/slides/slide1.xml",
           "xml_location": {
-            "sp_tree_path": [4],
+            "sp_tree_path": [2],
             "group_path": [],
             "element_tag": "p:pic",
             "cnvpr_id": 5,
             "cnvpr_name": "Picture 1"
           },
-          "z_order": 4,
+          "z_order": 2,
           "bounds": { "x": 914400, "y": 1524000, "cx": 3657600, "cy": 2743200 },
           "editable": {
             "bounds": { "supported": true },
@@ -155,6 +156,20 @@ Paginated outputs must use opaque cursors and explicit truncation fields:
 
 Long text, notes, part lists, validation findings, and media inventories must be truncated rather than silently omitted. Truncated fields must indicate how to request more detail.
 
+Opaque cursors are scoped to the document/revision, view mode, and collection
+being paged. Search cursors are additionally scoped to the literal query and the
+deck/slide search scope; reusing a `find-text` cursor with a different query or
+scope must fail rather than silently skipping results.
+
+`slide.id` uses the one-based user-facing form `slide-N`. `slide.index` and
+`find-text.matches[].slide_index` are zero-based machine indexes.
+
+`xml_location.sp_tree_path` is a 1-based drawable-child path, not a raw XML child
+offset. It counts only drawable shape-tree children (`p:sp`, `p:pic`,
+`p:graphicFrame`, groups, connectors, etc.) and excludes required shape-tree
+property elements such as `p:nvGrpSpPr` and `p:grpSpPr`. `z_order` uses the same
+1-based drawable ordinal space.
+
 ## Element Kinds
 
 `Element.kind` uses the canonical agent-view `ElementKind` vocabulary:
@@ -177,11 +192,13 @@ For OOXML `p:graphicFrame` elements, the kind derives from
 - `http://schemas.openxmlformats.org/presentationml/2006/ole` and other
   graphic-frame OLE URIs ending in `/ole` -> `ole`
 
-Graphic-frame subkinds expose frame-level geometry and non-visual properties
-only. `move_resize_element` and `set_alt_text` are supported for `chart`,
+Graphic-frame subkinds always expose frame-level geometry and non-visual
+properties. `move_resize_element` and `set_alt_text` are supported for `chart`,
 `table`, `diagram`, and `ole` because they mutate only `p:graphicFrame/p:xfrm`
-or `p:cNvPr`. Table-cell text uses `replace_text` with a `cell` coordinate;
-chart data, SmartArt/diagram content, and embedded OLE payloads follow the
+or `p:cNvPr`. Table-cell text uses `replace_text` with a `cell` coordinate.
+Existing visible chart and SmartArt text must be exposed as text-bearing targets
+when stable provenance is available. Chart data/workbook authoring, SmartArt
+structure/layout/cache authoring, and embedded OLE payloads follow the
 editability boundaries in
 [048. Editability Catalogue](048-editability-catalogue.md).
 
