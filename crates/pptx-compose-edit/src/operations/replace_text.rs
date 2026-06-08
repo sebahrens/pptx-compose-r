@@ -1,6 +1,10 @@
 use pptx_compose_core::{
     error::{Error, ErrorCode, ErrorLocation, Result},
-    opc::package::Package,
+    opc::{
+        package::Package,
+        part_name::PartName,
+        relationships::{RelationshipSet, TargetMode},
+    },
     pptx::{
         ids::ElementKind,
         table_style::{TableProperties, TableStyleCatalog},
@@ -109,6 +113,37 @@ impl From<&ReplaceTextOperation> for ReplaceTableCellText {
 impl ReplaceText {
     pub fn validate(&self, package: &Package, target: &ResolvedElement) -> Result<()> {
         self.validate_target(target)?;
+        if is_related_text_target(target.kind) {
+            let (part_name, _) = related_text_part(package, target, self)?;
+            let part = package.parts().get(&part_name).ok_or_else(|| {
+                Error::new(
+                    ErrorCode::SelectorNotFound,
+                    format!("Related text part {part_name} was not found."),
+                )
+                .with_location(self.location(Some(target)))
+            })?;
+            let document = parse_document(part.bytes()).map_err(|source| {
+                Error::with_source(
+                    source.code(),
+                    format!("Could not parse related text part {part_name}."),
+                    source,
+                )
+                .with_location(self.location(Some(target)))
+            })?;
+            let root = document.root_element().ok_or_else(|| {
+                Error::malformed_xml("Related text XML does not contain a root element.")
+                    .with_location(self.location(Some(target)))
+            })?;
+            if self.mode != ReplaceTextMode::RunScoped {
+                return Err(Error::new(
+                    ErrorCode::UnsupportedEdit,
+                    "Chart and diagram text replacement requires mode run_scoped.",
+                )
+                .with_location(self.location(Some(target))));
+            }
+            let tx_body = related_text_body(root, self, target)?;
+            return validate_run_scoped_text_body(self, target, &tx_body);
+        }
         let part_name = target.part.clone();
         let part = package.parts().get(&part_name).ok_or_else(|| {
             Error::new(
@@ -139,6 +174,9 @@ impl ReplaceText {
 
     pub fn apply(&self, package: &mut Package, target: &ResolvedElement) -> Result<PatchEffects> {
         self.validate_target(target)?;
+        if is_related_text_target(target.kind) {
+            return self.apply_related_text(package, target);
+        }
 
         let part_name = target.part.clone();
         let part = package.parts_mut().get_mut(&part_name).ok_or_else(|| {
@@ -287,6 +325,62 @@ impl ReplaceText {
             ..ErrorLocation::default()
         }
     }
+
+    fn apply_related_text(
+        &self,
+        package: &mut Package,
+        target: &ResolvedElement,
+    ) -> Result<PatchEffects> {
+        if self.mode != ReplaceTextMode::RunScoped {
+            return Err(Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Chart and diagram text replacement requires mode run_scoped.",
+            )
+            .with_location(self.location(Some(target))));
+        }
+        let (part_name, _) = related_text_part(package, target, self)?;
+        let part = package.parts_mut().get_mut(&part_name).ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                format!("Related text part {part_name} was not found."),
+            )
+            .with_location(self.location(Some(target)))
+        })?;
+        let mut document = parse_document(part.bytes()).map_err(|source| {
+            Error::with_source(
+                source.code(),
+                format!("Could not parse related text part {part_name}."),
+                source,
+            )
+            .with_location(self.location(Some(target)))
+        })?;
+        let root = root_element_mut(&mut document).ok_or_else(|| {
+            Error::malformed_xml("Related text XML does not contain a root element.")
+                .with_location(self.location(Some(target)))
+        })?;
+        let tx_body = related_text_body(root, self, target)?;
+        validate_run_scoped_text_body(self, target, &tx_body)?;
+        replace_related_run_scoped_text(root, self, target)?;
+
+        *part.bytes_mut() = write_document(
+            &document,
+            &WriteOptions {
+                mode: WriteMode::Preserve,
+            },
+        )?;
+        package.mark_dirty(part_name.clone());
+
+        Ok(PatchEffects {
+            changed_parts: vec![part_name.zip_entry_name().to_owned()],
+            target: Some(OperationTarget {
+                slide_id: target.slide_id.clone(),
+                element_id: target.element_id.clone(),
+                part: part_name.zip_entry_name().to_owned(),
+            }),
+            created_element_ids: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
 }
 
 impl ReplaceNotesText {
@@ -417,6 +511,215 @@ impl ReplaceNotesText {
             ..ErrorLocation::default()
         }
     }
+}
+
+fn is_related_text_target(kind: ElementKind) -> bool {
+    matches!(
+        kind,
+        ElementKind::GraphicFrameChart | ElementKind::GraphicFrameDiagram
+    )
+}
+
+fn related_text_part(
+    package: &Package,
+    target: &ResolvedElement,
+    operation: &ReplaceText,
+) -> Result<(PartName, u32)> {
+    let slide_part = package.parts().get(&target.part).ok_or_else(|| {
+        Error::new(
+            ErrorCode::SelectorNotFound,
+            format!("Target slide part {} was not found.", target.part),
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let slide_document = parse_document(slide_part.bytes()).map_err(|source| {
+        Error::with_source(
+            source.code(),
+            format!("Could not parse target slide part {}.", target.part),
+            source,
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let element = target_element(&slide_document, target)
+        .ok_or_else(|| operation.not_found("Target element path no longer resolves."))?;
+    let slide_rels = package
+        .relationships()
+        .set_for(&target.part)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::UnsupportedEdit,
+                "Target slide has no relationships for chart or diagram text.",
+            )
+            .with_location(operation.location(Some(target)))
+        })?;
+    let mut rel_ids = Vec::new();
+    collect_relationship_ids(element, &mut rel_ids);
+    for rel_id in rel_ids {
+        let Some(part_name) = internal_related_part(slide_rels, &rel_id) else {
+            continue;
+        };
+        let Some(part) = package.parts().get(&part_name) else {
+            continue;
+        };
+        let document = parse_document(part.bytes()).map_err(|source| {
+            Error::with_source(
+                source.code(),
+                format!("Could not parse related text part {part_name}."),
+                source,
+            )
+            .with_location(operation.location(Some(target)))
+        })?;
+        let Some(root) = document.root_element() else {
+            continue;
+        };
+        let paragraph_count = count_related_paragraphs(root);
+        if paragraph_count > 0 {
+            return Ok((part_name, paragraph_count));
+        }
+    }
+    Err(Error::new(
+        ErrorCode::UnsupportedEdit,
+        "Target chart or diagram does not expose related DrawingML text.",
+    )
+    .with_location(operation.location(Some(target))))
+}
+
+fn internal_related_part(slide_rels: &RelationshipSet, rel_id: &str) -> Option<PartName> {
+    let relationship = slide_rels.get(rel_id)?;
+    if relationship.target_mode != TargetMode::Internal {
+        return None;
+    }
+    relationship.resolved_target.clone()
+}
+
+fn collect_relationship_ids(element: &XmlElement, output: &mut Vec<String>) {
+    for attribute in &element.attributes {
+        if matches!(
+            attribute.name.prefix.as_deref(),
+            Some("r") | Some("relationships")
+        ) && !output.contains(&attribute.value)
+        {
+            output.push(attribute.value.clone());
+        }
+    }
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_relationship_ids(child, output);
+    }
+}
+
+fn count_related_paragraphs(element: &XmlElement) -> u32 {
+    if element.name.local_name == "p" && related_paragraph_has_text(element) {
+        return 1;
+    }
+    element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .map(count_related_paragraphs)
+        .sum()
+}
+
+fn related_paragraph_has_text(paragraph: &XmlElement) -> bool {
+    let tx_body = XmlElement {
+        name: paragraph.name.clone(),
+        attributes: Vec::new(),
+        namespaces: paragraph.namespaces.clone(),
+        children: vec![XmlNode::Element(paragraph.clone())],
+    };
+    !read_text_body(&tx_body).normalized.is_empty()
+}
+
+fn related_text_body(
+    root: &XmlElement,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+) -> Result<XmlElement> {
+    let mut children = Vec::new();
+    collect_related_paragraph_nodes(root, &mut children);
+    if children.is_empty() {
+        return Err(Error::new(
+            ErrorCode::UnsupportedEdit,
+            "Related chart or diagram part does not contain DrawingML text paragraphs.",
+        )
+        .with_location(operation.location(Some(target))));
+    }
+    Ok(element("a:txBody", &[], children))
+}
+
+fn collect_related_paragraph_nodes(element: &XmlElement, output: &mut Vec<XmlNode>) {
+    if element.name.local_name == "p" && related_paragraph_has_text(element) {
+        output.push(XmlNode::Element(element.clone()));
+        return;
+    }
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_related_paragraph_nodes(child, output);
+    }
+}
+
+fn replace_related_run_scoped_text(
+    root: &mut XmlElement,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+) -> Result<()> {
+    let run = operation.run.as_ref().ok_or_else(|| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "run_scoped replace_text requires selector.run.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let mut current_paragraph = 0_u32;
+    let paragraph = related_paragraph_mut(root, run.paragraph_index, &mut current_paragraph)
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                "selector.run resolved to a missing paragraph.",
+            )
+            .with_location(operation.location(Some(target)))
+        })?;
+    let mut tx_body = element("a:txBody", &[], vec![XmlNode::Element(paragraph.clone())]);
+    let mut scoped_run = run.clone();
+    scoped_run.paragraph_index = 0;
+    let scoped_operation = ReplaceText {
+        run: Some(scoped_run),
+        ..operation.clone()
+    };
+    replace_run_scoped_text(&mut tx_body, &scoped_operation, target)?;
+    let replacement = tx_body
+        .children
+        .into_iter()
+        .find_map(|node| match node {
+            XmlNode::Element(element) => Some(element),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::InternalError,
+                "Related paragraph was not rewritten.",
+            )
+        })?;
+    *paragraph = replacement;
+    Ok(())
+}
+
+fn related_paragraph_mut<'a>(
+    element: &'a mut XmlElement,
+    target_index: u32,
+    current_index: &mut u32,
+) -> Option<&'a mut XmlElement> {
+    if element.name.local_name == "p" && related_paragraph_has_text(element) {
+        if *current_index == target_index {
+            return Some(element);
+        }
+        *current_index = current_index.saturating_add(1);
+        return None;
+    }
+    for child in element.children.iter_mut().filter_map(node_element_mut) {
+        if let Some(paragraph) = related_paragraph_mut(child, target_index, current_index) {
+            return Some(paragraph);
+        }
+    }
+    None
 }
 
 impl ReplaceTableCellText {

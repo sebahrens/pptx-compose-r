@@ -7,7 +7,7 @@ use pptx_compose_core::{
     opc::{
         package::Package,
         part_name::PartName,
-        relationships::{RelationshipSet, RelationshipSource},
+        relationships::{RelationshipSet, RelationshipSource, TargetMode},
     },
     pptx::presentation as core_presentation,
     pptx::{
@@ -819,7 +819,7 @@ fn project_element(
     media: &mut BTreeMap<String, ImageView>,
 ) -> Result<ElementView, JsonError> {
     let shape = read_shape(element, path.clone());
-    let text = first_descendant(element, "txBody").map(project_text);
+    let text = projected_element_text(element, core_kind, slide_rels, package)?;
     let text_hash = text.as_ref().map(|text| text.text_hash.clone());
     let mut image_support = ImageEditSupport::Unresolved;
     let image = if core_kind == CoreElementKind::Picture {
@@ -885,7 +885,7 @@ fn project_element(
         ),
         editable: editable(
             core_kind,
-            text.is_some() && core_kind.supports_replace_text(),
+            text.is_some(),
             shape.cnvpr_id.is_some(),
             image_support,
         ),
@@ -929,6 +929,10 @@ fn project_accessibility(shape: &Shape) -> Option<AccessibilityView> {
 
 fn project_text(tx_body: &XmlElement) -> TextView {
     let body = read_text_body(tx_body);
+    project_text_body(body)
+}
+
+fn project_text_body(body: pptx_compose_core::pptx::text::TextBody) -> TextView {
     let text_hash = text_hash::text_hash(&body.normalized);
     let plain = truncate_text(
         body.plain,
@@ -986,6 +990,192 @@ fn project_text(tx_body: &XmlElement) -> TextView {
         paragraphs,
         text_hash,
         truncation,
+    }
+}
+
+fn projected_element_text(
+    element: &XmlElement,
+    core_kind: CoreElementKind,
+    slide_rels: &RelationshipSet,
+    package: &Package,
+) -> Result<Option<TextView>, JsonError> {
+    if let Some(tx_body) = first_descendant(element, "txBody") {
+        return Ok(Some(project_text(tx_body)));
+    }
+    if !matches!(
+        core_kind,
+        CoreElementKind::GraphicFrameChart | CoreElementKind::GraphicFrameDiagram
+    ) {
+        return Ok(None);
+    }
+    let related_parts = related_graphic_text_parts(element, slide_rels, package)?;
+    let bodies = related_parts
+        .iter()
+        .filter_map(|part_name| package.parts().get(part_name))
+        .map(|part| {
+            let document = parse_document(part.bytes()).map_err(core_error)?;
+            Ok(document
+                .root_element()
+                .map(read_related_text_body)
+                .filter(|body| !body.normalized.is_empty()))
+        })
+        .collect::<Result<Vec<_>, JsonError>>()?;
+    let bodies = bodies.into_iter().flatten().collect::<Vec<_>>();
+    if bodies.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(project_text_body(merge_text_bodies(bodies))))
+    }
+}
+
+fn related_graphic_text_parts(
+    element: &XmlElement,
+    slide_rels: &RelationshipSet,
+    package: &Package,
+) -> Result<Vec<PartName>, JsonError> {
+    let mut parts = Vec::new();
+    let mut rel_ids = Vec::new();
+    collect_relationship_ids(element, &mut rel_ids);
+    for rel_id in rel_ids {
+        let Some(relationship) = slide_rels.get(&rel_id) else {
+            continue;
+        };
+        if relationship.target_mode != TargetMode::Internal {
+            continue;
+        }
+        let part_name = relationship.resolved_target.clone().ok_or_else(|| {
+            JsonError::Projection(format!(
+                "Relationship {rel_id} from {} did not resolve to a package part.",
+                slide_rels.source
+            ))
+        })?;
+        if package.parts().get(&part_name).is_some() && !parts.contains(&part_name) {
+            parts.push(part_name);
+        }
+    }
+    Ok(parts)
+}
+
+fn collect_relationship_ids(element: &XmlElement, output: &mut Vec<String>) {
+    for attribute in &element.attributes {
+        if matches!(
+            attribute.name.prefix.as_deref(),
+            Some("r") | Some("relationships")
+        ) && !output.contains(&attribute.value)
+        {
+            output.push(attribute.value.clone());
+        }
+    }
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_relationship_ids(child, output);
+    }
+}
+
+fn read_related_text_body(root: &XmlElement) -> pptx_compose_core::pptx::text::TextBody {
+    let mut paragraphs = Vec::new();
+    collect_related_paragraphs(root, &mut paragraphs);
+    let plain = paragraphs
+        .iter()
+        .map(|paragraph| {
+            paragraph
+                .runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let normalized = text_hash::normalize_segments(
+        &paragraphs
+            .iter()
+            .enumerate()
+            .flat_map(|(index, paragraph)| {
+                let mut segments = paragraph
+                    .runs
+                    .iter()
+                    .map(|run| text_hash::TextSegment::Run(run.text.as_str()))
+                    .collect::<Vec<_>>();
+                if index + 1 < paragraphs.len() {
+                    segments.push(text_hash::TextSegment::SoftBreak);
+                }
+                segments
+            })
+            .collect::<Vec<_>>(),
+    );
+    pptx_compose_core::pptx::text::TextBody {
+        paragraphs,
+        plain,
+        normalized,
+    }
+}
+
+fn collect_related_paragraphs(
+    element: &XmlElement,
+    paragraphs: &mut Vec<pptx_compose_core::pptx::text::Paragraph>,
+) {
+    if element.name.local_name == "p" {
+        let text_body = read_text_body(&XmlElement {
+            name: element.name.clone(),
+            attributes: Vec::new(),
+            namespaces: element.namespaces.clone(),
+            children: vec![XmlNode::Element(element.clone())],
+        });
+        if text_body.normalized.is_empty() {
+            return;
+        }
+        for mut paragraph in text_body.paragraphs {
+            paragraph.index = u32::try_from(paragraphs.len()).unwrap_or(u32::MAX);
+            paragraphs.push(paragraph);
+        }
+        return;
+    }
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_related_paragraphs(child, paragraphs);
+    }
+}
+
+fn merge_text_bodies(
+    bodies: Vec<pptx_compose_core::pptx::text::TextBody>,
+) -> pptx_compose_core::pptx::text::TextBody {
+    let mut paragraphs = Vec::new();
+    for body in bodies {
+        for mut paragraph in body.paragraphs {
+            paragraph.index = u32::try_from(paragraphs.len()).unwrap_or(u32::MAX);
+            paragraphs.push(paragraph);
+        }
+    }
+    let plain = paragraphs
+        .iter()
+        .map(|paragraph| {
+            paragraph
+                .runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let normalized = text_hash::normalize_segments(
+        &paragraphs
+            .iter()
+            .enumerate()
+            .flat_map(|(index, paragraph)| {
+                let mut segments = paragraph
+                    .runs
+                    .iter()
+                    .map(|run| text_hash::TextSegment::Run(run.text.as_str()))
+                    .collect::<Vec<_>>();
+                if index + 1 < paragraphs.len() {
+                    segments.push(text_hash::TextSegment::SoftBreak);
+                }
+                segments
+            })
+            .collect::<Vec<_>>(),
+    );
+    pptx_compose_core::pptx::text::TextBody {
+        paragraphs,
+        plain,
+        normalized,
     }
 }
 
@@ -1245,9 +1435,16 @@ fn editable(
         ImageEditSupport::Unresolved => (false, None),
     };
     let (bounds_supported, bounds_reason) = bounds_edit_support(core_kind);
-    let text = (has_text && core_kind.supports_replace_text()).then_some(EditableSupport {
-        supported: true,
-        reason: None,
+    let text = has_text.then_some(if core_kind.supports_replace_text() {
+        EditableSupport {
+            supported: true,
+            reason: None,
+        }
+    } else {
+        EditableSupport {
+            supported: false,
+            reason: Some("unsupported_kind".to_owned()),
+        }
     });
     let bounds = (bounds_supported && has_cnvpr).then_some(EditableSupport {
         supported: bounds_supported,

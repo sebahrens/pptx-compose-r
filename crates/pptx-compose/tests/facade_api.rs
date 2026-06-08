@@ -1531,6 +1531,105 @@ fn table_and_diagram_graphic_frames_accept_bounds_and_alt_text_edits() {
 }
 
 #[test]
+fn chart_and_diagram_related_text_is_inspectable_findable_and_run_editable() {
+    let bytes = graphic_frame_deck_with_clean_extras();
+    let view = PresentationDocument::from_bytes(&bytes)
+        .expect("fixture opens")
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide detail builds");
+    let elements = view["slides"][0]["elements"]
+        .as_array()
+        .expect("slide_detail exposes elements");
+    let chart = elements
+        .iter()
+        .find(|element| element["id"] == "slide-1:graphic-7")
+        .expect("chart element projected");
+    let diagram = elements
+        .iter()
+        .find(|element| element["id"] == "slide-1:graphic-9")
+        .expect("diagram element projected");
+
+    assert_eq!(chart["text"]["plain"], "Revenue Chart");
+    assert_eq!(chart["editable"]["text"]["supported"], true);
+    assert_eq!(diagram["text"]["plain"], "SmartArt Node");
+    assert_eq!(diagram["editable"]["text"]["supported"], true);
+
+    let matches = PresentationDocument::from_bytes(&bytes)
+        .expect("fixture opens")
+        .find_text(FindTextRequest {
+            query: "Revenue".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds");
+    assert_eq!(matches.matches.len(), 1);
+    assert_eq!(matches.matches[0].element_id, "slide-1:graphic-7");
+    assert_eq!(matches.matches[0].part, "ppt/slides/slide1.xml");
+
+    let original_entries = from_bytes(&bytes).expect("original entries read");
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-chart-diagram-text",
+        vec![
+            serde_json::json!({
+                "operation_id": "replace-chart-title",
+                "op": "replace_text",
+                "element_id": "slide-1:graphic-7",
+                "mode": "run_scoped",
+                "run": { "paragraph_index": 0, "run_index": 0 },
+                "text": "Revenue Updated",
+                "match": "Revenue Chart"
+            }),
+            serde_json::json!({
+                "operation_id": "replace-diagram-node",
+                "op": "replace_text",
+                "element_id": "slide-1:graphic-9",
+                "mode": "run_scoped",
+                "run": { "paragraph_index": 0, "run_index": 0 },
+                "text": "SmartArt Updated",
+                "match": "SmartArt Node"
+            }),
+        ],
+    );
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("related text patch applies");
+    assert_eq!(report.status, PatchStatus::Applied);
+    assert_eq!(
+        report.changed_parts,
+        vec!["ppt/charts/chart1.xml", "ppt/diagrams/data1.xml"]
+    );
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("edited deck writes");
+    let written_entries = from_bytes(&written).expect("written entries read");
+    assert_exact_part_deltas(
+        "replace related graphic text",
+        &original_entries,
+        &written_entries,
+        &["ppt/charts/chart1.xml", "ppt/diagrams/data1.xml"],
+        &[],
+    );
+    assert!(entry_text(&written_entries, "ppt/charts/chart1.xml").contains("Revenue Updated"));
+    assert!(entry_text(&written_entries, "ppt/diagrams/data1.xml").contains("SmartArt Updated"));
+}
+
+#[test]
 fn replace_table_cell_text_edits_non_merged_cell_preserving_run_formatting() {
     let bytes = graphic_frame_deck_with_clean_extras();
     let original_entries = from_bytes(&bytes).expect("original entries read");
@@ -1636,7 +1735,7 @@ fn replace_text_edits_speaker_notes_via_slide_selector() {
 fn replace_table_cell_text_rejects_merged_or_spanned_cells() {
     let slide =
         graphic_frame_slide().replacen("<a:tc><a:txBody>", r#"<a:tc gridSpan="2"><a:txBody>"#, 1);
-    let bytes = text_deck_with_slide(&slide);
+    let bytes = graphic_frame_deck_with_slide(&slide);
     let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
     let patch = patch_with_operations(
         &bytes,
@@ -2310,6 +2409,28 @@ fn graphic_frame_deck() -> Vec<u8> {
     text_deck_with_slide(&graphic_frame_slide())
 }
 
+fn graphic_frame_deck_with_slide(slide_xml: &str) -> Vec<u8> {
+    zip_entries(
+        [
+            ("[Content_Types].xml", content_types().as_bytes()),
+            ("_rels/.rels", root_rels().as_bytes()),
+            ("ppt/presentation.xml", presentation().as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", slide_xml.as_bytes()),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                graphic_frame_slide_rels().as_bytes(),
+            ),
+            ("ppt/charts/chart1.xml", chart_part().as_bytes()),
+            ("ppt/diagrams/data1.xml", diagram_data_part().as_bytes()),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
 fn graphic_frame_deck_with_clean_extras() -> Vec<u8> {
     zip_entries(
         [
@@ -2324,6 +2445,12 @@ fn graphic_frame_deck_with_clean_extras() -> Vec<u8> {
                 presentation_rels().as_bytes(),
             ),
             ("ppt/slides/slide1.xml", graphic_frame_slide().as_bytes()),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                graphic_frame_slide_rels().as_bytes(),
+            ),
+            ("ppt/charts/chart1.xml", chart_part().as_bytes()),
+            ("ppt/diagrams/data1.xml", diagram_data_part().as_bytes()),
             ("ppt/media/image1.png", &tiny_png()),
             ("custom/unknown.bin", b"unknown payload"),
         ],
@@ -2628,7 +2755,7 @@ fn image_slide() -> String {
 
 fn graphic_frame_slide() -> String {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <p:cSld>
     <p:spTree>
       <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
@@ -2636,7 +2763,7 @@ fn graphic_frame_slide() -> String {
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="7" name="Chart Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
         <p:xfrm><a:off x="0" y="457200"/><a:ext cx="1371600" cy="914400"/></p:xfrm>
-        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"/></a:graphic>
+        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="rIdChart"/></a:graphicData></a:graphic>
       </p:graphicFrame>
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="8" name="Table Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
@@ -2646,7 +2773,7 @@ fn graphic_frame_slide() -> String {
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="9" name="Diagram Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
         <p:xfrm><a:off x="2743200" y="457200"/><a:ext cx="1371600" cy="914400"/></p:xfrm>
-        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"/></a:graphic>
+        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds r:dm="rIdDiagramData"/></a:graphicData></a:graphic>
       </p:graphicFrame>
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="10" name="OLE Frame"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
@@ -2661,6 +2788,35 @@ fn graphic_frame_slide() -> String {
     </p:spTree>
   </p:cSld>
 </p:sld>"#
+        .to_owned()
+}
+
+fn graphic_frame_slide_rels() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdChart" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>
+  <Relationship Id="rIdDiagramData" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="../diagrams/data1.xml"/>
+</Relationships>"#
+        .to_owned()
+}
+
+fn chart_part() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <c:chart>
+    <c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Revenue Chart</a:t></a:r></a:p></c:rich></c:tx></c:title>
+  </c:chart>
+</c:chartSpace>"#
+        .to_owned()
+}
+
+fn diagram_data_part() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <dgm:ptLst>
+    <dgm:pt modelId="1"><dgm:t><a:p><a:r><a:t>SmartArt Node</a:t></a:r></a:p></dgm:t></dgm:pt>
+  </dgm:ptLst>
+</dgm:dataModel>"#
         .to_owned()
 }
 

@@ -231,7 +231,7 @@ fn resolve_element(
             if element_id != id {
                 continue;
             }
-            let text_hash = element_text_hash(element);
+            let text_hash = element_text_hash(model, &slide.part_name, element, kind)?;
             let fingerprint = fingerprint(&FingerprintInput {
                 kind,
                 part: slide.part_name.clone(),
@@ -438,10 +438,103 @@ fn element_at_path<'a>(sp_tree: &'a XmlElement, path: &[u32]) -> Option<&'a XmlE
     Some(current)
 }
 
-fn element_text_hash(element: &XmlElement) -> Option<String> {
-    let tx_body = first_descendant(element, "txBody")?;
-    let text_body = read_text_body(tx_body);
-    Some(text_hash::text_hash(&text_body.normalized))
+fn element_text_hash(
+    model: &PresentationDocument,
+    slide_part: &PartName,
+    element: &XmlElement,
+    kind: ElementKind,
+) -> Result<Option<String>> {
+    if let Some(tx_body) = first_descendant(element, "txBody") {
+        let text_body = read_text_body(tx_body);
+        return Ok(Some(text_hash::text_hash(&text_body.normalized)));
+    }
+    if !matches!(
+        kind,
+        ElementKind::GraphicFrameChart | ElementKind::GraphicFrameDiagram
+    ) {
+        return Ok(None);
+    }
+
+    let Some(slide_rels) = model.package().relationships().set_for(slide_part) else {
+        return Ok(None);
+    };
+    let mut rel_ids = Vec::new();
+    collect_relationship_ids(element, &mut rel_ids);
+    let mut normalized_parts = Vec::new();
+    for rel_id in rel_ids {
+        let Some(relationship) = slide_rels.get(&rel_id) else {
+            continue;
+        };
+        if relationship.target_mode != TargetMode::Internal {
+            continue;
+        }
+        let Some(part_name) = &relationship.resolved_target else {
+            continue;
+        };
+        let Some(part) = model.package().parts().get(part_name) else {
+            continue;
+        };
+        let document = parse_document(part.bytes()).map_err(|source| {
+            Error::with_source(
+                source.code(),
+                format!("Could not parse related text part {part_name}."),
+                source,
+            )
+        })?;
+        let Some(root) = document.root_element() else {
+            continue;
+        };
+        let normalized = related_text_normalized(root);
+        if !normalized.is_empty() {
+            normalized_parts.push(normalized);
+        }
+    }
+
+    if normalized_parts.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(text_hash::text_hash(&normalized_parts.join("\n"))))
+    }
+}
+
+fn collect_relationship_ids(element: &XmlElement, output: &mut Vec<String>) {
+    for attribute in &element.attributes {
+        if matches!(
+            attribute.name.prefix.as_deref(),
+            Some("r") | Some("relationships")
+        ) && !output.contains(&attribute.value)
+        {
+            output.push(attribute.value.clone());
+        }
+    }
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_relationship_ids(child, output);
+    }
+}
+
+fn related_text_normalized(root: &XmlElement) -> String {
+    let mut paragraphs = Vec::new();
+    collect_related_paragraphs(root, &mut paragraphs);
+    paragraphs.join("\n")
+}
+
+fn collect_related_paragraphs(element: &XmlElement, output: &mut Vec<String>) {
+    if element.name.local_name == "p" {
+        let tx_body = XmlElement {
+            name: element.name.clone(),
+            attributes: Vec::new(),
+            namespaces: element.namespaces.clone(),
+            children: vec![XmlNode::Element(element.clone())],
+        };
+        let body = read_text_body(&tx_body);
+        if !body.normalized.is_empty() {
+            output.push(body.normalized);
+        }
+        return;
+    }
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_related_paragraphs(child, output);
+    }
 }
 
 fn first_descendant<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a XmlElement> {

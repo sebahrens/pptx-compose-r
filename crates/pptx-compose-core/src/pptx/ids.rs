@@ -53,7 +53,10 @@ impl ElementKind {
 
     #[must_use]
     pub const fn supports_replace_text(self) -> bool {
-        matches!(self, Self::TextBox | Self::Shape)
+        matches!(
+            self,
+            Self::TextBox | Self::Shape | Self::GraphicFrameChart | Self::GraphicFrameDiagram
+        )
     }
 
     #[must_use]
