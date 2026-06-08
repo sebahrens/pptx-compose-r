@@ -96,6 +96,8 @@ pub struct ElementView {
     pub table: Option<TableView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_coverage_warnings: Vec<TextCoverageWarning>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -315,6 +317,18 @@ pub struct ImageView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct TextCoverageWarning {
+    pub code: String,
+    pub slide_id: String,
+    pub element_id: String,
+    pub kind: ElementKind,
+    pub part: String,
+    pub reason: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FindTextResult {
     pub schema: String,
     pub version: u32,
@@ -325,6 +339,8 @@ pub struct FindTextResult {
     pub view: ViewMeta,
     pub omitted_count: u32,
     pub matches: Vec<TextMatch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<TextCoverageWarning>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -708,6 +724,7 @@ pub mod binary {
                     text: None,
                     table: None,
                     image: Some(reference_image()),
+                    text_coverage_warnings: Vec::new(),
                 }],
                 elements_page: None,
             }],

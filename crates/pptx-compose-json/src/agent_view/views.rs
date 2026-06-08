@@ -44,8 +44,9 @@ use super::{
     EditableSupport, ElementKind, ElementPageView, ElementSelector, ElementView, FindTextResult,
     FindTextRunSelector, FindTextScope, ImageView, IntrinsicSizePx, Paragraph,
     ParagraphDefaultsView, PlaceholderView, PresentationView, Run, SelectorGuards, SlideView,
-    StyleConfidence, StyleSummary, TableCell, TableCellRef, TableRow, TableView, TextLayoutView,
-    TextMatch, TextSpan, TextView, TruncationMarker, XmlLocation,
+    StyleConfidence, StyleSummary, TableCell, TableCellRef, TableRow, TableView,
+    TextCoverageWarning, TextLayoutView, TextMatch, TextSpan, TextView, TruncationMarker,
+    XmlLocation,
     pagination::{CursorScope, ViewMeta, bounded_limit, cursor_offset, paginate},
 };
 use crate::{
@@ -328,6 +329,7 @@ pub fn find_text_with_revision(
     };
     let start = cursor_offset(req.cursor.as_deref(), scope)?;
     let matches = collect_text_matches(&context, &req.query, &req.scope, start, limit)?;
+    let warnings = collect_text_coverage_warnings(&context, &req.scope)?;
     let (page, meta, omitted_count) = match_page(matches, limit, start, scope)?;
 
     Ok(FindTextResult {
@@ -340,6 +342,7 @@ pub fn find_text_with_revision(
         view: meta,
         omitted_count,
         matches: page,
+        warnings,
     })
 }
 
@@ -472,6 +475,40 @@ fn collect_text_matches(
     }
 
     Ok(matches)
+}
+
+fn collect_text_coverage_warnings(
+    context: &ViewContext,
+    scope: &FindTextScope,
+) -> Result<Vec<TextCoverageWarning>, JsonError> {
+    let mut warnings = Vec::new();
+    for slide_ref in context.pkg.slides() {
+        let mut media = BTreeMap::<String, ImageView>::new();
+        let slide = project_slide(context.pkg, slide_ref, &mut media)?;
+        if let FindTextScope::Slide { slide_id } = scope
+            && slide.detail.id != *slide_id
+        {
+            continue;
+        }
+        warnings.extend(
+            slide
+                .detail
+                .elements
+                .iter()
+                .flat_map(|element| element.text_coverage_warnings.iter().cloned()),
+        );
+    }
+
+    if let FindTextScope::Slide { slide_id } = scope
+        && context.slide_ref(slide_id).is_none()
+    {
+        return Err(JsonError::NotFound {
+            kind: "slide",
+            id: slide_id.clone(),
+        });
+    }
+
+    Ok(warnings)
 }
 
 fn collect_element_text_matches(
@@ -1014,11 +1051,23 @@ fn project_element(
         None
     };
 
+    let id = agent_element_id(slide_id, core_kind, shape.cnvpr_id, &path);
+    let kind = json_element_kind(core_kind);
+    let part = trim_part(slide_part.as_str());
+    let text_coverage_warnings = text_coverage_warnings_for_element(
+        slide_id,
+        &id,
+        kind,
+        &part,
+        core_kind,
+        shape.bounds.as_ref(),
+    );
+
     Ok(ElementView {
-        id: agent_element_id(slide_id, core_kind, shape.cnvpr_id, &path),
-        kind: json_element_kind(core_kind),
+        id,
+        kind,
         slide_id: slide_id.to_owned(),
-        part: trim_part(slide_part.as_str()),
+        part: part.clone(),
         xml_location: xml_location(element, &shape, &path),
         z_order: path.sp_tree_path.last().copied().unwrap_or(0),
         bounds: shape.bounds.as_ref().map_or(
@@ -1055,7 +1104,33 @@ fn project_element(
         text,
         table,
         image,
+        text_coverage_warnings,
     })
+}
+
+fn text_coverage_warnings_for_element(
+    slide_id: &str,
+    element_id: &str,
+    kind: ElementKind,
+    part: &str,
+    core_kind: CoreElementKind,
+    bounds: Option<&pptx_compose_core::pptx::shape::Bounds>,
+) -> Vec<TextCoverageWarning> {
+    if core_kind != CoreElementKind::Picture
+        || !bounds.is_some_and(|bounds| bounds.cx > 0 && bounds.cy > 0)
+    {
+        return Vec::new();
+    }
+
+    vec![TextCoverageWarning {
+        code: "possible_image_text_uneditable".to_owned(),
+        slide_id: slide_id.to_owned(),
+        element_id: element_id.to_owned(),
+        kind,
+        part: part.to_owned(),
+        reason: "image_text_not_extractable".to_owned(),
+        detail: "This picture may contain visible text baked into image pixels or vector artwork. V1 does not OCR or edit that text, so find-text only searches accessibility metadata and XML text, not the image content.".to_owned(),
+    }]
 }
 
 fn project_placeholder(element: &XmlElement, layout_part: Option<&str>) -> Option<PlaceholderView> {
@@ -2292,6 +2367,34 @@ fn editable_maps_are_kind_appropriate_for_text_and_picture_elements() {
             "image": { "supported": true }
         })
     );
+    assert_eq!(
+        image["text_coverage_warnings"][0]["code"],
+        "possible_image_text_uneditable"
+    );
+    assert_eq!(
+        image["text_coverage_warnings"][0]["reason"],
+        "image_text_not_extractable"
+    );
+
+    let matches = find_text(
+        &pkg,
+        FindTextRequest {
+            query: "Quarterly".to_owned(),
+            scope: FindTextScope::Slide {
+                slide_id: "slide-1".to_owned(),
+            },
+            cursor: None,
+            limit: None,
+        },
+    )
+    .expect("find-text searches scoped slide");
+    assert_eq!(matches.matches.len(), 1);
+    assert_eq!(matches.warnings.len(), 1);
+    assert_eq!(
+        matches.warnings[0].element_id,
+        image["id"].as_str().expect("image id is a string")
+    );
+    assert_eq!(matches.warnings[0].code, "possible_image_text_uneditable");
 }
 
 #[cfg(test)]
@@ -2838,6 +2941,7 @@ fn test_element(index: u32) -> ElementView {
         text: None,
         table: None,
         image: None,
+        text_coverage_warnings: Vec::new(),
     }
 }
 
