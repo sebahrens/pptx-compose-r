@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-mod evals {
+mod eval_transcripts {
     use std::{
         collections::BTreeSet,
         fs,
@@ -57,7 +57,7 @@ mod evals {
     }
 
     #[test]
-    fn cli_corpus_contains_required_cases() {
+    fn cli_eval_corpus_contains_required_cases() {
         let repo_root = repo_root();
         for case_name in CLI_CASES {
             let case_dir = repo_root.join("evals").join("cli").join(case_name);
@@ -87,6 +87,16 @@ mod evals {
         for case_name in CLI_CASES {
             let case_dir = repo_root.join("evals").join("cli").join(case_name);
             let transcript = read_transcript(&case_dir.join("expected.transcript.json"), case_name);
+            assert_eq!(
+                transcript.schema, "pptx-compose.cli_eval_transcript.v1",
+                "{case_name}: transcript schema"
+            );
+            assert_eq!(transcript.version, 1, "{case_name}: transcript version");
+            assert_eq!(
+                transcript.case, case_name,
+                "{case_name}: transcript case name"
+            );
+            assert_documented_command(case_name, &transcript.command);
             if !case_requires_patch(case_name) {
                 continue;
             }
@@ -141,6 +151,9 @@ mod evals {
 
     #[derive(Debug, Deserialize)]
     struct Transcript {
+        schema: String,
+        version: u32,
+        case: String,
         command: Vec<String>,
         expected_exit: i32,
         stdout_json: Option<Value>,
@@ -325,6 +338,23 @@ mod evals {
 
     fn case_requires_patch(case_name: &str) -> bool {
         !matches!(case_name, "find-text-selector")
+    }
+
+    fn assert_documented_command(case_name: &str, command: &[String]) {
+        assert!(
+            command.first().is_some_and(|arg| arg == "--json-errors"),
+            "{case_name}: eval commands must opt into JSON errors"
+        );
+        let subcommand = command
+            .get(1)
+            .unwrap_or_else(|| panic!("{case_name}: command has a subcommand"));
+        assert!(
+            matches!(
+                subcommand.as_str(),
+                "inspect" | "find-text" | "apply" | "validate"
+            ),
+            "{case_name}: eval uses undocumented command `{subcommand}`"
+        );
     }
 
     fn assert_optional_json_file(
