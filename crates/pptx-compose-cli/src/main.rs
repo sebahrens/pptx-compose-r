@@ -169,7 +169,11 @@ fn find_text(
             limit: args.limit,
         })
         .map_err(CliError::from_error)?;
-    sink.emit_json(&result, output::OutputDest::from(args.output))
+    sink.emit_json_overwrite(
+        &result,
+        output::OutputDest::from(args.output),
+        args.overwrite,
+    )
 }
 
 fn inspect(

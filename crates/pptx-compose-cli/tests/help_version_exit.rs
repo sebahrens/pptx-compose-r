@@ -104,3 +104,20 @@ fn spec_071_documents_apply_flags() {
         assert!(spec.contains(flag), "spec 071 must document {flag}");
     }
 }
+
+#[test]
+fn spec_071_documents_find_text_flags() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
+        .args(["find-text", "--help"])
+        .output()
+        .expect("find-text help runs");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).expect("help is UTF-8");
+    let spec = include_str!("../../../specs/071-cli-agent-contract.md");
+
+    for flag in ["--slides", "--cursor", "--limit", "--output", "--overwrite"] {
+        assert!(stdout.contains(flag), "find-text help must expose {flag}");
+        assert!(spec.contains(flag), "spec 071 must document {flag}");
+    }
+}

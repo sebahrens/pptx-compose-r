@@ -97,6 +97,8 @@ pub struct FindTextArgs {
     pub limit: Option<u32>,
     #[arg(long)]
     pub output: Option<PathBuf>,
+    #[arg(long)]
+    pub overwrite: bool,
 }
 
 #[derive(Args, Debug, Eq, PartialEq)]
@@ -263,6 +265,7 @@ fn parses_find_text_slides_scope() {
         "5",
         "--output",
         "matches.json",
+        "--overwrite",
     ])
     .expect("find-text arguments should parse");
 
@@ -276,6 +279,7 @@ fn parses_find_text_slides_scope() {
     assert_eq!(args.cursor, None);
     assert_eq!(args.limit, Some(5));
     assert_eq!(args.output, Some(PathBuf::from("matches.json")));
+    assert!(args.overwrite);
 }
 
 #[cfg(test)]

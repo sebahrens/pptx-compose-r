@@ -130,6 +130,7 @@ Arguments and flags:
 | `--cursor CURSOR` | Continue a previous `find-text` page. Cursors are opaque and only valid for the same input bytes, query, scope, and limit. |
 | `--limit N` | Maximum matches to return. The implementation may clamp or reject values above the global page limit. |
 | `--output PATH` | Write the result JSON to `PATH`, or `-` for stdout. Omitted means stdout. |
+| `--overwrite` | Permit replacing an existing `--output` path. |
 
 Result schema:
 

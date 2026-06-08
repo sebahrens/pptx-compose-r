@@ -297,6 +297,45 @@ fn inspect_output_refuses_existing_file_without_overwrite() {
 }
 
 #[test]
+fn find_text_output_requires_overwrite_for_existing_file() {
+    let root = unique_dir();
+    let fixture = repo_root().join("fixtures/legacy/sample.pptx");
+    let output_path = root.join("matches.json");
+    fs::write(&output_path, b"original").expect("existing output writes");
+
+    let refused = run_cli_raw_owned(vec![
+        "find-text".to_owned(),
+        fixture_str(&fixture).to_owned(),
+        "Slide".to_owned(),
+        "--output".to_owned(),
+        output_path.to_string_lossy().into_owned(),
+    ]);
+
+    assert!(!refused.status.success());
+    assert_eq!(
+        fs::read(&output_path).expect("existing output reads"),
+        b"original"
+    );
+
+    let overwritten = run_cli_raw_owned(vec![
+        "find-text".to_owned(),
+        fixture_str(&fixture).to_owned(),
+        "Slide".to_owned(),
+        "--output".to_owned(),
+        output_path.to_string_lossy().into_owned(),
+        "--overwrite".to_owned(),
+    ]);
+
+    assert!(overwritten.status.success());
+    let matches: serde_json::Value =
+        serde_json::from_slice(&fs::read(&output_path).expect("overwritten output reads"))
+            .expect("overwritten output parses as JSON");
+    assert_eq!(matches["schema"], "pptx-compose.find_text.v1");
+
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
 fn schema_prints_published_schema() {
     let output = run_cli(["schema", "media-manifest-v1"]);
     let schema = parse_stdout(&output);
