@@ -41,6 +41,7 @@ import argparse
 import importlib.util
 import json
 import shutil
+import subprocess
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -205,6 +206,51 @@ def apply_patch(project_dir: Path, cli: Path, fixture_path: Path, patch_path: Pa
     for ref, path in media.items():
         command.extend(["--media", f"{ref}={path}"])
     return rt.run_command(project_dir, command, log_path)
+
+
+def json_error_codes(result: subprocess.CompletedProcess[str]) -> list[str]:
+    """Stable error codes emitted by ``--json-errors``.
+
+    The CLI contract says failed automation commands emit exactly one JSON
+    envelope to stderr. Keep this tolerant for tests and older logs: scan
+    stderr first, then stdout, and ignore non-JSON lines.
+    """
+    codes: list[str] = []
+    for stream in (result.stderr, result.stdout):
+        for line in stream.splitlines():
+            try:
+                envelope = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            code = ((envelope.get("error") or {}).get("code")
+                    if isinstance(envelope, dict) else None)
+            if isinstance(code, str):
+                codes.append(code)
+    return codes
+
+
+def check_expected_error_codes(result: subprocess.CompletedProcess[str],
+                               expected: tuple[str, ...]) -> "rt.ComparisonResult":
+    codes = json_error_codes(result)
+    details = [f"apply correctly refused with JSON error code(s): {', '.join(codes)}"]
+    if not codes:
+        return rt.ComparisonResult("fail", ["apply was refused but no JSON error code was emitted"])
+    if not expected:
+        return rt.ComparisonResult("pass", details)
+
+    expected_set = set(expected)
+    actual_set = set(codes)
+    missing = sorted(expected_set - actual_set)
+    unexpected = sorted(actual_set - expected_set)
+    if missing or unexpected:
+        messages = []
+        if missing:
+            messages.append(f"missing expected error code(s): {missing}")
+        if unexpected:
+            messages.append(f"unexpected error code(s): {unexpected}")
+        messages.append(f"actual error code(s): {codes}")
+        return rt.ComparisonResult("fail", messages)
+    return rt.ComparisonResult("pass", details)
 
 
 # --------------------------------------------------------------------------- #
@@ -611,11 +657,11 @@ def run_scenario(project_dir: Path, work_dir: Path, log_dir: Path, cli: Path,
                 output_pptx=str(output_path), patch_path=str(patch_path),
                 report_path=str(report_path), log_path=str(log_path),
             )
-        details = ["apply correctly refused (non-zero exit, no output written)"]
-        ok = rt.ComparisonResult("pass", details)
+        checked = check_expected_error_codes(result, scenario.expected_error_codes)
+        status = "pass" if checked.status == "pass" else "fail"
         return EditReport(
-            scenario=scenario.name, fixture=scenario.fixture, status="pass",
-            apply=ok, structure=rt.ComparisonResult("skipped", ["negative scenario"]),
+            scenario=scenario.name, fixture=scenario.fixture, status=status,
+            apply=checked, structure=rt.ComparisonResult("skipped", ["negative scenario"]),
             validation=rt.ComparisonResult("skipped", ["negative scenario"]),
             visual=rt.ComparisonResult("skipped", ["negative scenario"]),
             output_pptx=str(output_path), patch_path=str(patch_path),
@@ -689,6 +735,64 @@ def form_opinion(reports: list[EditReport]) -> Opinion:
     return Opinion("pass", [note])
 
 
+def issue_description(report: EditReport) -> str:
+    details = []
+    for label, result in (
+        ("Apply", report.apply),
+        ("Structure", report.structure),
+        ("Validation", report.validation),
+        ("Visual", report.visual),
+    ):
+        rendered = "\n".join(f"- {item}" for item in result.details) or "- no details"
+        details.append(f"{label}: {result.status}\n{rendered}")
+
+    return (
+        "Why this exists:\n"
+        f"The loop edit E2E check detected a V1 edit regression for scenario `{report.scenario}` "
+        f"on `{report.fixture}`.\n\n"
+        "What failed:\n"
+        f"{chr(10).join(details)}\n\n"
+        "Artifacts:\n"
+        f"- Output PPTX: `{report.output_pptx}`\n"
+        f"- Patch: `{report.patch_path}`\n"
+        f"- Patch report: `{report.report_path}`\n"
+        f"- Log: `{report.log_path}`\n\n"
+        "What needs to be done:\n"
+        "Inspect the patch, report, and log; identify whether target discovery, apply, package "
+        "writing, validation, negative error handling, or rendering exposed the defect; then fix "
+        "the smallest scoped code path."
+    )
+
+
+def file_bead(project_dir: Path, report: EditReport) -> None:
+    if not shutil.which("bd"):
+        print(f"  ⚠ bd not found; could not file edit defect for {report.scenario}")
+        return
+    title = f"Edit E2E detected issue in {report.scenario} ({report.fixture})"
+    if rt.open_issue_exists(project_dir, title):
+        print(f"  Existing edit defect bead found for {report.scenario}; not duplicating")
+        return
+    command = [
+        "bd",
+        "create",
+        "--title",
+        title,
+        "--type",
+        "bug",
+        "--priority",
+        "1",
+        "--labels",
+        f"testing,tier:task,{EDIT_DEFECT_LABEL}",
+        "--description",
+        issue_description(report),
+    ]
+    result = subprocess.run(command, cwd=project_dir, text=True, capture_output=True, check=False)
+    if result.returncode == 0:
+        print(result.stdout.strip())
+    else:
+        print(f"  ⚠ could not file edit defect bead: {result.stderr.strip()}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     project_dir = args.project_dir.resolve()
@@ -727,6 +831,11 @@ def main(argv: list[str] | None = None) -> int:
               f"visual={r.visual.status}")
     print(f"Report: {summary_path}")
 
+    if args.file_beads and opinion.status == "fail":
+        for report in reports:
+            if report.status == "fail":
+                file_bead(project_dir, report)
+
     return 1 if opinion.status == "fail" else 0
 
 
@@ -736,6 +845,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--scenario", action="append", default=[],
                         help="Run only the named scenario(s). May be repeated.")
+    parser.add_argument("--file-beads", action="store_true")
     parser.add_argument("--visual-threshold", type=float, default=8.0)
     return parser.parse_args(argv)
 

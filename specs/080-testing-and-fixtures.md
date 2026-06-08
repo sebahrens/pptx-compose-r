@@ -96,9 +96,9 @@ LibreOffice + `pdftoppm` + Pillow are available, writes
 `defect:roundtrip-e2e` Beads when defects are detected.
 
 `ralph-scripts/pptx_edit_e2e.py` exercises representative V1 edit operations on
-real fixtures. It currently verifies targeted changes, unrelated-part
-preservation, validation, and render sanity; defect filing and negative error-code
-assertions are tracked separately in `pptx-compose-roxl`.
+real fixtures. It verifies targeted changes, unrelated-part preservation,
+validation, render sanity, negative-scenario JSON error codes, and optionally
+files deduplicated `defect:edit-e2e` Beads when defects are detected.
 
 `ralph-scripts/translation_fidelity.py` analyzes localized fixture outputs for
 remaining untranslated text classes such as chart/SmartArt/table content and

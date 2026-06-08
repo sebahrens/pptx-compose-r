@@ -20,9 +20,11 @@ from __future__ import annotations
 import importlib.util
 import io
 import pathlib
+import subprocess
 import sys
 import unittest
 import zipfile
+from unittest import mock
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -321,6 +323,193 @@ class ValidationAndOpinionTest(unittest.TestCase):
         opinion = self.m.form_opinion([self._report("fail", visual=bad)])
         self.assertEqual(opinion.status, "fail")
         self.assertIn("visual failed", " ".join(opinion.reasons))
+
+
+class NegativeAndDefectFilingTest(unittest.TestCase):
+    def setUp(self):
+        self.m = load_edit_module()
+
+    def test_json_error_codes_reads_json_errors_stderr_envelope(self):
+        result = subprocess.CompletedProcess(
+            args=["pptx-compose"],
+            returncode=22,
+            stdout="",
+            stderr='{"schema":"pptx-compose.error.v1","error":{"code":"selector_guard_failed"}}\n',
+        )
+
+        self.assertEqual(self.m.json_error_codes(result), ["selector_guard_failed"])
+
+    def test_expected_error_code_assertion_fails_on_missing_or_unexpected_code(self):
+        result = subprocess.CompletedProcess(
+            args=["pptx-compose"],
+            returncode=24,
+            stdout="",
+            stderr='{"schema":"pptx-compose.error.v1","error":{"code":"unsupported_edit"}}\n',
+        )
+
+        ok = self.m.check_expected_error_codes(result, ("unsupported_edit",))
+        bad = self.m.check_expected_error_codes(result, ("selector_guard_failed",))
+
+        self.assertEqual(ok.status, "pass")
+        self.assertEqual(bad.status, "fail")
+        self.assertIn("missing expected error code", "\n".join(bad.details))
+        self.assertIn("unexpected error code", "\n".join(bad.details))
+
+    def test_negative_scenario_requires_expected_json_error_code(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            fixture = tmp / "fixture.pptx"
+            fixture.write_bytes(b"not used because helpers are mocked")
+            cli = tmp / "pptx-compose"
+            scenario = self.m.EditScenario(
+                "stale_guard",
+                str(fixture),
+                1,
+                lambda view, ctx: self.m.ScenarioPlan(operations=[{"op": "replace_text"}]),
+                expect_apply_failure=True,
+                expected_error_codes=("selector_guard_failed",),
+            )
+            with (
+                mock.patch.object(self.m.rt, "resolve_fixture", return_value=fixture),
+                mock.patch.object(self.m, "inspect_slide", return_value=sample_view()),
+                mock.patch.object(self.m, "apply_patch") as apply_patch,
+            ):
+                apply_patch.return_value = subprocess.CompletedProcess(
+                    args=["pptx-compose"],
+                    returncode=22,
+                    stdout="",
+                    stderr='{"schema":"pptx-compose.error.v1","error":{"code":"selector_guard_failed"}}\n',
+                )
+                report = self.m.run_scenario(
+                    REPO_ROOT,
+                    tmp,
+                    tmp,
+                    cli,
+                    scenario,
+                    {},
+                    visual_threshold=8.0,
+                )
+
+        self.assertEqual(report.status, "pass")
+        self.assertEqual(report.apply.status, "pass")
+        self.assertIn("selector_guard_failed", "\n".join(report.apply.details))
+
+    def test_negative_scenario_fails_when_error_code_does_not_match(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            fixture = tmp / "fixture.pptx"
+            fixture.write_bytes(b"not used because helpers are mocked")
+            cli = tmp / "pptx-compose"
+            scenario = self.m.EditScenario(
+                "stale_guard",
+                str(fixture),
+                1,
+                lambda view, ctx: self.m.ScenarioPlan(operations=[{"op": "replace_text"}]),
+                expect_apply_failure=True,
+                expected_error_codes=("selector_guard_failed",),
+            )
+            with (
+                mock.patch.object(self.m.rt, "resolve_fixture", return_value=fixture),
+                mock.patch.object(self.m, "inspect_slide", return_value=sample_view()),
+                mock.patch.object(self.m, "apply_patch") as apply_patch,
+            ):
+                apply_patch.return_value = subprocess.CompletedProcess(
+                    args=["pptx-compose"],
+                    returncode=24,
+                    stdout="",
+                    stderr='{"schema":"pptx-compose.error.v1","error":{"code":"unsupported_edit"}}\n',
+                )
+                report = self.m.run_scenario(
+                    REPO_ROOT,
+                    tmp,
+                    tmp,
+                    cli,
+                    scenario,
+                    {},
+                    visual_threshold=8.0,
+                )
+
+        self.assertEqual(report.status, "fail")
+        self.assertEqual(report.apply.status, "fail")
+        self.assertIn("missing expected error code", "\n".join(report.apply.details))
+
+    def test_issue_description_contains_edit_artifacts_and_failures(self):
+        report = self.m.EditReport(
+            scenario="replace_text",
+            fixture="fixtures/example.pptx",
+            status="fail",
+            apply=self.m.rt.ComparisonResult("fail", ["apply failed"]),
+            structure=self.m.rt.ComparisonResult("skipped", ["apply failed"]),
+            validation=self.m.rt.ComparisonResult("skipped", []),
+            visual=self.m.rt.ComparisonResult("skipped", []),
+            output_pptx="/tmp/out.pptx",
+            patch_path="/tmp/patch.json",
+            report_path="/tmp/report.json",
+            log_path="/tmp/edit.log",
+        )
+
+        description = self.m.issue_description(report)
+
+        self.assertIn("replace_text", description)
+        self.assertIn("fixtures/example.pptx", description)
+        self.assertIn("apply failed", description)
+        self.assertIn("/tmp/edit.log", description)
+
+    def test_file_bead_creates_deduped_edit_defect(self):
+        report = self.m.EditReport(
+            scenario="replace_text",
+            fixture="fixtures/example.pptx",
+            status="fail",
+            apply=self.m.rt.ComparisonResult("fail", ["apply failed"]),
+            structure=self.m.rt.ComparisonResult("skipped", []),
+            validation=self.m.rt.ComparisonResult("skipped", []),
+            visual=self.m.rt.ComparisonResult("skipped", []),
+            output_pptx="/tmp/out.pptx",
+            patch_path="/tmp/patch.json",
+            report_path="/tmp/report.json",
+            log_path="/tmp/edit.log",
+        )
+        completed = subprocess.CompletedProcess(args=["bd"], returncode=0, stdout="created\n", stderr="")
+
+        with (
+            mock.patch.object(self.m.shutil, "which", return_value="/usr/bin/bd"),
+            mock.patch.object(self.m.rt, "open_issue_exists", return_value=False),
+            mock.patch.object(self.m.subprocess, "run", return_value=completed) as run,
+        ):
+            self.m.file_bead(REPO_ROOT, report)
+
+        command = run.call_args.args[0]
+        self.assertIn("bd", command)
+        self.assertIn("defect:edit-e2e", " ".join(command))
+        self.assertIn("--description", command)
+
+    def test_file_bead_skips_existing_open_defect(self):
+        report = self.m.EditReport(
+            scenario="replace_text",
+            fixture="fixtures/example.pptx",
+            status="fail",
+            apply=self.m.rt.ComparisonResult("fail", ["apply failed"]),
+            structure=self.m.rt.ComparisonResult("skipped", []),
+            validation=self.m.rt.ComparisonResult("skipped", []),
+            visual=self.m.rt.ComparisonResult("skipped", []),
+            output_pptx="/tmp/out.pptx",
+            patch_path="/tmp/patch.json",
+            report_path="/tmp/report.json",
+            log_path="/tmp/edit.log",
+        )
+
+        with (
+            mock.patch.object(self.m.shutil, "which", return_value="/usr/bin/bd"),
+            mock.patch.object(self.m.rt, "open_issue_exists", return_value=True),
+            mock.patch.object(self.m.subprocess, "run") as run,
+        ):
+            self.m.file_bead(REPO_ROOT, report)
+
+        run.assert_not_called()
 
 
 class LoopWiringTest(unittest.TestCase):
