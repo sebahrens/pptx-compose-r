@@ -163,6 +163,7 @@ fn assert_patch_failure(
     expected: ErrorCode,
 ) -> Result<()> {
     let mut document = PresentationDocument::from_bytes(deck)?;
+    let before_revision = document.revision();
     let before = document.write_vec_with_options(WriteOptions {
         mode: WriteMode::Preserve,
         ..WriteOptions::default()
@@ -195,6 +196,11 @@ fn assert_patch_failure(
         ..WriteOptions::default()
     })?;
     assert_eq!(after, before, "failed patch must not mutate package bytes");
+    assert_eq!(
+        document.revision(),
+        before_revision,
+        "failed patch must not advance the document revision"
+    );
     Ok(())
 }
 
