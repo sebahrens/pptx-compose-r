@@ -29,6 +29,7 @@ use pptx_compose::{
     edit::patch::Patch,
     json::agent_view::{
         FindTextResult, FindTextScope,
+        pagination::MAX_PAGE_LIMIT,
         views::{FindTextRequest, ViewMode},
     },
 };
@@ -343,7 +344,7 @@ pub struct ListSlidesInput {
     pub cursor: Option<String>,
     #[schemars(
         description = "Maximum number of slide summaries to return.",
-        range(min = 1, max = 100)
+        range(min = 1, max = MAX_PAGE_LIMIT)
     )]
     pub limit: Option<u32>,
 }
@@ -385,7 +386,7 @@ pub struct ListElementsInput {
     pub cursor: Option<String>,
     #[schemars(
         description = "Maximum number of elements to return.",
-        range(min = 1, max = 500)
+        range(min = 1, max = MAX_PAGE_LIMIT)
     )]
     pub limit: Option<u32>,
 }
@@ -427,7 +428,7 @@ pub struct FindTextInput {
     pub cursor: Option<String>,
     #[schemars(
         description = "Maximum number of matches to return.",
-        range(min = 1, max = 500)
+        range(min = 1, max = MAX_PAGE_LIMIT)
     )]
     pub limit: Option<u32>,
 }
@@ -1658,6 +1659,18 @@ mod tests {
     }
 
     #[test]
+    fn paginated_tool_input_schemas_match_runtime_page_limit() {
+        for tool_name in ["pptx_list_slides", "pptx_list_elements", "pptx_find_text"] {
+            let maximum = limit_schema_maximum(tool_name);
+            assert_eq!(
+                maximum,
+                Some(u64::from(MAX_PAGE_LIMIT)),
+                "tool {tool_name} limit schema maximum must match runtime page limit"
+            );
+        }
+    }
+
+    #[test]
     fn mutating_tool_input_schemas_name_revision_guards() {
         let tools = crate::tools::exposed_tools(&PptxServer::default());
 
@@ -1785,6 +1798,16 @@ mod tests {
                 "tool {tool_name} schema unexpectedly requires {field}"
             );
         }
+    }
+
+    fn limit_schema_maximum(tool_name: &str) -> Option<u64> {
+        let tools = crate::tools::exposed_tools(&PptxServer::default());
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name.as_ref() == tool_name)
+            .unwrap_or_else(|| panic!("tool {tool_name} is exposed"));
+        let schema = tool.schema_as_json_value();
+        schema["properties"]["limit"]["maximum"].as_u64()
     }
 
     fn open_fixture_session(server: &PptxServer) -> sessions::OpenSession {
