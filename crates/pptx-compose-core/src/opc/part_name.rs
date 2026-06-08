@@ -1,13 +1,20 @@
-use std::fmt;
+use std::{
+    cmp::Ordering,
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 use crate::error::{Error, Result};
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct PartName(String);
+#[derive(Clone, Debug, Eq)]
+pub struct PartName {
+    package_name: String,
+    zip_entry_name: String,
+}
 
 impl PartName {
-    pub fn from_zip_entry(zip_entry_name: &str) -> Result<Self> {
-        let slash_normalized = zip_entry_name.replace('\\', "/");
+    pub fn from_zip_entry_name(raw: &str) -> Result<Self> {
+        let slash_normalized = raw.replace('\\', "/");
         let decoded = percent_decode_once(&slash_normalized)?;
 
         if decoded.starts_with("//") {
@@ -22,25 +29,69 @@ impl PartName {
 
         validate_canonical(&canonical)?;
 
-        Ok(Self(canonical))
+        let zip_entry_name = canonical
+            .strip_prefix('/')
+            .expect("canonical part name has one leading slash")
+            .to_owned();
+
+        Ok(Self {
+            package_name: canonical,
+            zip_entry_name,
+        })
+    }
+
+    pub fn from_zip_entry(zip_entry_name: &str) -> Result<Self> {
+        Self::from_zip_entry_name(zip_entry_name)
+    }
+
+    #[must_use]
+    pub fn as_package_name(&self) -> &str {
+        &self.package_name
+    }
+
+    #[must_use]
+    pub fn as_zip_entry_name(&self) -> &str {
+        &self.zip_entry_name
     }
 
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.as_package_name()
     }
 
     #[must_use]
     pub fn zip_entry_name(&self) -> &str {
-        self.0
-            .strip_prefix('/')
-            .expect("PartName is validated with a leading slash")
+        self.as_zip_entry_name()
     }
 }
 
 impl fmt::Display for PartName {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(self.as_package_name())
+    }
+}
+
+impl Hash for PartName {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.package_name.hash(state);
+    }
+}
+
+impl Ord for PartName {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.package_name.cmp(&other.package_name)
+    }
+}
+
+impl PartialEq for PartName {
+    fn eq(&self, other: &Self) -> bool {
+        self.package_name == other.package_name
+    }
+}
+
+impl PartialOrd for PartName {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -150,6 +201,46 @@ fn hex_value(byte: u8) -> Option<u8> {
 }
 
 #[cfg(test)]
+#[test]
+fn rejects_traversal_and_preserves_case_sensitive_segments() {
+    use crate::{error::ErrorCode, opc::part::PartStore};
+
+    for entry_name in [
+        "../evil.xml",
+        "/ppt/../evil.xml",
+        "a//b",
+        "ppt/slides/",
+        r"C:\x",
+        r"\\server\share\slide1.xml",
+        "ppt/%2e%2e/evil.xml",
+        "ppt/%zz.xml",
+    ] {
+        let error = PartName::from_zip_entry_name(entry_name).expect_err("unsafe path rejected");
+        assert_eq!(error.code(), ErrorCode::UnsafePath);
+    }
+
+    let upper = PartName::from_zip_entry_name("/ppt/Slides/x.xml").expect("valid part");
+    let lower = PartName::from_zip_entry_name("/ppt/slides/x.xml").expect("valid part");
+
+    assert_ne!(upper, lower);
+    assert_eq!(upper.as_package_name(), "/ppt/Slides/x.xml");
+    assert_eq!(upper.as_zip_entry_name(), "ppt/Slides/x.xml");
+    assert_eq!(lower.as_package_name(), "/ppt/slides/x.xml");
+    assert_eq!(lower.as_zip_entry_name(), "ppt/slides/x.xml");
+
+    let mut store = PartStore::new();
+    store
+        .insert_zip_entry("/ppt/Slides/x.xml", Vec::new())
+        .expect("first insert");
+    store
+        .insert_zip_entry("/ppt/slides/x.xml", Vec::new())
+        .expect("second insert");
+
+    assert!(store.get(&upper).is_some());
+    assert!(store.get(&lower).is_some());
+}
+
+#[cfg(test)]
 mod tests {
     use crate::{
         error::ErrorCode,
@@ -158,43 +249,11 @@ mod tests {
 
     #[test]
     fn accepts_absolute_part_name() {
-        let part_name = PartName::from_zip_entry("/ppt/slides/slide1.xml").expect("valid part");
+        let part_name =
+            PartName::from_zip_entry_name("/ppt/slides/slide1.xml").expect("valid part");
 
-        assert_eq!(part_name.as_str(), "/ppt/slides/slide1.xml");
-        assert_eq!(part_name.zip_entry_name(), "ppt/slides/slide1.xml");
-    }
-
-    #[test]
-    fn rejects_unsafe_part_names() {
-        for entry_name in [
-            "../evil.xml",
-            "/ppt/../evil.xml",
-            "a//b",
-            "ppt/slides/",
-            r"C:\x",
-        ] {
-            let error = PartName::from_zip_entry(entry_name).expect_err("unsafe path rejected");
-            assert_eq!(error.code(), ErrorCode::UnsafePath);
-        }
-    }
-
-    #[test]
-    fn treats_segments_as_case_sensitive() {
-        let upper = PartName::from_zip_entry("/ppt/Slides/x.xml").expect("valid part");
-        let lower = PartName::from_zip_entry("/ppt/slides/x.xml").expect("valid part");
-
-        assert_ne!(upper, lower);
-
-        let mut store = PartStore::new();
-        store
-            .insert_zip_entry("/ppt/Slides/x.xml", Vec::new())
-            .expect("first insert");
-        store
-            .insert_zip_entry("/ppt/slides/x.xml", Vec::new())
-            .expect("second insert");
-
-        assert!(store.get(&upper).is_some());
-        assert!(store.get(&lower).is_some());
+        assert_eq!(part_name.as_package_name(), "/ppt/slides/slide1.xml");
+        assert_eq!(part_name.as_zip_entry_name(), "ppt/slides/slide1.xml");
     }
 
     #[test]
@@ -213,10 +272,12 @@ mod tests {
 
     #[test]
     fn percent_decodes_once_before_validation() {
-        let part_name = PartName::from_zip_entry("ppt%2Fslides%2Fslide1.xml").expect("valid part");
-        assert_eq!(part_name.as_str(), "/ppt/slides/slide1.xml");
+        let part_name =
+            PartName::from_zip_entry_name("ppt%2Fslides%2Fslide1.xml").expect("valid part");
+        assert_eq!(part_name.as_package_name(), "/ppt/slides/slide1.xml");
+        assert_eq!(part_name.as_zip_entry_name(), "ppt/slides/slide1.xml");
 
-        let error = PartName::from_zip_entry("ppt/%zz.xml").expect_err("bad escape rejected");
+        let error = PartName::from_zip_entry_name("ppt/%zz.xml").expect_err("bad escape rejected");
         assert_eq!(error.code(), ErrorCode::UnsafePath);
     }
 }
