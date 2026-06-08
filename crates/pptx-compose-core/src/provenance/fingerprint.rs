@@ -34,13 +34,6 @@ fn fingerprint_preimage(input: &FingerprintInput) -> Cpj {
     object.insert("part".to_owned(), Cpj::Str(input.part.as_str().to_owned()));
     object.insert("schema".to_owned(), Cpj::Str(FINGERPRINT_SCHEMA.to_owned()));
     object.insert("sp_tree_path".to_owned(), path_array(&input.sp_tree_path));
-    object.insert(
-        "text_hash".to_owned(),
-        input
-            .text_hash
-            .as_ref()
-            .map_or(Cpj::Null, |hash| Cpj::Str(hash.clone())),
-    );
     Cpj::Object(object)
 }
 
@@ -89,7 +82,7 @@ fn guard_value() {
     let base = fingerprint(&input);
     assert_eq!(
         base,
-        "sha256:256a7412799c3475cb732d792793ebb81d057687084d102c3a26fecb2b744ff9"
+        "sha256:8ff2dea6b48cfc9a424f653a1776e6389916cf34d74300e86a362f1a735ff253"
     );
 
     let changed_text = FingerprintInput {
@@ -98,7 +91,7 @@ fn guard_value() {
         ),
         ..input.clone()
     };
-    assert_ne!(fingerprint(&changed_text), base);
+    assert_eq!(fingerprint(&changed_text), base);
 
     let changed_cnvpr = FingerprintInput {
         cnvpr_id: Some(5),

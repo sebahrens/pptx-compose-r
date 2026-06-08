@@ -66,7 +66,7 @@ Bare `slide_id` and `element_id` fields are allowed shorthand. Canonical patches
 }
 ```
 
-Selectors must resolve to exactly one target unless the operation explicitly supports multiple targets. Fuzzy matching is forbidden by default. Guard failures return structured stale/guard error codes rather than applying best-effort edits.
+Selectors must resolve to exactly one target unless the operation explicitly supports multiple targets. Fuzzy matching is forbidden by default. Guard failures return structured stale/guard error codes rather than applying best-effort edits. `guards.text_hash` is the content guard for the element's normalized text projection; `guards.fingerprint` is a stable structural identity guard and does not change only because that element's text, or a sibling element's text in the same part, changed.
 
 Element `guards.kind` uses the same snake_case vocabulary emitted by
 `Element View.kind` in the agent view schema: `text_box`, `image`, `shape`,
@@ -275,6 +275,9 @@ Guard semantics:
 
 - `selector.guards.text_hash` remains an element-level guard over the normalized
   text projection for the whole text body.
+- `selector.guards.fingerprint` remains an element identity guard and is not
+  salted by the element's text. Agents that need stale-content protection should
+  include `text_hash` as well as `fingerprint`.
 - Run-scoped patches MAY instead use `selector.run.text_hash`, computed over the
   normalized text of exactly the selected run before
   mutation. When both element-level and run-level hashes are present, both MUST

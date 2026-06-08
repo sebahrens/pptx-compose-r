@@ -30,7 +30,7 @@
         "element_id": "slide-1:shape-2",
         "kind": "shape",
         "part": "ppt/slides/slide1.xml",
-        "fingerprint": "sha256:bef0fba5d8986f3d7f58f28b3f2a862e74176f2e34d30edb2205bd4937c284dc",
+        "fingerprint": "sha256:66eef697e1c30409dd16dbb89ca3768360d25849d773d7f7e695c8f6ccfc7130",
         "text_hash": "sha256:06339bc175dead44c7e34102ab267fd827df35ae5a93c63b0ad537cc80e8b7fc",
         "span": {
           "start": 0,
@@ -45,7 +45,7 @@
             "kind": "shape",
             "part": "ppt/slides/slide1.xml",
             "text_hash": "sha256:06339bc175dead44c7e34102ab267fd827df35ae5a93c63b0ad537cc80e8b7fc",
-            "fingerprint": "sha256:bef0fba5d8986f3d7f58f28b3f2a862e74176f2e34d30edb2205bd4937c284dc"
+            "fingerprint": "sha256:66eef697e1c30409dd16dbb89ca3768360d25849d773d7f7e695c8f6ccfc7130"
           }
         }
       }

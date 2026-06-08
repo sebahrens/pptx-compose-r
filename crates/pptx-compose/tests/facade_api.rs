@@ -1222,6 +1222,81 @@ fn guarded_selector_replace_text_applies_and_rejects_stale_fingerprint() {
 }
 
 #[test]
+fn guarded_replace_text_patch_edits_same_slide_siblings() {
+    let bytes = text_deck_with_slide(&two_text_shapes_slide());
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let inspect = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: true,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide detail builds");
+    let first = inspect_element(&inspect, "slide-1:shape-3");
+    let second = inspect_element(&inspect, "slide-1:shape-4");
+
+    let patch = parse_patch(serde_json::json!({
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": document_id(&bytes),
+        "base_revision": 1,
+        "client_request_id": "same-slide-sibling-guards",
+        "operations": [
+            {
+                "operation_id": "replace-first",
+                "op": "replace_text",
+                "selector": guarded_selector(first),
+                "text": "Updated first title"
+            },
+            {
+                "operation_id": "replace-second",
+                "op": "replace_text",
+                "selector": guarded_selector(second),
+                "text": "Updated second title"
+            }
+        ]
+    }))
+    .expect("guarded patch parses");
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("same-slide sibling guarded patch applies");
+    assert_eq!(report.status, PatchStatus::Applied);
+    assert_eq!(report.operation_reports.len(), 2);
+    assert!(
+        report
+            .operation_reports
+            .iter()
+            .all(|operation| operation.status
+                == pptx_compose::json::schemas::OperationStatus::Applied)
+    );
+
+    let updated = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: true,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("updated slide detail builds");
+    assert_eq!(
+        inspect_element(&updated, "slide-1:shape-3")["text"]["plain"],
+        "Updated first title"
+    );
+    assert_eq!(
+        inspect_element(&updated, "slide-1:shape-4")["text"]["plain"],
+        "Updated second title"
+    );
+}
+
+#[test]
 fn inspect_element_guards_resolve_for_replace_text_dry_run() {
     let bytes = include_bytes!("../../../fixtures/real-world/worldbank-macro-economic-update.pptx");
     let document = PresentationDocument::from_bytes(bytes).expect("fixture opens");
@@ -2401,6 +2476,20 @@ fn inspect_element<'a>(view: &'a Value, element_id: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("inspect view should include {element_id}"))
 }
 
+fn guarded_selector(element: &Value) -> Value {
+    serde_json::json!({
+        "type": "element_id",
+        "id": element["id"],
+        "guards": {
+            "slide_id": element["slide_id"],
+            "kind": element["kind"],
+            "part": element["part"],
+            "text_hash": element["text"]["text_hash"],
+            "fingerprint": element["fingerprint"]
+        }
+    })
+}
+
 fn media_inputs(media_ref: &str, content_type: &str, bytes: Vec<u8>) -> MediaInputs {
     let mut bindings = HashMap::new();
     bindings.insert(
@@ -2923,6 +3012,29 @@ fn text_slide_with_text(text: &str) -> String {
   </p:cSld>
 </p:sld>"#
     )
+}
+
+fn two_text_shapes_slide() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="3" name="First"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Original first title</a:t></a:r></a:p></p:txBody>
+      </p:sp>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="4" name="Second"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="914400" y="1600200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Original second title</a:t></a:r></a:p></p:txBody>
+      </p:sp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+        .to_owned()
 }
 
 fn image_slide() -> String {

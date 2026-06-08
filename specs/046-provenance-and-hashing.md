@@ -87,7 +87,6 @@ The same normalization defines the value of the `normalized` field in 042, so th
      "sp_tree_path": <array of integers, the spTree child-index path>,
      "group_path": <array of integers, empty when top-level>,
      "cnvpr_id": <integer cNvPr id, or null if the element has no cNvPr>,
-     "text_hash": <text_hash string, or null for non-text elements>,
      "schema": "pptx-compose.fingerprint.v1"
    }
    ```
@@ -96,8 +95,12 @@ The same normalization defines the value of the `normalized` field in 042, so th
 Notes:
 
 - `kind` is one of the fixed V1 tokens `text_box`, `shape`, `image`, `group`, `graphic_frame`, `connector`, or `other`, derived from the element kind used for agent IDs.
-- `sp_tree_path` / `group_path` use the same indexing as `xml_location` in 042 (positional child indices within `p:spTree`, descending through `p:grpSp`). They locate the element; `cnvpr_id` and `text_hash` detect substitution at that location.
+- `sp_tree_path` / `group_path` use the same indexing as `xml_location` in 042 (positional child indices within `p:spTree`, descending through `p:grpSp`). They locate the element; `cnvpr_id` detects structural substitution at that location.
 - `cnvpr_id` is included for substitution detection only. It is **not** the agent ID and must never be used to derive one (cNvPr ids are reassignable and may collide across the deck).
+- `text_hash` is deliberately excluded from `fingerprint`. This keeps
+  `fingerprint` stable for text-only edits and for multi-operation patches that
+  edit several sibling elements in one slide part. Use both guards when a patch
+  needs identity and content protection.
 
 ## `view_id`
 
@@ -147,6 +150,6 @@ Conformant implementations must satisfy, and 080 must test:
 - **No-edit stability:** `read(input).write(output)` preserves `document_id`, every `part_checksum`, every agent ID, and every `fingerprint`/`text_hash`. Re-opening `output` yields the same `document_id`.
 - **Cross-implementation determinism:** identical input bytes yield identical `document_id`, `part_checksum`, `text_hash`, `fingerprint`, and agent IDs across conformant implementations.
 - **Edit locality:** an edit changes exactly the `part_checksum` of dirty parts (031/020 dirty-tracking) and therefore `document_id`; it changes a given element's agent ID only if the edit changes that element's `cNvPr/@id` or the fallback structural path for an element without `cNvPr`.
-- **Guard soundness:** a selector whose `fingerprint` and `text_hash` guards both match the current element is treated as resolving to the same element the agent saw; a mismatch yields `selector_guard_failed` (044) rather than a best-effort edit.
+- **Guard soundness:** a selector whose `fingerprint` and `text_hash` guards both match the current element is treated as resolving to the same element with the same text projection the agent saw; a mismatch yields `selector_guard_failed` (044) rather than a best-effort edit.
 
 See [agent JSON format](040-agent-json-format.md), [agent edit operations](041-agent-edit-operations.md), [agent protocol schemas](042-agent-protocol-schemas.md), and [round-trip invariants](050-roundtrip-invariants.md).

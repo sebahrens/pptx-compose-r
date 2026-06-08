@@ -288,6 +288,10 @@ Canonical element selectors use this shape:
 }
 ```
 
+`guards.text_hash` guards the element's normalized text content. `guards.fingerprint`
+guards the selected element's structural identity and is stable across text-only
+edits to that element or to sibling elements in the same slide part.
+
 Supported selector types in V1:
 
 - `slide_id`
