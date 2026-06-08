@@ -11,6 +11,7 @@ use crate::{
             resolve_internal_target,
         },
     },
+    zip::{limits::OpenOptions, reader::RawEntry},
 };
 
 pub const OFFICE_DOCUMENT_REL_TYPE: &str =
@@ -35,10 +36,20 @@ impl SlideIdEntry {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PackageMetadata {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageWarning {
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Package {
     parts: PartStore,
     content_types: ContentTypes,
     relationships: RelationshipGraph,
+    metadata: PackageMetadata,
+    warnings: Vec<PackageWarning>,
     slide_ids: Vec<SlideIdEntry>,
     dirty_parts: BTreeSet<PartName>,
     original_parts: BTreeSet<PartName>,
@@ -81,6 +92,16 @@ impl Package {
     }
 
     #[must_use]
+    pub const fn metadata(&self) -> &PackageMetadata {
+        &self.metadata
+    }
+
+    #[must_use]
+    pub fn warnings(&self) -> &[PackageWarning] {
+        &self.warnings
+    }
+
+    #[must_use]
     pub fn slide_ids(&self) -> &[SlideIdEntry] {
         &self.slide_ids
     }
@@ -93,6 +114,29 @@ impl Package {
     #[must_use]
     pub fn original_parts(&self) -> &BTreeSet<PartName> {
         &self.original_parts
+    }
+
+    pub fn from_zip_entries(entries: &[RawEntry], _options: &OpenOptions) -> Result<Self> {
+        let mut package = Self::new();
+
+        for entry in entries {
+            if entry.meta.is_dir {
+                continue;
+            }
+            package.insert_part(Part::from_raw_entry(entry))?;
+        }
+
+        Ok(package)
+    }
+
+    #[must_use]
+    pub fn part(&self, name: &PartName) -> Option<&Part> {
+        self.parts.get(name)
+    }
+
+    #[must_use]
+    pub fn part_mut(&mut self, name: &PartName) -> Option<&mut Part> {
+        self.parts.get_mut(name)
     }
 
     pub fn office_document_part(&self) -> Result<PartName> {
@@ -165,6 +209,44 @@ impl Package {
 #[cfg(test)]
 fn root_relationships_part() -> Result<PartName> {
     PartName::from_zip_entry("/_rels/.rels")
+}
+
+#[cfg(test)]
+fn raw_entry(index: usize, name: &str, bytes: &[u8]) -> RawEntry {
+    use crate::zip::ZipEntryMetadata;
+
+    RawEntry {
+        name: PartName::from_zip_entry(name).expect("fixture part name is valid"),
+        bytes: bytes.to_vec(),
+        meta: ZipEntryMetadata {
+            entry_index: index,
+            original_name: name.to_owned(),
+            compression_method: zip::CompressionMethod::Stored,
+            crc32: 0,
+            compressed_size: bytes.len() as u64,
+            uncompressed_size: bytes.len() as u64,
+            last_modified: None,
+            external_attrs: None,
+            is_dir: false,
+        },
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_duplicate_normalized_part_names() {
+    use crate::{error::ErrorCode, zip::limits::OpenOptions};
+
+    let entries = vec![
+        raw_entry(0, "ppt/slides/slide1.xml", b"first"),
+        raw_entry(1, "/ppt/slides/slide1.xml", b"second"),
+    ];
+
+    let error = Package::from_zip_entries(&entries, &OpenOptions::default())
+        .expect_err("duplicate normalized package part rejected");
+
+    assert_eq!(error.code(), ErrorCode::UnsupportedPackage);
+    assert!(error.message().contains("/ppt/slides/slide1.xml"));
 }
 
 #[cfg(test)]
