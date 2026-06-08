@@ -101,7 +101,7 @@ where
         .map_err(|source| Error::parse_error("Could not open source ZIP package.", source))?;
     let mut writer = PackageZipWriter::new(output, options);
 
-    let ordered_entries = ordered_entries(entries, source.len(), options.mode);
+    let ordered_entries = ordered_entries(entries, options.mode);
     for entry in ordered_entries {
         match entry {
             WriteEntry::Clean(entry) => writer.write_clean(&mut source, entry)?,
@@ -248,30 +248,31 @@ where
     }
 }
 
-fn ordered_entries<'a>(
-    entries: &'a [WriteEntry<'a>],
-    source_entry_count: usize,
-    mode: WriteMode,
-) -> Vec<&'a WriteEntry<'a>> {
+fn ordered_entries<'a>(entries: &'a [WriteEntry<'a>], mode: WriteMode) -> Vec<&'a WriteEntry<'a>> {
     let mut ordered_entries: Vec<_> = entries.iter().collect();
     if mode == WriteMode::Deterministic {
         ordered_entries.sort_by(|left, right| {
-            deterministic_order_key(left, source_entry_count)
-                .cmp(&deterministic_order_key(right, source_entry_count))
+            deterministic_order_key(left).cmp(&deterministic_order_key(right))
         });
     }
     ordered_entries
 }
 
-fn deterministic_order_key<'a>(
-    entry: &'a WriteEntry<'_>,
-    source_entry_count: usize,
-) -> (u8, usize, &'a str) {
-    let meta = entry.meta();
-    if meta.entry_index < source_entry_count {
-        (0, meta.entry_index, "")
+fn deterministic_order_key<'a>(entry: &'a WriteEntry<'_>) -> (u8, &'a str) {
+    let name = entry.name();
+    (deterministic_control_order(name), name)
+}
+
+fn deterministic_control_order(name: &str) -> u8 {
+    let name = name.strip_prefix('/').unwrap_or(name);
+    if name == "[Content_Types].xml" {
+        0
+    } else if name == "_rels/.rels" {
+        1
+    } else if name.ends_with(".rels") && name.contains("/_rels/") {
+        2
     } else {
-        (1, usize::MAX, entry.name())
+        3
     }
 }
 
@@ -416,7 +417,7 @@ fn raw_copy_is_byte_identical() {
 
 #[cfg(test)]
 #[test]
-fn deterministic_is_stable_cross_run() {
+fn deterministic_mode_is_byte_stable_across_runs() {
     use std::io::Cursor;
     use zip::ZipArchive;
 
@@ -441,23 +442,44 @@ fn deterministic_is_stable_cross_run() {
     let mut written_archive = ZipArchive::new(Cursor::new(&first)).expect("written opens");
     assert_eq!(written_archive.len(), original_archive.len());
 
-    for index in 0..original_archive.len() {
-        let original = original_archive
-            .by_index(index)
-            .expect("original entry exists");
+    let original_by_name = (0..original_archive.len())
+        .map(|index| {
+            let original = original_archive
+                .by_index(index)
+                .expect("original entry exists");
+            (
+                original.name().to_owned(),
+                (
+                    original.crc32(),
+                    original.compressed_size(),
+                    original.size(),
+                    compressed_bytes(package, index).to_vec(),
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let expected_names = [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "ppt/_rels/presentation.xml.rels",
+        "ppt/presentation.xml",
+        "ppt/slides/slide1.xml",
+    ];
+
+    for (index, expected_name) in expected_names.iter().enumerate() {
         let written = written_archive
             .by_index(index)
             .expect("written entry exists");
+        let original = original_by_name
+            .get(*expected_name)
+            .expect("original entry exists");
 
-        assert_eq!(written.name(), original.name());
-        assert_eq!(written.crc32(), original.crc32());
-        assert_eq!(written.compressed_size(), original.compressed_size());
-        assert_eq!(written.size(), original.size());
+        assert_eq!(written.name(), *expected_name);
+        assert_eq!(written.crc32(), original.0);
+        assert_eq!(written.compressed_size(), original.1);
+        assert_eq!(written.size(), original.2);
         assert_eq!(written.last_modified(), Some(deterministic_timestamp()));
-        assert_eq!(
-            compressed_bytes(&first, index),
-            compressed_bytes(package, index)
-        );
+        assert_eq!(compressed_bytes(&first, index), original.3.as_slice());
     }
 }
 
