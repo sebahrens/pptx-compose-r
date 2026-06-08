@@ -925,7 +925,7 @@ fn project_element(
         projected_element_text(element, core_kind, slide_rels, package)?
     };
     let text_hash = text.as_ref().map(|text| text.text_hash.clone());
-    let mut image_support = ImageEditSupport::Unresolved;
+    let mut image_support = ImageEditSupport::UnresolvedPicture;
     let image = if core_kind == CoreElementKind::Picture {
         match read_picture(element, path.clone(), slide_rels, package) {
             Ok(picture) if !picture.external => {
@@ -960,7 +960,10 @@ fn project_element(
                 image_support = ImageEditSupport::ExternalLink;
                 None
             }
-            Err(_) => None,
+            Err(_) => {
+                image_support = unresolved_picture_support(element, slide_rels);
+                None
+            }
         }
     } else {
         None
@@ -1625,7 +1628,24 @@ fn default_capabilities() -> Capabilities {
 enum ImageEditSupport {
     Embedded,
     ExternalLink,
-    Unresolved,
+    UnresolvedPicture,
+    UnresolvedRelationship,
+}
+
+fn unresolved_picture_support(
+    element: &XmlElement,
+    slide_rels: &RelationshipSet,
+) -> ImageEditSupport {
+    let Some(blip) = first_descendant(element, "blip") else {
+        return ImageEditSupport::UnresolvedPicture;
+    };
+    let Some(embed_rel_id) = optional_attr(blip, "embed") else {
+        return ImageEditSupport::UnresolvedPicture;
+    };
+    if slide_rels.get(embed_rel_id).is_none() {
+        return ImageEditSupport::UnresolvedRelationship;
+    }
+    ImageEditSupport::UnresolvedPicture
 }
 
 fn editable(
@@ -1637,7 +1657,10 @@ fn editable(
     let (image_supported, image_reason) = match image_support {
         ImageEditSupport::Embedded => (true, None),
         ImageEditSupport::ExternalLink => (false, Some("external_link".to_owned())),
-        ImageEditSupport::Unresolved => (false, None),
+        ImageEditSupport::UnresolvedPicture => (false, Some("unresolved_picture".to_owned())),
+        ImageEditSupport::UnresolvedRelationship => {
+            (false, Some("unresolved_relationship".to_owned()))
+        }
     };
     let (bounds_supported, bounds_reason) = bounds_edit_support(core_kind);
     let text = (has_text && core_kind != CoreElementKind::GraphicFrameTable).then_some(
@@ -2077,6 +2100,65 @@ fn image_editability_matches_embedded_and_external_picture_support() {
             .bytes(),
         b"embedded image bytes"
     );
+}
+
+#[cfg(test)]
+#[test]
+fn unresolved_picture_projection_reports_stable_image_reason() {
+    use pptx_compose_core::{
+        opc::{
+            package::{OFFICE_DOCUMENT_REL_TYPE, Package},
+            part_name::PartName,
+            relationships::{Relationship, RelationshipSource},
+        },
+        pptx::presentation::PresentationDocument,
+    };
+
+    const SLIDE_REL_TYPE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+    const SLIDE_XML: &[u8] = br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:pic><p:nvPicPr><p:cNvPr id="5" name="Missing Relationship Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rMissing"/></p:blipFill><p:spPr/></p:pic></p:spTree></p:cSld></p:sld>"#;
+
+    let presentation_part = PartName::from_zip_entry("ppt/presentation.xml").expect("part name");
+
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("[Content_Types].xml", content_types_xml().to_vec())
+        .expect("content types part inserts");
+    package
+        .insert_zip_entry("ppt/presentation.xml", presentation_xml().to_vec())
+        .expect("presentation part inserts");
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", SLIDE_XML.to_vec())
+        .expect("slide part inserts");
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        OFFICE_DOCUMENT_REL_TYPE,
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlide",
+        SLIDE_REL_TYPE,
+        "slides/slide1.xml",
+    ));
+
+    let pkg = PresentationDocument::open(package).expect("presentation opens");
+    let value = build_view(&pkg, request_for(&pkg, ViewMode::SlideDetail, None))
+        .expect("slide detail builds");
+    let picture = value["slides"][0]["elements"]
+        .as_array()
+        .expect("elements array")
+        .iter()
+        .find(|element| element["xml_location"]["cnvpr_name"] == "Missing Relationship Picture")
+        .expect("picture is projected despite unresolved media");
+
+    assert_eq!(picture["editable"]["image"]["supported"], false);
+    assert_eq!(
+        picture["editable"]["image"]["reason"],
+        "unresolved_relationship"
+    );
+    assert_eq!(picture.get("image"), None);
 }
 
 #[cfg(test)]
