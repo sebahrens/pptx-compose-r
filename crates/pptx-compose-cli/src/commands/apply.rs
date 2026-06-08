@@ -29,6 +29,8 @@ pub(crate) fn apply(
     permissions: &PermissionContext,
     open_options: OpenOptions,
 ) -> Result<(), CliError> {
+    enforce_single_apply_stdout_json(&args)?;
+
     let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
     let patch = permissions.authorize_read(&args.patch, PathIntent::InputPptx)?;
     let media_manifest = args
@@ -118,6 +120,36 @@ pub(crate) fn apply(
     }
     sink.emit_optional_patch_report(&apply_output.report, args.report, args.overwrite)?;
     sink.emit_diff(&apply_output.diff, args.diff, args.overwrite)?;
+
+    Ok(())
+}
+
+fn enforce_single_apply_stdout_json(args: &ApplyArgs) -> Result<(), CliError> {
+    let mut stdout_outputs = Vec::new();
+
+    if args.dry_run {
+        match &args.report {
+            Some(report) if report == Path::new("-") => stdout_outputs.push("--report -"),
+            None => stdout_outputs.push("omitted --report"),
+            Some(_) => {}
+        }
+    } else if args.report.as_deref() == Some(Path::new("-")) {
+        stdout_outputs.push("--report -");
+    }
+
+    if args.diff.as_deref() == Some(Path::new("-")) {
+        stdout_outputs.push("--diff -");
+    }
+
+    if stdout_outputs.len() > 1 {
+        return Err(CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            format!(
+                "apply may emit at most one machine-readable JSON document to stdout; {} resolve to stdout.",
+                stdout_outputs.join(" and ")
+            ),
+        ));
+    }
 
     Ok(())
 }
@@ -580,6 +612,18 @@ fn dry_run_writes_no_pptx() {
 
 #[cfg(test)]
 #[test]
+fn dry_run_rejects_default_report_and_stdout_diff() {
+    test_support::dry_run_rejects_default_report_and_stdout_diff();
+}
+
+#[cfg(test)]
+#[test]
+fn apply_rejects_stdout_report_and_stdout_diff() {
+    test_support::apply_rejects_stdout_report_and_stdout_diff();
+}
+
+#[cfg(test)]
+#[test]
 fn dry_run_writes_report_for_all_failed_operations() {
     test_support::dry_run_writes_report_for_all_failed_operations();
 }
@@ -982,6 +1026,51 @@ mod test_support {
         assert_eq!(diff_json["schema"], "pptx-compose.semantic_diff.v1");
         assert_eq!(diff_json["version"], 1);
         assert_eq!(diff_json["changes"], serde_json::json!([]));
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn dry_run_rejects_default_report_and_stdout_diff() {
+        let root = unique_dir();
+        let input = root.join("missing.pptx");
+        let patch = root.join("missing-patch.json");
+        let output = root.join("output.pptx");
+
+        let mut args = args(&input, &patch, &output, false);
+        args.dry_run = true;
+        args.output = None;
+        args.diff = Some(Path::new("-").to_path_buf());
+
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("dry-run default report and stdout diff must be rejected");
+        assert_eq!(err.code(), ErrorCode::InvalidInput);
+        assert!(
+            err.details()
+                .message
+                .contains("omitted --report and --diff - resolve to stdout")
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn apply_rejects_stdout_report_and_stdout_diff() {
+        let root = unique_dir();
+        let input = root.join("missing.pptx");
+        let patch = root.join("missing-patch.json");
+        let output = root.join("output.pptx");
+
+        let mut args = args(&input, &patch, &output, false);
+        args.report = Some(Path::new("-").to_path_buf());
+        args.diff = Some(Path::new("-").to_path_buf());
+
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("stdout report and stdout diff must be rejected");
+        assert_eq!(err.code(), ErrorCode::InvalidInput);
+        assert!(
+            err.details()
+                .message
+                .contains("--report - and --diff - resolve to stdout")
+        );
 
         fs::remove_dir_all(root).expect("test dir removes");
     }
