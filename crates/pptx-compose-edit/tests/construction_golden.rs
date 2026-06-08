@@ -55,6 +55,10 @@ mod construction {
     fn pic_and_sp_match_golden() -> Result<()> {
         let mut picture_package = minimal_package()?;
         let slide = minimal_slide()?;
+        let clean_slide_bytes = part_bytes(&picture_package, &slide.part)?.to_vec();
+        let clean_presentation_part = PartName::from_zip_entry("ppt/presentation.xml")?;
+        let clean_presentation_bytes =
+            part_bytes(&picture_package, &clean_presentation_part)?.to_vec();
         let image = AddImage {
             operation_id: "op-add-image".to_owned(),
             slide_id: slide.slide_id.clone(),
@@ -67,10 +71,30 @@ mod construction {
             dedupe: ImageDedupe::Never,
             insert: None,
         };
-        image.apply(&mut picture_package, &slide, &media_inputs())?;
+        let image_effects = image.apply(&mut picture_package, &slide, &media_inputs())?;
+        let picture_xml = inserted_element_xml(&picture_package, &slide.part, "pic")?;
+        assert_eq!(picture_xml, golden(PIC_EXPECTED));
+        assert_contains_bounds(&picture_xml, &fixed_bounds());
+        assert_ne!(
+            part_bytes(&picture_package, &slide.part)?,
+            clean_slide_bytes
+        );
         assert_eq!(
-            inserted_element_xml(&picture_package, &slide.part, "pic")?,
-            PIC_EXPECTED
+            part_bytes(&picture_package, &clean_presentation_part)?,
+            clean_presentation_bytes
+        );
+        assert_eq!(
+            image_effects.changed_parts,
+            vec![
+                "ppt/slides/slide1.xml",
+                "ppt/slides/_rels/slide1.xml.rels",
+                "ppt/media/image1.png",
+                "[Content_Types].xml",
+            ]
+        );
+        assert_eq!(
+            image_effects.created_element_ids,
+            vec!["slide-1:pic-2".to_owned()]
         );
         assert_eq!(
             part_xml(
@@ -78,6 +102,22 @@ mod construction {
                 &PartName::from_zip_entry("ppt/slides/_rels/slide1.xml.rels")?
             )?,
             golden(PIC_RELS_EXPECTED)
+        );
+        assert!(picture_xml.contains(r#"<a:blip r:embed="rId1"/>"#));
+        let image_rel = picture_package
+            .relationships()
+            .set_for(&slide.part)
+            .and_then(|rels| rels.rels.iter().find(|rel| rel.id == "rId1"))
+            .ok_or_else(|| Error::unsupported_package("Inserted image relationship not found."))?;
+        assert_eq!(
+            image_rel.source,
+            RelationshipSource::Part(slide.part.clone())
+        );
+        assert_eq!(image_rel.rel_type, IMAGE_REL_TYPE);
+        assert_eq!(image_rel.target, "../media/image1.png");
+        assert_eq!(
+            image_rel.resolved_target.as_ref(),
+            Some(&PartName::from_zip_entry("ppt/media/image1.png")?)
         );
         assert_eq!(
             picture_package
@@ -98,10 +138,9 @@ mod construction {
             insert: None,
         };
         text_box.apply(&mut text_package, &slide)?;
-        assert_eq!(
-            inserted_element_xml(&text_package, &slide.part, "sp")?,
-            SP_EXPECTED
-        );
+        let text_box_xml = inserted_element_xml(&text_package, &slide.part, "sp")?;
+        assert_eq!(text_box_xml, golden(SP_EXPECTED));
+        assert_contains_bounds(&text_box_xml, &fixed_bounds());
 
         Ok(())
     }
@@ -889,6 +928,24 @@ mod construction {
         })?;
         String::from_utf8(part.bytes().to_vec())
             .map_err(|source| Error::parse_error("Package part XML was not UTF-8.", source))
+    }
+
+    fn part_bytes<'a>(package: &'a Package, part_name: &PartName) -> Result<&'a [u8]> {
+        package
+            .parts()
+            .get(part_name)
+            .map(Part::bytes)
+            .ok_or_else(|| {
+                Error::unsupported_package(format!("Package part {part_name} was not found."))
+            })
+    }
+
+    fn assert_contains_bounds(xml: &str, bounds: &Bounds) {
+        assert!(xml.contains(&format!(r#"<a:off x="{}" y="{}"/>"#, bounds.x, bounds.y)));
+        assert!(xml.contains(&format!(
+            r#"<a:ext cx="{}" cy="{}"/>"#,
+            bounds.cx, bounds.cy
+        )));
     }
 
     fn serialize_element(element: &XmlElement) -> Result<String> {
