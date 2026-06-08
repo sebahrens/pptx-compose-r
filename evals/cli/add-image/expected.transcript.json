@@ -2,6 +2,8 @@
   "schema": "pptx-compose.cli_eval_transcript.v1",
   "version": 1,
   "case": "add-image",
+  "input_fixture": "fixtures/minimal.pptx",
+  "instruction": "Add the staged image to the first slide.",
   "command": ["--json-errors", "apply", "{input}", "{patch}", "--media-manifest", "{media_manifest}", "--output", "{output}", "--report", "{report}"],
   "expected_exit": 0,
   "stdout_json": null,

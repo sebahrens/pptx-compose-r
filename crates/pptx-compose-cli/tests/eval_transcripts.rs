@@ -154,6 +154,8 @@ mod eval_transcripts {
         schema: String,
         version: u32,
         case: String,
+        input_fixture: String,
+        instruction: String,
         command: Vec<String>,
         expected_exit: i32,
         stdout_json: Option<Value>,
@@ -180,6 +182,18 @@ mod eval_transcripts {
 
             let input_ref = fs::read_to_string(case_dir.join("input-ref.txt"))
                 .unwrap_or_else(|err| panic!("{case_name}: input ref should read: {err}"));
+            assert_eq!(
+                transcript.input_fixture,
+                input_ref.trim(),
+                "{case_name}: transcript input_fixture matches input-ref.txt"
+            );
+            let instruction = fs::read_to_string(case_dir.join("instruction.txt"))
+                .unwrap_or_else(|err| panic!("{case_name}: instruction should read: {err}"));
+            assert_eq!(
+                transcript.instruction.trim(),
+                instruction.trim(),
+                "{case_name}: transcript instruction matches instruction.txt"
+            );
             let input = repo_root.join(input_ref.trim());
             let patch = case_dir.join("patch.json");
             let media_manifest = case_dir.join("media-manifest.json");

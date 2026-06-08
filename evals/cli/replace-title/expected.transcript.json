@@ -2,6 +2,8 @@
   "schema": "pptx-compose.cli_eval_transcript.v1",
   "version": 1,
   "case": "replace-title",
+  "input_fixture": "fixtures/media/image.pptx",
+  "instruction": "Replace the title on the first slide with \"Quarterly Plan\".",
   "command": ["--json-errors", "apply", "{input}", "{patch}", "--output", "{output}", "--report", "{report}"],
   "expected_exit": 0,
   "stdout_json": null,

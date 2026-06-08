@@ -2,6 +2,8 @@
   "schema": "pptx-compose.mcp_eval_transcript.v1",
   "version": 1,
   "case": "stale-revision",
+  "input_fixture": "fixtures/minimal.pptx",
+  "instruction": "Open the deck through MCP, attempt a mutation with a stale base_revision, and report the stale_patch error without exporting.",
   "tools": [
     {
       "name": "pptx_open",

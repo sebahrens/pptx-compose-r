@@ -51,11 +51,33 @@ fn mcp_eval_corpus_contains_required_cases() {
             "{case_name}: transcript schema"
         );
         assert_eq!(transcript["version"], 1, "{case_name}: transcript version");
+        assert_eq!(
+            transcript["case"], case_name,
+            "{case_name}: transcript case"
+        );
+        assert_eq!(
+            transcript["input_fixture"],
+            input_ref.trim(),
+            "{case_name}: transcript input_fixture matches input-ref.txt"
+        );
+        let instruction = fs::read_to_string(case_dir.join("instruction.txt"))
+            .unwrap_or_else(|err| panic!("{case_name}: instruction reads: {err}"));
+        assert_eq!(
+            transcript["instruction"].as_str().map(str::trim),
+            Some(instruction.trim()),
+            "{case_name}: transcript instruction matches instruction.txt"
+        );
         assert!(
             transcript["tools"]
                 .as_array()
                 .is_some_and(|tools| !tools.is_empty()),
             "{case_name}: transcript has tool steps"
+        );
+        assert!(
+            transcript["output_invariants"]
+                .as_object()
+                .is_some_and(|invariants| !invariants.is_empty()),
+            "{case_name}: transcript declares output invariants"
         );
         assert_transcript_arguments_validate(case_name, &transcript);
         if case_name == "stale-revision" {
@@ -73,6 +95,10 @@ fn assert_transcript_arguments_validate(case_name: &str, transcript: &Value) {
             .as_str()
             .unwrap_or_else(|| panic!("{case_name}: tool step {index} has a string name"));
         let arguments = substitute_placeholders(step["arguments"].clone());
+        assert!(
+            step["expect"]["status"].is_string(),
+            "{case_name}: tool step {index} declares expected status"
+        );
         assert_tool_arguments_validate(case_name, index, name, &arguments);
         assert_tool_runtime_argument_invariants(case_name, index, name, &arguments);
     }

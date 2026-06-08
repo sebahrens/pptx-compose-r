@@ -2,6 +2,8 @@
   "schema": "pptx-compose.mcp_eval_transcript.v1",
   "version": 1,
   "case": "patch-after-pagination",
+  "input_fixture": "fixtures/media/image.pptx",
+  "instruction": "Page through slide summaries, inspect the target slide, then replace the title using the current session revision.",
   "tools": [
     { "name": "pptx_open", "arguments": { "path": "{input}" }, "expect": { "status": "success" } },
     { "name": "pptx_list_slides", "arguments": { "session_id": "{session_id}", "cursor": null, "limit": 1 }, "expect": { "status": "success", "view_mode": "slide_page" } },

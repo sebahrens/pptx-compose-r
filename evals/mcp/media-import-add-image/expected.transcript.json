@@ -2,6 +2,8 @@
   "schema": "pptx-compose.mcp_eval_transcript.v1",
   "version": 1,
   "case": "media-import-add-image",
+  "input_fixture": "fixtures/minimal.pptx",
+  "instruction": "Import inline PNG media through MCP and add it to the first slide.",
   "tools": [
     { "name": "pptx_open", "arguments": { "path": "{input}" }, "expect": { "status": "success" } },
     {

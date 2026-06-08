@@ -2,6 +2,8 @@
   "schema": "pptx-compose.cli_eval_transcript.v1",
   "version": 1,
   "case": "find-text-selector",
+  "input_fixture": "fixtures/media/image.pptx",
+  "instruction": "Find exact text matching \"Media\" on slide 1 and return a patch-ready selector with guard fields that can be pasted into a replace_text operation.",
   "command": ["--json-errors", "find-text", "{input}", "Media", "--slides", "slide-1", "--limit", "10", "--output", "-"],
   "expected_exit": 0,
   "stdout_json": {

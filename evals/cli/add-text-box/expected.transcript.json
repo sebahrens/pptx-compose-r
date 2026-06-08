@@ -2,6 +2,8 @@
   "schema": "pptx-compose.cli_eval_transcript.v1",
   "version": 1,
   "case": "add-text-box",
+  "input_fixture": "fixtures/minimal.pptx",
+  "instruction": "Add a labeled text box to the first slide.",
   "command": ["--json-errors", "apply", "{input}", "{patch}", "--output", "{output}", "--report", "{report}"],
   "expected_exit": 0,
   "stdout_json": null,

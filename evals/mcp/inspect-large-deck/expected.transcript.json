@@ -2,6 +2,8 @@
   "schema": "pptx-compose.mcp_eval_transcript.v1",
   "version": 1,
   "case": "inspect-large-deck",
+  "input_fixture": "fixtures/powerpoint/source-family.pptx",
+  "instruction": "Inspect the deck through MCP and answer slide count and title questions without requesting raw package XML.",
   "tools": [
     {
       "name": "pptx_open",

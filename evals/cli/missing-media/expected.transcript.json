@@ -2,6 +2,8 @@
   "schema": "pptx-compose.cli_eval_transcript.v1",
   "version": 1,
   "case": "missing-media",
+  "input_fixture": "fixtures/minimal.pptx",
+  "instruction": "Add an image without providing the required staged media binding.",
   "command": ["--json-errors", "apply", "{input}", "{patch}", "--dry-run"],
   "expected_exit": 23,
   "stdout_json": null,

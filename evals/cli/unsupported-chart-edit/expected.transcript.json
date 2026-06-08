@@ -2,6 +2,8 @@
   "schema": "pptx-compose.cli_eval_transcript.v1",
   "version": 1,
   "case": "unsupported-chart-edit",
+  "input_fixture": "fixtures/minimal.pptx",
+  "instruction": "Change chart data on the first slide.",
   "command": ["--json-errors", "apply", "{input}", "{patch}", "--dry-run"],
   "expected_exit": 24,
   "stdout_json": null,

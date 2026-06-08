@@ -2,6 +2,8 @@
   "schema": "pptx-compose.mcp_eval_transcript.v1",
   "version": 1,
   "case": "validation-error-explain",
+  "input_fixture": "fixtures/malformed/broken-slide-xml.pptx",
+  "instruction": "Open the malformed deck through MCP, validate it, and explain the structured validation failure without editing the package.",
   "tools": [
     { "name": "pptx_open", "arguments": { "path": "{input}" }, "expect": { "status": "success" } },
     { "name": "pptx_validate", "arguments": { "session_id": "{session_id}" }, "expect": { "status": "success", "validation_status": "invalid" } },
