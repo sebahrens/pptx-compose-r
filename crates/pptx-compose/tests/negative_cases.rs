@@ -22,14 +22,14 @@ use pptx_compose_edit::{
 use serde_json::{Value, json};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
-mod negative {
+mod negative_cases {
     use super::*;
 
     #[test]
-    fn all_failures_return_codes_without_mutation() -> Result<()> {
+    fn malformed_inputs_return_structured_errors() -> Result<()> {
         assert_open_failure(encrypted_cfbf(), ErrorCode::UnsupportedPackage);
         assert_open_failure(encrypted_zip(), ErrorCode::UnsupportedPackage);
-        assert_open_failure(unsafe_path_zip(), ErrorCode::UnsafePath);
+        assert_open_failure(unsafe_path_fixture().to_vec(), ErrorCode::UnsafePath);
         assert_open_failure(zip_bomb(), ErrorCode::ResourceLimitExceeded);
 
         let deck = linked_image_deck();
@@ -281,11 +281,8 @@ fn encrypted_zip() -> Vec<u8> {
     )
 }
 
-fn unsafe_path_zip() -> Vec<u8> {
-    zip_entries(
-        [("../ppt/presentation.xml", b"unsafe".as_slice())],
-        CompressionMethod::Stored,
-    )
+fn unsafe_path_fixture() -> &'static [u8] {
+    include_bytes!("../../../fixtures/malformed/unsafe-path.pptx")
 }
 
 fn zip_bomb() -> Vec<u8> {

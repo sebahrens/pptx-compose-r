@@ -117,3 +117,11 @@ features = ["malformed", "malformed-xml"]
 expected_warnings = ["malformed_xml"]
 invariants = ["malformed"]
 consuming_test = "fixture_manifest::corpus::malformed_fixture_is_rejected_when_slide_xml_is_parsed"
+
+[[entries]]
+path = "malformed/unsafe-path.pptx"
+source_app = "synthetic"
+features = ["malformed", "unsafe-path"]
+expected_warnings = ["unsafe_path"]
+invariants = ["malformed", "unsafe-path"]
+consuming_test = "negative_cases::malformed_inputs_return_structured_errors"
