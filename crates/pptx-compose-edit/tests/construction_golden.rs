@@ -34,7 +34,7 @@ use pptx_compose_edit::{
     selectors::RunSelector,
 };
 
-mod construction {
+mod construction_golden {
     use super::*;
 
     const MINIMAL_PPTX: &[u8] = include_bytes!("../../../fixtures/minimal.pptx");
@@ -52,7 +52,7 @@ mod construction {
         include_str!("../../../fixtures/construction/set_alt_text.pic.expected.xml");
 
     #[test]
-    fn pic_and_sp_match_golden() -> Result<()> {
+    fn generated_drawingml_matches_fixtures() -> Result<()> {
         let mut picture_package = minimal_package()?;
         let slide = minimal_slide()?;
         let clean_slide_bytes = part_bytes(&picture_package, &slide.part)?.to_vec();
@@ -72,9 +72,23 @@ mod construction {
             insert: None,
         };
         let image_effects = image.apply(&mut picture_package, &slide, &media_inputs())?;
+        let picture_slide_xml = part_xml(&picture_package, &slide.part)?;
+        assert_slide_namespaces(&picture_slide_xml);
         let picture_xml = inserted_element_xml(&picture_package, &slide.part, "pic")?;
         assert_eq!(picture_xml, golden(PIC_EXPECTED));
         assert_contains_bounds(&picture_xml, &fixed_bounds());
+        assert!(
+            picture_xml.contains(r#"<p:cNvPr id="2" name="Picture 2"/>"#),
+            "add_image must allocate max(existing cNvPr id) + 1 and use the default name"
+        );
+        assert!(
+            picture_xml.contains(r#"<a:picLocks noChangeAspect="1"/>"#),
+            "add_image must emit the fixed V1 picture lock"
+        );
+        assert!(
+            picture_xml.contains(r#"<a:stretch><a:fillRect/></a:stretch>"#),
+            "add_image must use deterministic stretch fill"
+        );
         assert_ne!(
             part_bytes(&picture_package, &slide.part)?,
             clean_slide_bytes
@@ -138,9 +152,29 @@ mod construction {
             insert: None,
         };
         text_box.apply(&mut text_package, &slide)?;
+        let text_slide_xml = part_xml(&text_package, &slide.part)?;
+        assert_slide_namespaces(&text_slide_xml);
         let text_box_xml = inserted_element_xml(&text_package, &slide.part, "sp")?;
         assert_eq!(text_box_xml, golden(SP_EXPECTED));
         assert_contains_bounds(&text_box_xml, &fixed_bounds());
+        assert!(
+            text_box_xml.contains(r#"<p:cNvPr id="2" name="TextBox 2"/>"#),
+            "add_text_box must allocate max(existing cNvPr id) + 1 and use the default name"
+        );
+        assert!(
+            text_box_xml.contains(r#"<p:cNvSpPr txBox="1"/>"#),
+            "add_text_box must mark the shape as a text box"
+        );
+        assert!(
+            text_box_xml.contains(
+                r#"<a:bodyPr wrap="square" rtlCol="0"><a:spAutoFit/></a:bodyPr><a:lstStyle/>"#
+            ),
+            "add_text_box must emit the deterministic default body style"
+        );
+        assert!(
+            text_box_xml.contains(r#"<a:rPr lang="en-US" dirty="0"/>"#),
+            "add_text_box default run style must inherit font size, color, and typeface"
+        );
 
         Ok(())
     }
@@ -946,6 +980,38 @@ mod construction {
             r#"<a:ext cx="{}" cy="{}"/>"#,
             bounds.cx, bounds.cy
         )));
+    }
+
+    fn assert_slide_namespaces(xml: &str) {
+        assert!(
+            xml.contains(r#"xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main""#),
+            "constructed slide XML must declare the presentation namespace"
+        );
+        assert!(
+            xml.contains(r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main""#),
+            "constructed slide XML must declare the DrawingML namespace"
+        );
+        assert!(
+            xml.contains(
+                r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#
+            ),
+            "constructed slide XML must declare the relationships namespace"
+        );
+        assert_eq!(
+            xml.matches("xmlns:p=").count(),
+            1,
+            "constructed slide XML must not duplicate the presentation namespace"
+        );
+        assert_eq!(
+            xml.matches("xmlns:a=").count(),
+            1,
+            "constructed slide XML must not duplicate the DrawingML namespace"
+        );
+        assert_eq!(
+            xml.matches("xmlns:r=").count(),
+            1,
+            "constructed slide XML must not duplicate the relationships namespace"
+        );
     }
 
     fn serialize_element(element: &XmlElement) -> Result<String> {
