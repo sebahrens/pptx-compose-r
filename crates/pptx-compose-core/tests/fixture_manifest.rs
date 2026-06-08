@@ -1,7 +1,35 @@
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
+const REQUIRED_FIXTURE_FAMILIES: &[&str] = &[
+    "legacy/",
+    "minimal/",
+    "powerpoint/",
+    "libreoffice/",
+    "google-slides/",
+    "media/",
+    "charts/",
+    "embedded/",
+    "malformed/",
+];
+
+const MANIFEST_FIXTURE_FAMILIES: &[&str] = &[
+    "legacy/",
+    "minimal/",
+    "powerpoint/",
+    "libreoffice/",
+    "google-slides/",
+    "media/",
+    "charts/",
+    "embedded/",
+    "malformed/",
+    "real-world/",
+];
+
 mod manifest {
+    use std::path::Path;
+
+    use super::REQUIRED_FIXTURE_FAMILIES;
     use super::fixtures::{fixture_path, load_manifest};
 
     #[test]
@@ -20,6 +48,52 @@ mod manifest {
                 entry.path
             );
         }
+    }
+
+    #[test]
+    fn every_required_family_pptx_has_manifest_entry() {
+        let manifest = load_manifest();
+
+        for family in REQUIRED_FIXTURE_FAMILIES {
+            let family_path = fixture_path(family);
+            let entries = std::fs::read_dir(&family_path).unwrap_or_else(|error| {
+                panic!(
+                    "could not read fixture family {}: {error}",
+                    family_path.display()
+                )
+            });
+
+            for entry in entries {
+                let entry = entry.unwrap_or_else(|error| {
+                    panic!(
+                        "could not read fixture family entry {}: {error}",
+                        family_path.display()
+                    )
+                });
+                let path = entry.path();
+                if !is_pptx(&path) {
+                    continue;
+                }
+
+                let rel_path = format!(
+                    "{}{}",
+                    family,
+                    path.file_name()
+                        .expect("fixture file has a file name")
+                        .to_string_lossy()
+                );
+                assert!(
+                    manifest.contains_path(&rel_path),
+                    "fixture manifest must include PPTX fixture `{rel_path}`"
+                );
+            }
+        }
+    }
+
+    fn is_pptx(path: &Path) -> bool {
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pptx"))
     }
 }
 
@@ -49,18 +123,7 @@ mod corpus {
             );
         }
 
-        for required_prefix in [
-            "legacy/",
-            "minimal/",
-            "powerpoint/",
-            "libreoffice/",
-            "google-slides/",
-            "media/",
-            "charts/",
-            "embedded/",
-            "malformed/",
-            "real-world/",
-        ] {
+        for required_prefix in super::MANIFEST_FIXTURE_FAMILIES {
             assert!(
                 manifest.has_path_prefix(required_prefix),
                 "fixture manifest must include fixture family `{required_prefix}`"

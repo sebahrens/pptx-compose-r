@@ -64,6 +64,11 @@ impl FixtureManifest {
             .iter()
             .filter(move |entry| entry.has_feature(feature))
     }
+
+    #[allow(dead_code)]
+    pub fn contains_path(&self, path: &str) -> bool {
+        self.entries.iter().any(|entry| entry.path == path)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
