@@ -25,7 +25,6 @@ mod manifest {
 
 mod corpus {
     use pptx_compose_core::{
-        opc::package::Package,
         validation::{FindingCode, Severity, ValidationMode, ValidationStatus, validate_package},
         xml::parser::parse_document,
         zip::reader::from_bytes,
@@ -131,12 +130,8 @@ mod corpus {
             [error.code().as_str()],
         );
 
-        let mut package = Package::new();
-        for entry in entries {
-            package
-                .insert_zip_entry(entry.name.zip_entry_name(), entry.bytes)
-                .expect("malformed fixture entries are valid OPC part names");
-        }
+        let package = super::fixtures::package_from_entries(&entries)
+            .expect("malformed fixture entries hydrate as an OPC package");
 
         let outcome = validate_package(&package, ValidationMode::NoEdit);
 
