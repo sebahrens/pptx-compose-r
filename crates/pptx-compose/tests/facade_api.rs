@@ -407,6 +407,114 @@ fn find_text_returns_selector_ready_hits() {
 }
 
 #[test]
+fn find_text_selector_can_replace_run_fragmented_match() {
+    let bytes = text_deck_with_slide(&fragmented_text_slide());
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fragmented deck opens");
+    let hit = document
+        .find_text(FindTextRequest {
+            query: "Original title".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds")
+        .matches
+        .into_iter()
+        .next()
+        .expect("fragmented text hit exists");
+
+    assert_eq!(hit.matched_text, "Original title");
+    let run = hit
+        .selector
+        .run
+        .as_ref()
+        .expect("full-run match exposes run selector");
+    assert_eq!(run.paragraph_index, 0);
+    assert_eq!(run.run_index, 0);
+    assert_eq!(run.run_end_index, Some(1));
+
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-fragmented-text",
+        vec![serde_json::json!({
+            "operation_id": "replace-fragmented-title",
+            "op": "replace_text",
+            "selector": serde_json::to_value(&hit.selector).expect("selector serializes"),
+            "mode": "run_scoped",
+            "text": "Localized title",
+            "match": hit.matched_text
+        })],
+    );
+    document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("run-fragmented replacement applies");
+
+    let updated = document
+        .find_text(FindTextRequest {
+            query: "Localized title".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds after replacement");
+    assert_eq!(updated.matches.len(), 1);
+}
+
+#[test]
+fn replace_text_reaches_shapes_in_nested_groups() {
+    let bytes = text_deck_with_slide(&nested_group_text_slide());
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("nested group deck opens");
+    let hit = document
+        .find_text(FindTextRequest {
+            query: "Nested title".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds")
+        .matches
+        .into_iter()
+        .next()
+        .expect("nested group text hit exists");
+
+    assert_eq!(hit.element_id, "slide-1:shape-6");
+    assert_eq!(
+        hit.selector
+            .run
+            .as_ref()
+            .expect("single run exposes run selector")
+            .run_index,
+        0
+    );
+
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-nested-group-text",
+        vec![serde_json::json!({
+            "operation_id": "replace-nested-title",
+            "op": "replace_text",
+            "selector": serde_json::to_value(&hit.selector).expect("selector serializes"),
+            "mode": "run_scoped",
+            "text": "Nested localized",
+            "match": hit.matched_text
+        })],
+    );
+    document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("nested group replacement applies");
+
+    let updated = document
+        .find_text(FindTextRequest {
+            query: "Nested localized".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds after replacement");
+    assert_eq!(updated.matches.len(), 1);
+}
+
+#[test]
 fn inspect_find_text_and_apply_use_identical_selector_guards() {
     let bytes = text_deck();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
@@ -3085,6 +3193,50 @@ fn text_slide_with_text(text: &str) -> String {
   </p:cSld>
 </p:sld>"#
     )
+}
+
+fn fragmented_text_slide() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="3" name="Fragmented Title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Original </a:t></a:r><a:r><a:t>title</a:t></a:r></a:p></p:txBody>
+      </p:sp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+        .to_owned()
+}
+
+fn nested_group_text_slide() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:grpSp>
+        <p:nvGrpSpPr><p:cNvPr id="4" name="Outer Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+        <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5000000" cy="5000000"/><a:chOff x="0" y="0"/><a:chExt cx="5000000" cy="5000000"/></a:xfrm></p:grpSpPr>
+        <p:grpSp>
+          <p:nvGrpSpPr><p:cNvPr id="5" name="Inner Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+          <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5000000" cy="5000000"/><a:chOff x="0" y="0"/><a:chExt cx="5000000" cy="5000000"/></a:xfrm></p:grpSpPr>
+          <p:sp>
+            <p:nvSpPr><p:cNvPr id="6" name="Nested Title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+            <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+            <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Nested title</a:t></a:r></a:p></p:txBody>
+          </p:sp>
+        </p:grpSp>
+      </p:grpSp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+        .to_owned()
 }
 
 fn two_text_shapes_slide() -> String {

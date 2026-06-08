@@ -375,6 +375,8 @@ pub struct ElementSelector {
     pub selector_type: String,
     pub id: String,
     pub guards: SelectorGuards,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<FindTextRunSelector>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -385,6 +387,17 @@ pub struct SelectorGuards {
     pub part: String,
     pub text_hash: String,
     pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FindTextRunSelector {
+    pub paragraph_index: u32,
+    pub run_index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_end_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_hash: Option<String>,
 }
 
 impl ImageView {

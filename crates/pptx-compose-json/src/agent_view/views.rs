@@ -42,10 +42,10 @@ use serde_json::Value;
 use super::{
     AccessibilityView, AgentView, AutofitKind, BodyPrView, Bounds, Capabilities, Editable,
     EditableSupport, ElementKind, ElementPageView, ElementSelector, ElementView, FindTextResult,
-    FindTextScope, ImageView, IntrinsicSizePx, Paragraph, ParagraphDefaultsView, PlaceholderView,
-    PresentationView, Run, SelectorGuards, SlideView, StyleConfidence, StyleSummary, TableCell,
-    TableCellRef, TableRow, TableView, TextLayoutView, TextMatch, TextSpan, TextView,
-    TruncationMarker, XmlLocation,
+    FindTextRunSelector, FindTextScope, ImageView, IntrinsicSizePx, Paragraph,
+    ParagraphDefaultsView, PlaceholderView, PresentationView, Run, SelectorGuards, SlideView,
+    StyleConfidence, StyleSummary, TableCell, TableCellRef, TableRow, TableView, TextLayoutView,
+    TextMatch, TextSpan, TextView, TruncationMarker, XmlLocation,
     pagination::{CursorScope, ViewMeta, bounded_limit, cursor_offset, paginate},
 };
 use crate::{
@@ -562,6 +562,7 @@ fn collect_text_view_matches(
                     text_hash: guard_text_hash.clone(),
                     fingerprint: element.fingerprint.clone(),
                 },
+                run: run_selector_for_span(text, span),
             },
             cell,
         });
@@ -624,6 +625,50 @@ fn substring_by_char_span(text: &str, span: TextSpan) -> String {
         .skip(span.start as usize)
         .take(span.end.saturating_sub(span.start) as usize)
         .collect()
+}
+
+fn run_selector_for_span(text: &TextView, span: TextSpan) -> Option<FindTextRunSelector> {
+    if span.start >= span.end {
+        return None;
+    }
+
+    let mut paragraph_start = 0_u32;
+    for (paragraph_index, paragraph) in text.paragraphs.iter().enumerate() {
+        let paragraph_index = u32::try_from(paragraph_index).ok()?;
+        let mut run_ranges = Vec::new();
+        let mut cursor = paragraph_start;
+        for (run_index, run) in paragraph.runs.iter().enumerate() {
+            let run_index = u32::try_from(run_index).ok()?;
+            let run_start = cursor;
+            cursor = cursor.checked_add(u32::try_from(run.text.chars().count()).ok()?)?;
+            run_ranges.push((run_index, run_start, cursor, run.text.as_str()));
+        }
+        let paragraph_end = cursor;
+        if span.start >= paragraph_start && span.end <= paragraph_end {
+            let start = run_ranges
+                .iter()
+                .find(|(_, run_start, _, _)| *run_start == span.start)?;
+            let end = run_ranges
+                .iter()
+                .find(|(_, _, run_end, _)| *run_end == span.end)?;
+            if start.0 > end.0 {
+                return None;
+            }
+            let selected = run_ranges
+                .iter()
+                .filter(|(run_index, _, _, _)| *run_index >= start.0 && *run_index <= end.0)
+                .map(|(_, _, _, run_text)| *run_text)
+                .collect::<String>();
+            return Some(FindTextRunSelector {
+                paragraph_index,
+                run_index: start.0,
+                run_end_index: (end.0 > start.0).then_some(end.0),
+                text_hash: Some(text_hash::text_hash(&selected)),
+            });
+        }
+        paragraph_start = paragraph_end;
+    }
+    None
 }
 
 fn page_slide_summaries(
@@ -1025,7 +1070,7 @@ fn project_placeholder(element: &XmlElement, layout_part: Option<&str>) -> Optio
 }
 
 fn project_text_layout(element: &XmlElement) -> Option<TextLayoutView> {
-    let tx_body = first_descendant(element, "txBody")?;
+    let tx_body = child_element(element, "txBody")?;
     let body_pr = child_element(tx_body, "bodyPr").map(project_body_pr);
     let paragraph_defaults = first_descendant(tx_body, "pPr").and_then(project_paragraph_defaults);
     Some(TextLayoutView {
@@ -1207,7 +1252,7 @@ fn projected_element_text(
     if core_kind == CoreElementKind::GraphicFrameTable {
         return Ok(None);
     }
-    if let Some(tx_body) = first_descendant(element, "txBody") {
+    if let Some(tx_body) = child_element(element, "txBody") {
         return Ok(Some(project_text(tx_body)));
     }
     if !matches!(

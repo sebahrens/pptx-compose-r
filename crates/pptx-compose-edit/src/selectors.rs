@@ -448,7 +448,7 @@ fn element_text_hash(
         let normalized = table_text_normalized(element);
         return Ok((!normalized.is_empty()).then(|| text_hash::text_hash(&normalized)));
     }
-    if let Some(tx_body) = first_descendant(element, "txBody") {
+    if let Some(tx_body) = child_element(element, "txBody") {
         let text_body = read_text_body(tx_body);
         return Ok(Some(text_hash::text_hash(&text_body.normalized)));
     }
