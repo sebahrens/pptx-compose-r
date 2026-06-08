@@ -31,7 +31,7 @@ mod eval_transcripts {
     }
 
     #[test]
-    fn cli_replace_title_golden_transcript() {
+    fn cli_replace_title_transcript_replays() {
         assert_golden_transcript("replace-title");
     }
 
@@ -62,16 +62,16 @@ mod eval_transcripts {
         for case_name in CLI_CASES {
             let case_dir = repo_root.join("evals").join("cli").join(case_name);
             assert!(case_dir.is_dir(), "{case_name}: case directory exists");
-            for file_name in [
-                "input-ref.txt",
-                "instruction.txt",
-                "expected.transcript.json",
-            ] {
+            for file_name in ["input-ref.txt", "instruction.txt"] {
                 assert!(
                     case_dir.join(file_name).exists(),
                     "{case_name}: missing {file_name}"
                 );
             }
+            assert!(
+                transcript_path(&case_dir, case_name).exists(),
+                "{case_name}: missing transcript JSON"
+            );
             if case_requires_patch(case_name) {
                 assert!(
                     case_dir.join("patch.json").exists(),
@@ -86,7 +86,7 @@ mod eval_transcripts {
         let repo_root = repo_root();
         for case_name in CLI_CASES {
             let case_dir = repo_root.join("evals").join("cli").join(case_name);
-            let transcript = read_transcript(&case_dir.join("expected.transcript.json"), case_name);
+            let transcript = read_transcript(&transcript_path(&case_dir, case_name), case_name);
             assert_eq!(
                 transcript.schema, "pptx-compose.cli_eval_transcript.v1",
                 "{case_name}: transcript schema"
@@ -174,7 +174,7 @@ mod eval_transcripts {
     impl EvalCase {
         fn load(repo_root: &Path, case_name: &str) -> Self {
             let case_dir = repo_root.join("evals").join("cli").join(case_name);
-            let transcript_path = case_dir.join("expected.transcript.json");
+            let transcript_path = transcript_path(&case_dir, case_name);
             let transcript = read_transcript(&transcript_path, case_name);
             let temp_dir = unique_temp_dir(case_name);
             fs::create_dir_all(&temp_dir)
@@ -336,6 +336,15 @@ mod eval_transcripts {
                 .unwrap_or_else(|err| panic!("{case_name}: transcript should read: {err}")),
         )
         .unwrap_or_else(|err| panic!("{case_name}: transcript should parse: {err}"))
+    }
+
+    fn transcript_path(case_dir: &Path, case_name: &str) -> PathBuf {
+        let canonical = case_dir.join(format!("{case_name}.transcript.json"));
+        if canonical.exists() {
+            canonical
+        } else {
+            case_dir.join("expected.transcript.json")
+        }
     }
 
     fn patch_operation_count(patch_path: &Path) -> usize {
