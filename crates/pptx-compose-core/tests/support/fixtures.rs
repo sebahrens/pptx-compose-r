@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Component, Path, PathBuf},
 };
 
@@ -11,6 +11,7 @@ use pptx_compose_core::{
         part_name::PartName,
         relationships::{Relationship, RelationshipSource},
     },
+    validation::{Severity, ValidationOutcome, ValidationStatus},
     xml::{document::XmlElement, parser::parse_document},
     zip::reader::RawEntry,
 };
@@ -96,6 +97,11 @@ impl FixtureManifest {
             .iter()
             .filter(move |entry| entry.has_invariant(invariant))
             .collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn roundtrip_entries(&self) -> Vec<&FixtureEntry> {
+        self.entries_with_invariant("roundtrip")
     }
 
     #[allow(dead_code)]
@@ -201,6 +207,13 @@ pub fn fixture_path(rel: &str) -> PathBuf {
     fixtures_root().join(rel)
 }
 
+#[allow(dead_code)]
+pub fn read_fixture_bytes(entry: &FixtureEntry) -> Vec<u8> {
+    let path = fixture_path(&entry.path);
+    std::fs::read(&path)
+        .unwrap_or_else(|error| panic!("could not read fixture {}: {error}", path.display()))
+}
+
 pub fn assert_expected_warnings<I, S>(
     fixture: &str,
     expected_warnings: &[String],
@@ -228,6 +241,66 @@ pub fn assert_expected_warnings<I, S>(
     );
 }
 
+#[allow(dead_code)]
+pub fn assert_valid_with_expected_warnings(fixture: &FixtureEntry, validation: &ValidationOutcome) {
+    assert_eq!(
+        validation.status,
+        ValidationStatus::Valid,
+        "{}: no-edit package validation failed: {:#?}",
+        fixture.path,
+        validation.findings
+    );
+    assert_expected_warnings(
+        &fixture.path,
+        &fixture.expected_warnings,
+        validation
+            .findings
+            .iter()
+            .filter(|finding| finding.severity == Severity::Warning)
+            .map(|finding| finding_code_to_string(finding.code)),
+    );
+}
+
+#[allow(dead_code)]
+pub fn assert_equal_part_sets(
+    original_entries: &[RawEntry],
+    written_entries: &[RawEntry],
+    fixture: &str,
+) {
+    let original_names = part_names(original_entries);
+    let written_names = part_names(written_entries);
+
+    assert_eq!(
+        written_names, original_names,
+        "{fixture}: written package must contain exactly the original part set"
+    );
+}
+
+#[allow(dead_code)]
+pub fn assert_byte_identical_parts(
+    original_entries: &[RawEntry],
+    written_entries: &[RawEntry],
+    fixture: &str,
+) {
+    let written_by_name = written_entries
+        .iter()
+        .map(|entry| (entry.name.clone(), entry))
+        .collect::<BTreeMap<_, _>>();
+
+    for original_entry in original_entries {
+        let written_entry = written_by_name
+            .get(&original_entry.name)
+            .unwrap_or_else(|| {
+                panic!("{fixture}: written package dropped {}", original_entry.name)
+            });
+        assert_eq!(
+            written_entry.bytes, original_entry.bytes,
+            "{fixture}: part {} changed in a no-edit round trip",
+            original_entry.name
+        );
+    }
+}
+
 pub fn package_from_entries(entries: &[RawEntry]) -> Result<Package> {
     let mut package = Package::new();
     for entry in entries {
@@ -247,6 +320,20 @@ fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("fixtures")
+}
+
+fn part_names(entries: &[RawEntry]) -> BTreeSet<PartName> {
+    entries.iter().map(|entry| entry.name.clone()).collect()
+}
+
+fn finding_code_to_string<T>(code: T) -> String
+where
+    T: serde::Serialize,
+{
+    serde_json::to_value(code)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unserializable_finding_code".to_owned())
 }
 
 fn hydrate_content_types(package: &mut Package) -> Result<()> {
