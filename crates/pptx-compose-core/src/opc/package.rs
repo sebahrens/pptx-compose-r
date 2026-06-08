@@ -1,4 +1,7 @@
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    io::{Seek, Write},
+};
 
 use crate::{
     error::{Error, Result},
@@ -11,7 +14,11 @@ use crate::{
             resolve_internal_target,
         },
     },
-    zip::{limits::OpenOptions, reader::RawEntry},
+    zip::{
+        limits::OpenOptions,
+        reader::RawEntry,
+        writer::{WriteOptions, write_package_preserve},
+    },
 };
 
 pub const OFFICE_DOCUMENT_REL_TYPE: &str =
@@ -203,6 +210,13 @@ impl Package {
 
     pub fn mark_dirty(&mut self, part_name: PartName) {
         self.dirty_parts.insert(part_name);
+    }
+
+    pub fn write<W>(&self, writer: W, options: &WriteOptions) -> Result<W>
+    where
+        W: Write + Seek,
+    {
+        write_package_preserve(self, writer, options)
     }
 }
 

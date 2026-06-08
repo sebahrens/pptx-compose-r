@@ -6,6 +6,10 @@ pub mod sniff;
 pub mod writer;
 
 pub use reader::{RawEntry, ZipEntry, read_zip_entries};
+pub use writer::{
+    DirtyEntry, WriteEntry, WriteMode, WriteOptions, write_package_preserve, write_package_vec,
+    write_vec, write_writer, write_writer_with_options,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZipEntryMetadata {

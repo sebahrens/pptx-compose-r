@@ -1,15 +1,21 @@
-use std::io::{Cursor, Read, Seek, Write};
+use std::{
+    collections::BTreeMap,
+    io::{Cursor, Read, Seek, Write},
+};
 
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 use crate::{
     error::{Error, ErrorCode, Result},
+    opc::{package::Package, part_name::PartName},
+    validation::{ValidationMode, ValidationStatus, validate_package},
     zip::{ZipEntryMetadata, reader::RawEntry},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WriteOptions {
     pub mode: WriteMode,
+    pub validate_on_write: bool,
     pub compression_method: zip::CompressionMethod,
 }
 
@@ -17,6 +23,7 @@ impl Default for WriteOptions {
     fn default() -> Self {
         Self {
             mode: WriteMode::Preserve,
+            validate_on_write: true,
             compression_method: zip::CompressionMethod::Deflated,
         }
     }
@@ -40,6 +47,32 @@ pub struct DirtyEntry<'a> {
     pub name: &'a str,
     pub bytes: &'a [u8],
     pub meta: &'a ZipEntryMetadata,
+}
+
+pub fn write_package_vec(package: &Package, options: &WriteOptions) -> Result<Vec<u8>> {
+    let mut output = Cursor::new(Vec::new());
+    write_package_preserve(package, &mut output, options)?;
+    Ok(output.into_inner())
+}
+
+pub fn write_package_preserve<W>(package: &Package, output: W, options: &WriteOptions) -> Result<W>
+where
+    W: Write + Seek,
+{
+    if options.validate_on_write {
+        validate_write(package)?;
+    }
+
+    let dirty_metas = dirty_metadata_for_package(package);
+    let entries = write_entries_for_package(package, &dirty_metas);
+    let mut writer = PackageZipWriter::new(output, options);
+    for entry in entries {
+        let WriteEntry::Dirty(entry) = entry else {
+            continue;
+        };
+        writer.write_dirty(entry.name, entry.bytes, entry.meta)?;
+    }
+    writer.finish()
 }
 
 pub fn write_vec(source_package: &[u8], entries: &[WriteEntry<'_>]) -> Result<Vec<u8>> {
@@ -186,7 +219,7 @@ where
 
     fn compression_method(&self, meta: &ZipEntryMetadata) -> zip::CompressionMethod {
         match self.options.mode {
-            WriteMode::Preserve => self.options.compression_method,
+            WriteMode::Preserve => meta.compression_method,
             WriteMode::Deterministic => {
                 if meta.is_dir {
                     zip::CompressionMethod::Stored
@@ -255,6 +288,87 @@ impl WriteEntry<'_> {
             WriteEntry::Clean(entry) => &entry.meta,
             WriteEntry::Dirty(entry) => entry.meta,
         }
+    }
+}
+
+fn validate_write(package: &Package) -> Result<()> {
+    let mode = if package.dirty_parts().is_empty() {
+        ValidationMode::NoEdit
+    } else {
+        ValidationMode::Edited
+    };
+    let outcome = validate_package(package, mode);
+    if outcome.status == ValidationStatus::Valid {
+        return Ok(());
+    }
+
+    Err(Error::new(
+        ErrorCode::ValidationFailed,
+        format!(
+            "Package validation blocked write: {} fatal findings and {} error findings.",
+            outcome.summary.fatal, outcome.summary.errors
+        ),
+    ))
+}
+
+fn write_entries_for_package<'a>(
+    package: &'a Package,
+    dirty_metas: &'a BTreeMap<PartName, ZipEntryMetadata>,
+) -> Vec<WriteEntry<'a>> {
+    let mut entries = package
+        .parts()
+        .iter()
+        .filter_map(|part| {
+            dirty_metas.get(part.name()).map(|meta| {
+                WriteEntry::Dirty(DirtyEntry {
+                    name: part.original_zip_entry_name(),
+                    bytes: part.bytes(),
+                    meta,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+
+    entries.sort_by(|left, right| {
+        left.meta()
+            .entry_index
+            .cmp(&right.meta().entry_index)
+            .then_with(|| left.name().cmp(right.name()))
+    });
+    entries
+}
+
+fn dirty_metadata_for_package(package: &Package) -> BTreeMap<PartName, ZipEntryMetadata> {
+    package
+        .parts()
+        .iter()
+        .enumerate()
+        .map(|(fallback_index, part)| {
+            let mut meta = part.zip_metadata().clone();
+            meta.uncompressed_size = part.bytes().len() as u64;
+            if meta.entry_index == usize::MAX {
+                meta = dirty_zip_metadata(
+                    fallback_index,
+                    part.original_zip_entry_name(),
+                    part.bytes(),
+                );
+            }
+            (part.name().clone(), meta)
+        })
+        .collect()
+}
+
+fn dirty_zip_metadata(index: usize, name: &str, bytes: &[u8]) -> ZipEntryMetadata {
+    ZipEntryMetadata {
+        entry_index: index,
+        original_name: name.to_owned(),
+        compression_method: zip::CompressionMethod::Deflated,
+        crc32: 0,
+        compressed_size: 0,
+        uncompressed_size: bytes.len() as u64,
+        last_modified: None,
+        external_attrs: None,
+        is_dir: false,
     }
 }
 
@@ -343,6 +457,45 @@ fn deterministic_is_stable_cross_run() {
         assert_eq!(
             compressed_bytes(&first, index),
             compressed_bytes(package, index)
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn preserve_mode_keeps_unknown_entry_bytes() {
+    use crate::{
+        opc::package::Package,
+        zip::{limits::OpenOptions, reader::from_bytes},
+    };
+
+    let package_bytes = include_bytes!("../../../../fixtures/minimal.pptx");
+    let entries = from_bytes(package_bytes).expect("minimal fixture reads");
+    let package =
+        Package::from_zip_entries(&entries, &OpenOptions::default()).expect("package loads");
+
+    let written = write_package_vec(&package, &WriteOptions::default())
+        .expect("package writes in preserve mode");
+    let written_entries = from_bytes(&written).expect("written package reads");
+
+    let original_by_name = entries
+        .iter()
+        .map(|entry| (entry.meta.original_name.as_str(), entry.bytes.as_slice()))
+        .collect::<BTreeMap<_, _>>();
+    let written_by_name = written_entries
+        .iter()
+        .map(|entry| (entry.meta.original_name.as_str(), entry.bytes.as_slice()))
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(
+        written_by_name.keys().collect::<Vec<_>>(),
+        original_by_name.keys().collect::<Vec<_>>()
+    );
+    for (name, original_bytes) in original_by_name {
+        assert_eq!(
+            written_by_name.get(name).copied(),
+            Some(original_bytes),
+            "entry {name} changed"
         );
     }
 }
