@@ -117,8 +117,10 @@ validation.
 Newlines in whole-element replacement text must have a documented mapping. V1
 maps `\n` to PowerPoint paragraphs (hard breaks), never soft `a:br` breaks, and
 reports the chosen mapping in the patch report. For `mode: run_scoped`, `text`
-is literal run text and line-break characters (`\n` or `\r`) are invalid unless a
-future soft-break operation is added.
+is literal run text except that U+000B vertical tab is the V1 in-run soft-break
+sentinel and serializes as paragraph-level `<a:br/>` between cloned run
+segments. Raw U+000B MUST NOT be written into XML text. Line-break characters
+`\n` and `\r` remain invalid in `run_scoped` text.
 
 Targets include text-capable `text_box`/`shape` elements, table cells addressed
 with `cell: { "row": N, "col": N }`, supported slide speaker-notes text, and
@@ -260,9 +262,11 @@ Mutation contract:
   `a:hlinkClick`/`a:hlinkMouseOver`, sibling `a:fld`, and sibling `a:br`
   untouched. It MUST NOT rewrite `a:p`, `a:txBody`, `bodyPr`, `lstStyle`, or
   unrelated paragraph children.
-- Replacement text in `run_scoped` mode is literal run text. `\n` and `\r` are invalid
-  unless a later spec adds a soft-break operation; it MUST NOT be mapped to
-  paragraphs or `a:br` by this mode.
+- Replacement text in `run_scoped` mode is literal run text, with U+000B
+  vertical tab reserved as the V1 soft-break sentinel. Implementations MUST
+  serialize that sentinel as `<a:br/>` between cloned run segments and MUST NOT
+  write raw U+000B into an XML text node. `\n` and `\r` are invalid and MUST NOT
+  be mapped to paragraphs or `a:br` by this mode.
 
 Guard semantics:
 

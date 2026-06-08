@@ -5,7 +5,10 @@ use quick_xml::{
 
 use crate::error::{Error, ErrorCode, Result};
 
-use super::document::{XmlAttribute, XmlDocument, XmlElement, XmlNode};
+use super::{
+    chars::validate_xml_chars,
+    document::{XmlAttribute, XmlDocument, XmlElement, XmlNode},
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WriteOptions {
@@ -38,7 +41,12 @@ pub fn write_document(doc: &XmlDocument, opts: &WriteOptions) -> Result<Vec<u8>>
 fn write_node(writer: &mut Writer<Vec<u8>>, node: &XmlNode, opts: &WriteOptions) -> Result<()> {
     match node {
         XmlNode::Element(element) => write_element(writer, element, opts),
-        XmlNode::Text(text) => write_event(writer, Event::Text(BytesText::new(text))),
+        XmlNode::Text(text) => {
+            validate_xml_chars(text, "XML text").map_err(|error| {
+                Error::with_source(ErrorCode::WriteFailed, error.message().to_owned(), error)
+            })?;
+            write_event(writer, Event::Text(BytesText::new(text)))
+        }
         XmlNode::CData(cdata) => {
             for event in BytesCData::escaped(cdata) {
                 write_event(writer, Event::CData(event))?;
@@ -65,7 +73,7 @@ fn write_element(
     element: &XmlElement,
     opts: &WriteOptions,
 ) -> Result<()> {
-    let start = start_event(element, opts.mode == WriteMode::Deterministic);
+    let start = start_event(element, opts.mode == WriteMode::Deterministic)?;
     if element.children.is_empty() {
         return write_event(writer, Event::Empty(start));
     }
@@ -77,10 +85,13 @@ fn write_element(
     write_event(writer, Event::End(BytesEnd::new(element.name.raw.as_str())))
 }
 
-fn start_event(element: &XmlElement, deterministic: bool) -> BytesStart<'static> {
+fn start_event(element: &XmlElement, deterministic: bool) -> Result<BytesStart<'static>> {
     let mut start = BytesStart::new(element.name.raw.clone());
 
     for (name, value) in element.namespaces.declaration_attributes(deterministic) {
+        validate_xml_chars(value, "XML namespace declaration value").map_err(|error| {
+            Error::with_source(ErrorCode::WriteFailed, error.message().to_owned(), error)
+        })?;
         start.push_attribute((name.as_str(), value));
     }
 
@@ -95,10 +106,13 @@ fn start_event(element: &XmlElement, deterministic: bool) -> BytesStart<'static>
     }
 
     for attribute in attributes {
+        validate_xml_chars(&attribute.value, "XML attribute value").map_err(|error| {
+            Error::with_source(ErrorCode::WriteFailed, error.message().to_owned(), error)
+        })?;
         start.push_attribute((attribute.name.raw.as_str(), attribute.value.as_str()));
     }
 
-    start
+    Ok(start)
 }
 
 fn attribute_order(left: &&XmlAttribute, right: &&XmlAttribute) -> std::cmp::Ordering {

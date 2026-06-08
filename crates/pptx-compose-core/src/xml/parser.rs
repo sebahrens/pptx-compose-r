@@ -11,6 +11,7 @@ use crate::{
 };
 
 use super::{
+    chars::validate_xml_chars,
     document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
     namespaces::{NamespaceBinding, NamespaceTable},
 };
@@ -152,6 +153,7 @@ fn element_from_start(event: &BytesStart<'_>) -> Result<XmlElement> {
             .decoded_and_normalized_value(XmlVersion::default(), event.decoder())
             .map_err(|source| Error::parse_error("Could not decode XML attribute.", source))?
             .into_owned();
+        validate_xml_chars(&value, "XML attribute value")?;
         let namespace_declaration = namespace_declaration(&name, &value, &mut namespaces);
         attributes.push(XmlAttribute {
             name,
@@ -198,7 +200,9 @@ fn decode_text(event: &BytesText<'_>) -> Result<String> {
         .map_err(|source| Error::parse_error("Could not decode XML text.", source))?;
     let unescaped = escape::unescape(&decoded)
         .map_err(|source| Error::parse_error("Could not unescape XML text.", source))?;
-    Ok(unescaped.into_owned())
+    let text = unescaped.into_owned();
+    validate_xml_chars(&text, "XML text")?;
+    Ok(text)
 }
 
 #[cfg(test)]
@@ -253,6 +257,30 @@ fn rejects_truncated_xml_as_malformed_xml() {
 
     assert_eq!(error.code(), ErrorCode::MalformedXml);
     assert!(error.message().contains("before all elements were closed"));
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_xml_illegal_text_character_as_malformed_xml() {
+    use crate::error::ErrorCode;
+
+    let error = parse_document("<a>bad\u{000B}text</a>".as_bytes())
+        .expect_err("illegal XML text character must reject");
+
+    assert_eq!(error.code(), ErrorCode::MalformedXml);
+    assert!(error.message().contains("U+000B"));
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_xml_illegal_attribute_character_as_malformed_xml() {
+    use crate::error::ErrorCode;
+
+    let error = parse_document("<a value=\"bad\u{000B}text\"/>".as_bytes())
+        .expect_err("illegal XML attribute character must reject");
+
+    assert_eq!(error.code(), ErrorCode::MalformedXml);
+    assert!(error.message().contains("U+000B"));
 }
 
 #[cfg(test)]

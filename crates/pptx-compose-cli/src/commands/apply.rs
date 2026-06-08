@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    error::Error as StdError,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -322,11 +323,12 @@ pub(crate) fn write_options_from_args(args: &ApplyArgs) -> WriteOptions {
 
 fn apply_error(error: Error) -> CliError {
     if error.code() == pptx_compose::core::error::ErrorCode::InvalidInput {
-        CliError::invalid_input_with_source(
-            InvalidInputCause::PatchSchema,
-            "Patch input failed schema validation.",
-            error,
-        )
+        let message = if let Some(source) = StdError::source(&error) {
+            format!("{}: {source}", error.message())
+        } else {
+            error.message().to_owned()
+        };
+        CliError::invalid_input_with_source(InvalidInputCause::PatchSchema, message, error)
     } else {
         CliError::from_error(error)
     }
@@ -592,6 +594,12 @@ fn non_dry_run_writes_failed_report_without_output_pptx() {
 #[test]
 fn replace_text_writes_mutated_output() {
     test_support::replace_text_writes_mutated_output();
+}
+
+#[cfg(test)]
+#[test]
+fn parse_patch_invalid_input_preserves_underlying_message() {
+    test_support::parse_patch_invalid_input_preserves_underlying_message();
 }
 
 #[cfg(test)]
@@ -1117,6 +1125,31 @@ mod test_support {
         fs::remove_dir_all(root).expect("test dir removes");
     }
 
+    pub(super) fn parse_patch_invalid_input_preserves_underlying_message() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let patch = root.join("patch.json");
+        let output = root.join("output.pptx");
+        fs::create_dir_all(&root).expect("test dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        fs::write(&patch, removed_replace_text_policy_patch(&input_bytes))
+            .expect("patch fixture writes");
+
+        let err = apply(
+            args(&input, &patch, &output, false),
+            &permissions(&root),
+            OpenOptions::default(),
+        )
+        .expect_err("semantic patch invalid_input must fail");
+
+        assert_eq!(err.code(), ErrorCode::InvalidInput);
+        assert!(err.details().message.contains("overflow_policy"));
+        assert!(!err.details().message.contains("schema validation"));
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
     pub(super) fn dry_run_add_image_uses_media_manifest() {
         let root = unique_dir();
         let input = root.join("input.pptx");
@@ -1451,6 +1484,31 @@ mod test_support {
                 "op": "replace_text",
                 "element_id": "slide-1:shape-3",
                 "text": "Updated title"
+            }}]
+        }}"#
+        )
+        .into_bytes()
+    }
+
+    fn removed_replace_text_policy_patch(bytes: &[u8]) -> Vec<u8> {
+        let document_id = PresentationDocument::from_bytes(bytes)
+            .expect("fixture opens")
+            .validate()
+            .expect("fixture validates")
+            .document_id;
+        format!(
+            r#"{{
+            "schema": "pptx-compose.patch.v1",
+            "version": 1,
+            "document_id": "{document_id}",
+            "base_revision": 1,
+            "client_request_id": "apply-test-invalid-format-policy",
+            "operations": [{{
+                "operation_id": "replace-title",
+                "op": "replace_text",
+                "element_id": "slide-1:shape-3",
+                "text": "Updated title",
+                "overflow_policy": "allow"
             }}]
         }}"#
         )

@@ -8,6 +8,7 @@ use pptx_compose_core::{
     },
     provenance::text_hash,
     xml::{
+        chars::is_xml_char,
         document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
         parser::parse_document,
         writer::{WriteMode, WriteOptions, write_document},
@@ -222,6 +223,8 @@ impl ReplaceText {
         target: &ResolvedElement,
         tx_body: &XmlElement,
     ) -> Result<()> {
+        validate_xml_text(&self.text, false)
+            .map_err(|error| error.with_location(self.location(Some(target))))?;
         if self.run.is_some() {
             return Err(Error::new(
                 ErrorCode::InvalidInput,
@@ -877,12 +880,23 @@ fn replace_run_scoped_text(
     let indices = run_indices(tx_body, run, operation, target)?;
     let first_index = indices[0];
     let paragraph = paragraph_at_mut(tx_body, run.paragraph_index, operation, target)?;
-    let first_run = node_element_mut(&mut paragraph.children[first_index])
-        .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run node is not an element."))?;
-    replace_run_text(first_run, operation.text(), operation, target)?;
-    apply_run_style(first_run, operation.run_style());
     for remove_index in indices.iter().skip(1).rev() {
         paragraph.children.remove(*remove_index);
+    }
+    let first_run = paragraph.children[first_index]
+        .as_element()
+        .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run node is not an element."))?
+        .clone();
+    let replacement_nodes = run_scoped_replacement_nodes(
+        &first_run,
+        operation.text(),
+        operation.run_style(),
+        operation,
+        target,
+    )?;
+    paragraph.children[first_index] = replacement_nodes[0].clone();
+    for (offset, node) in replacement_nodes.into_iter().enumerate().skip(1) {
+        paragraph.children.insert(first_index + offset, node);
     }
     Ok(())
 }
@@ -1027,17 +1041,39 @@ fn replace_run_text(
     Ok(())
 }
 
+fn run_scoped_replacement_nodes(
+    run_template: &XmlElement,
+    text: &str,
+    run_style: Option<&TextBoxStyle>,
+    operation: &impl RunScopedTextOperation,
+    target: &ResolvedElement,
+) -> Result<Vec<XmlNode>> {
+    let mut nodes = Vec::new();
+    for (index, segment) in text.split('\u{000B}').enumerate() {
+        if index > 0 {
+            nodes.push(node(element("a:br", &[], Vec::new())));
+        }
+        let mut run = run_template.clone();
+        replace_run_text(&mut run, segment, operation, target)?;
+        apply_run_style(&mut run, run_style);
+        nodes.push(node(run));
+    }
+    Ok(nodes)
+}
+
 fn validate_run_scoped_text_body(
     operation: &impl RunScopedTextOperation,
     target: &ResolvedElement,
     tx_body: &XmlElement,
 ) -> Result<()> {
-    if operation.text().contains('\n') {
+    if operation.text().contains(['\n', '\r']) {
         return Err(
             Error::new(ErrorCode::InvalidInput, operation.newline_message())
                 .with_location(operation.location(Some(target))),
         );
     }
+    validate_xml_text(operation.text(), true)
+        .map_err(|error| error.with_location(operation.location(Some(target))))?;
     let default_run = RunSelector {
         paragraph_index: 0,
         run_index: 0,
@@ -1073,6 +1109,21 @@ fn validate_run_scoped_text_body(
     }
     validate_style("replace_text.run_style", operation.run_style())
         .map_err(|error| error.with_location(operation.location(Some(target))))?;
+    Ok(())
+}
+
+fn validate_xml_text(text: &str, allow_soft_break: bool) -> Result<()> {
+    if let Some(character) = text.chars().find(|character| {
+        !(is_xml_char(*character) || allow_soft_break && *character == '\u{000B}')
+    }) {
+        return Err(Error::new(
+            ErrorCode::InvalidInput,
+            format!(
+                "replace_text text contains XML 1.0 illegal character U+{:04X}.",
+                u32::from(character)
+            ),
+        ));
+    }
     Ok(())
 }
 

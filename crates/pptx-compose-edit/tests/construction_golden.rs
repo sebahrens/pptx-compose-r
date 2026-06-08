@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use pptx_compose_core::{
-    error::{Error, Result},
+    error::{Error, ErrorCode, Result},
     opc::{
         package::Package,
         part::Part,
@@ -351,6 +351,68 @@ mod construction_golden {
         assert!(output.contains(r#"<a:br/>"#));
         assert!(output.contains(r#"<a:r><a:t>Break</a:t></a:r>"#));
         assert_eq!(output.matches("<a:r>").count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn replace_text_run_scoped_maps_vertical_tab_to_soft_break() -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Line 1\u{000B}Line 2".to_owned(),
+            current_text_match: Some("First".to_owned()),
+            mode: ReplaceTextMode::RunScoped,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            allow_formatting_simplification: false,
+            run: Some(RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: None,
+                text_hash: None,
+            }),
+            run_style: None,
+        };
+
+        operation.apply(&mut package, &target)?;
+        let output = element_xml_at_path(&package, &slide_part, &[1])?;
+
+        assert!(output.contains(r#"<a:t>Line 1</a:t></a:r><a:br/><a:r>"#));
+        assert!(output.contains(r#"<a:t>Line 2</a:t></a:r>"#));
+        assert!(!output.contains('\u{000B}'));
+        assert!(output.contains(r#"<a:t>Second</a:t>"#));
+        Ok(())
+    }
+
+    #[test]
+    fn replace_text_run_scoped_rejects_carriage_return() -> Result<()> {
+        let mut package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Line 1\rLine 2".to_owned(),
+            current_text_match: Some("First".to_owned()),
+            mode: ReplaceTextMode::RunScoped,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            allow_formatting_simplification: false,
+            run: Some(RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: None,
+                text_hash: None,
+            }),
+            run_style: None,
+        };
+
+        let error = operation
+            .apply(&mut package, &target)
+            .expect_err("carriage returns are rejected for run-scoped text");
+
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+        assert!(error.message().contains("newline characters"));
         Ok(())
     }
 
