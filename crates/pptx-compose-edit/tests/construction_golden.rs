@@ -470,7 +470,7 @@ mod construction_golden {
             .expect_err("carriage returns are rejected for run-scoped text");
 
         assert_eq!(error.code(), ErrorCode::InvalidInput);
-        assert!(error.message().contains("newline characters"));
+        assert!(error.message().contains("line-break characters"));
         Ok(())
     }
 

@@ -1949,6 +1949,40 @@ fn replace_table_cell_text_edits_non_merged_cell_preserving_run_formatting() {
 }
 
 #[test]
+fn replace_table_cell_text_rejects_carriage_returns() {
+    let bytes = graphic_frame_deck_with_clean_extras();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "reject-table-cell-carriage-return",
+        vec![serde_json::json!({
+            "operation_id": "replace-table-cell-cr",
+            "op": "replace_text",
+            "element_id": "slide-1:graphic-8",
+            "cell": { "row": 0, "col": 0 },
+            "text": "North\rwest",
+            "match": "North"
+        })],
+    );
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("carriage-return rejection returns a failed report");
+
+    assert_eq!(report.status, PatchStatus::Failed);
+    assert_eq!(report.operation_reports[0].status, OperationStatus::Failed);
+    let error = report.operation_reports[0]
+        .error
+        .as_ref()
+        .expect("failed operation has an error");
+    assert_eq!(
+        error.code,
+        pptx_compose::json::schemas::ErrorCode::InvalidInput
+    );
+    assert!(error.message.contains("line-break characters"));
+}
+
+#[test]
 fn replace_text_edits_speaker_notes_via_slide_selector() {
     let bytes = notes_deck_with_clean_extras();
     let original_entries = from_bytes(&bytes).expect("original entries read");
@@ -1991,6 +2025,40 @@ fn replace_text_edits_speaker_notes_via_slide_selector() {
     let written_notes = entry_text(&written_entries, "ppt/notesSlides/notesSlide1.xml");
     assert!(written_notes.contains("<a:t>Updated speaker notes</a:t>"));
     assert!(!written_notes.contains("<a:t>Original speaker notes</a:t>"));
+}
+
+#[test]
+fn replace_notes_text_rejects_carriage_returns() {
+    let bytes = notes_deck_with_clean_extras();
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "reject-notes-carriage-return",
+        vec![serde_json::json!({
+            "operation_id": "replace-notes-cr",
+            "op": "replace_text",
+            "slide_id": "slide-1",
+            "run": { "paragraph_index": 0, "run_index": 0 },
+            "text": "Updated\rspeaker notes",
+            "match": "Original speaker notes"
+        })],
+    );
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("carriage-return rejection returns a failed report");
+
+    assert_eq!(report.status, PatchStatus::Failed);
+    assert_eq!(report.operation_reports[0].status, OperationStatus::Failed);
+    let error = report.operation_reports[0]
+        .error
+        .as_ref()
+        .expect("failed operation has an error");
+    assert_eq!(
+        error.code,
+        pptx_compose::json::schemas::ErrorCode::InvalidInput
+    );
+    assert!(error.message.contains("line-break characters"));
 }
 
 #[test]

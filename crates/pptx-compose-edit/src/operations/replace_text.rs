@@ -984,7 +984,7 @@ impl RunScopedTextOperation for ReplaceText {
     }
 
     fn newline_message(&self) -> &'static str {
-        "run_scoped replace_text text must not contain newline characters."
+        "run_scoped replace_text text must not contain line-break characters."
     }
 
     fn match_guard_message(&self) -> &'static str {
@@ -1033,7 +1033,7 @@ impl RunScopedTextOperation for ReplaceNotesText {
     }
 
     fn newline_message(&self) -> &'static str {
-        "replace_text notes target text must not contain newline characters."
+        "replace_text notes target text must not contain line-break characters."
     }
 
     fn match_guard_message(&self) -> &'static str {
@@ -1067,7 +1067,7 @@ impl RunScopedTextOperation for ReplaceTableCellText {
     }
 
     fn newline_message(&self) -> &'static str {
-        "replace_text table cell target text must not contain newline characters."
+        "replace_text table cell target text must not contain line-break characters."
     }
 
     fn match_guard_message(&self) -> &'static str {
