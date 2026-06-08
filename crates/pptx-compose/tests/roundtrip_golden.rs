@@ -36,7 +36,7 @@ mod roundtrip_golden {
             let roundtrip_fixtures = manifest
                 .entries
                 .iter()
-                .filter(|entry| entry.invariants.iter().any(|item| item == "roundtrip"))
+                .filter(|entry| entry.has_invariant("roundtrip"))
                 .collect::<Vec<_>>();
 
             assert!(
@@ -44,14 +44,10 @@ mod roundtrip_golden {
                 "fixture manifest must include at least one roundtrip fixture"
             );
             assert!(
-                roundtrip_fixtures.iter().any(|entry| entry
-                    .features
+                roundtrip_fixtures
                     .iter()
-                    .any(|feature| feature == "mc-alternate-content")
-                    && entry
-                        .features
-                        .iter()
-                        .any(|feature| feature == "unknown-part")),
+                    .any(|entry| entry.has_feature("mc-alternate-content")
+                        && entry.has_feature("unknown-part")),
                 "roundtrip fixtures must cover mc:AlternateContent and unknown parts"
             );
 
@@ -73,10 +69,7 @@ mod edits {
         let fixture = manifest
             .entries
             .iter()
-            .find(|entry| {
-                entry.invariants.iter().any(|item| item == "edit-add-image")
-                    && entry.features.iter().any(|feature| feature == "media")
-            })
+            .find(|entry| entry.has_invariant("edit-add-image") && entry.has_feature("media"))
             .expect("fixture manifest includes an add_image corpus fixture");
 
         let input = std::fs::read(fixtures::fixture_path(&fixture.path)).map_err(|source| {

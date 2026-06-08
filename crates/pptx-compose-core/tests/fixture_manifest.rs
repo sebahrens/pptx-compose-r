@@ -24,8 +24,6 @@ mod manifest {
 }
 
 mod corpus {
-    use std::collections::BTreeSet;
-
     use pptx_compose_core::{
         opc::package::Package,
         validation::{FindingCode, Severity, ValidationMode, ValidationStatus, validate_package},
@@ -39,24 +37,72 @@ mod corpus {
     fn manifest_covers_required_fixture_families() {
         let manifest = load_manifest();
 
-        let source_apps = manifest
-            .entries
-            .iter()
-            .map(|entry| entry.source_app.clone())
-            .collect::<BTreeSet<_>>();
-        assert!(source_apps.contains(&SourceApp::PowerPoint));
-        assert!(source_apps.contains(&SourceApp::LibreOffice));
-        assert!(source_apps.contains(&SourceApp::GoogleSlides));
-
-        for required_feature in ["media", "chart", "embedding", "malformed"] {
+        for source_app in [
+            SourceApp::PowerPoint,
+            SourceApp::LibreOffice,
+            SourceApp::GoogleSlides,
+            SourceApp::Legacy,
+            SourceApp::Synthetic,
+        ] {
             assert!(
-                manifest.entries.iter().any(|entry| entry
-                    .features
-                    .iter()
-                    .any(|feature| feature == required_feature)),
+                manifest.has_source_app(source_app),
+                "fixture manifest must include source_app `{source_app:?}`"
+            );
+        }
+
+        for required_prefix in [
+            "legacy/",
+            "minimal/",
+            "powerpoint/",
+            "libreoffice/",
+            "google-slides/",
+            "media/",
+            "charts/",
+            "embedded/",
+            "malformed/",
+            "real-world/",
+        ] {
+            assert!(
+                manifest.has_path_prefix(required_prefix),
+                "fixture manifest must include fixture family `{required_prefix}`"
+            );
+        }
+
+        for required_feature in [
+            "legacy-smoke",
+            "minimal-package",
+            "source-family",
+            "media",
+            "chart",
+            "embedding",
+            "malformed",
+            "real-world",
+        ] {
+            assert!(
+                manifest.has_feature(required_feature),
                 "fixture manifest must include feature `{required_feature}`"
             );
         }
+
+        for source_app in [
+            SourceApp::PowerPoint,
+            SourceApp::LibreOffice,
+            SourceApp::GoogleSlides,
+        ] {
+            assert!(
+                manifest
+                    .entries_with_feature("source-family")
+                    .any(|entry| entry.source_app == source_app),
+                "fixture manifest must include a source-family fixture for `{source_app:?}`"
+            );
+        }
+
+        assert!(
+            manifest
+                .entries_with_feature("real-world")
+                .any(|entry| entry.has_invariant("roundtrip")),
+            "fixture manifest must include a real-world roundtrip fixture"
+        );
     }
 
     #[test]
@@ -65,7 +111,7 @@ mod corpus {
         let malformed = manifest
             .entries
             .iter()
-            .find(|entry| entry.invariants.iter().any(|item| item == "malformed"))
+            .find(|entry| entry.has_invariant("malformed"))
             .expect("manifest includes a malformed fixture");
         let package =
             std::fs::read(fixture_path(&malformed.path)).expect("malformed fixture reads");
@@ -127,7 +173,7 @@ mod persistence {
             if !entry.path.ends_with(".pptx") {
                 continue;
             }
-            if entry.invariants.iter().any(|item| item == "malformed") {
+            if entry.has_invariant("malformed") {
                 continue;
             }
 
