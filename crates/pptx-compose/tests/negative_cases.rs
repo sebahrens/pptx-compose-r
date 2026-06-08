@@ -26,7 +26,7 @@ mod negative_cases {
     use super::*;
 
     #[test]
-    fn malformed_inputs_return_structured_errors() -> Result<()> {
+    fn invalid_inputs_fail_before_mutation() -> Result<()> {
         assert_open_failure(encrypted_cfbf(), ErrorCode::UnsupportedPackage);
         assert_open_failure(encrypted_zip(), ErrorCode::UnsupportedPackage);
         assert_open_failure(unsafe_path_fixture().to_vec(), ErrorCode::UnsafePath);
