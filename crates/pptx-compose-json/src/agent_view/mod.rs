@@ -93,6 +93,8 @@ pub struct ElementView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<TextView>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageView>,
 }
 
@@ -233,6 +235,28 @@ pub struct TextView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct TableView {
+    pub rows: Vec<TableRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TableRow {
+    pub row: u32,
+    pub cells: Vec<TableCell>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TableCell {
+    pub row: u32,
+    pub col: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<TextView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Paragraph {
     pub text: String,
     pub runs: Vec<Run>,
@@ -326,6 +350,15 @@ pub struct TextMatch {
     pub span: TextSpan,
     pub matched_text: String,
     pub selector: ElementSelector,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell: Option<TableCellRef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TableCellRef {
+    pub row: u32,
+    pub col: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -660,6 +693,7 @@ pub mod binary {
                     placeholder: None,
                     text_layout: None,
                     text: None,
+                    table: None,
                     image: Some(reference_image()),
                 }],
                 elements_page: None,

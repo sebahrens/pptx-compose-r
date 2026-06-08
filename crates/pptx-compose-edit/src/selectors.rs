@@ -444,6 +444,10 @@ fn element_text_hash(
     element: &XmlElement,
     kind: ElementKind,
 ) -> Result<Option<String>> {
+    if kind == ElementKind::GraphicFrameTable {
+        let normalized = table_text_normalized(element);
+        return Ok((!normalized.is_empty()).then(|| text_hash::text_hash(&normalized)));
+    }
     if let Some(tx_body) = first_descendant(element, "txBody") {
         let text_body = read_text_body(tx_body);
         return Ok(Some(text_hash::text_hash(&text_body.normalized)));
@@ -497,6 +501,28 @@ fn element_text_hash(
     }
 }
 
+fn table_text_normalized(element: &XmlElement) -> String {
+    let Some(table) = first_descendant(element, "tbl") else {
+        return String::new();
+    };
+    let normalized_parts = table
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .filter(|child| child.name.local_name == "tr")
+        .flat_map(|row| {
+            row.children
+                .iter()
+                .filter_map(XmlNode::as_element)
+                .filter(|child| child.name.local_name == "tc")
+        })
+        .filter_map(|cell| child_element(cell, "txBody"))
+        .map(read_text_body)
+        .filter_map(|body| (!body.normalized.is_empty()).then_some(body.normalized))
+        .collect::<Vec<_>>();
+    normalized_parts.join("\n")
+}
+
 fn collect_relationship_ids(element: &XmlElement, output: &mut Vec<String>) {
     for attribute in &element.attributes {
         if matches!(
@@ -547,6 +573,14 @@ fn first_descendant<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a
         }
     }
     None
+}
+
+fn child_element<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a XmlElement> {
+    element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .find(|child| child.name.local_name == local_name)
 }
 
 fn exactly_one<T>(

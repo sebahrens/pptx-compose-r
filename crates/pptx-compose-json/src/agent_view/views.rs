@@ -43,8 +43,9 @@ use super::{
     AccessibilityView, AgentView, AutofitKind, BodyPrView, Bounds, Capabilities, Editable,
     EditableSupport, ElementKind, ElementPageView, ElementSelector, ElementView, FindTextResult,
     FindTextScope, ImageView, IntrinsicSizePx, Paragraph, ParagraphDefaultsView, PlaceholderView,
-    PresentationView, Run, SelectorGuards, SlideView, StyleConfidence, StyleSummary,
-    TextLayoutView, TextMatch, TextSpan, TextView, TruncationMarker, XmlLocation,
+    PresentationView, Run, SelectorGuards, SlideView, StyleConfidence, StyleSummary, TableCell,
+    TableCellRef, TableRow, TableView, TextLayoutView, TextMatch, TextSpan, TextView,
+    TruncationMarker, XmlLocation,
     pagination::{CursorScope, ViewMeta, bounded_limit, cursor_offset, paginate},
 };
 use crate::{
@@ -446,40 +447,17 @@ fn collect_text_matches(
             continue;
         }
         for element in &slide.detail.elements {
-            let Some(text) = &element.text else {
-                continue;
-            };
-            for span in find_query_spans(&text.plain, query)? {
-                if seen < start {
-                    seen = seen.saturating_add(1);
-                    continue;
-                }
-                if seen >= stop_after {
-                    return Ok(matches);
-                }
-                matches.push(TextMatch {
-                    slide_id: slide.detail.id.clone(),
-                    slide_index: slide.detail.index,
-                    element_id: element.id.clone(),
-                    kind: element.kind,
-                    part: element.part.clone(),
-                    fingerprint: element.fingerprint.clone(),
-                    text_hash: text.text_hash.clone(),
-                    span,
-                    matched_text: substring_by_char_span(&text.plain, span),
-                    selector: ElementSelector {
-                        selector_type: "element_id".to_owned(),
-                        id: element.id.clone(),
-                        guards: SelectorGuards {
-                            slide_id: slide.detail.id.clone(),
-                            kind: element.kind,
-                            part: element.part.clone(),
-                            text_hash: text.text_hash.clone(),
-                            fingerprint: element.fingerprint.clone(),
-                        },
-                    },
-                });
-                seen = seen.saturating_add(1);
+            collect_element_text_matches(
+                element,
+                &slide,
+                query,
+                start,
+                stop_after,
+                &mut seen,
+                &mut matches,
+            )?;
+            if seen >= stop_after {
+                return Ok(matches);
             }
         }
     }
@@ -494,6 +472,102 @@ fn collect_text_matches(
     }
 
     Ok(matches)
+}
+
+fn collect_element_text_matches(
+    element: &ElementView,
+    slide: &SlideProjection,
+    query: &str,
+    start: u32,
+    stop_after: u32,
+    seen: &mut u32,
+    matches: &mut Vec<TextMatch>,
+) -> Result<(), JsonError> {
+    if let Some(table) = &element.table {
+        for row in &table.rows {
+            for cell in &row.cells {
+                let Some(text) = &cell.text else {
+                    continue;
+                };
+                collect_text_view_matches(
+                    element,
+                    slide,
+                    text,
+                    Some(TableCellRef {
+                        row: cell.row,
+                        col: cell.col,
+                    }),
+                    query,
+                    start,
+                    stop_after,
+                    seen,
+                    matches,
+                )?;
+                if *seen >= stop_after {
+                    return Ok(());
+                }
+            }
+        }
+        return Ok(());
+    }
+    if let Some(text) = &element.text {
+        collect_text_view_matches(
+            element, slide, text, None, query, start, stop_after, seen, matches,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_text_view_matches(
+    element: &ElementView,
+    slide: &SlideProjection,
+    text: &TextView,
+    cell: Option<TableCellRef>,
+    query: &str,
+    start: u32,
+    stop_after: u32,
+    seen: &mut u32,
+    matches: &mut Vec<TextMatch>,
+) -> Result<(), JsonError> {
+    let guard_text_hash = element
+        .text
+        .as_ref()
+        .map_or_else(|| text.text_hash.clone(), |text| text.text_hash.clone());
+    for span in find_query_spans(&text.plain, query)? {
+        if *seen < start {
+            *seen = seen.saturating_add(1);
+            continue;
+        }
+        if *seen >= stop_after {
+            return Ok(());
+        }
+        matches.push(TextMatch {
+            slide_id: slide.detail.id.clone(),
+            slide_index: slide.detail.index,
+            element_id: element.id.clone(),
+            kind: element.kind,
+            part: element.part.clone(),
+            fingerprint: element.fingerprint.clone(),
+            text_hash: text.text_hash.clone(),
+            span,
+            matched_text: substring_by_char_span(&text.plain, span),
+            selector: ElementSelector {
+                selector_type: "element_id".to_owned(),
+                id: element.id.clone(),
+                guards: SelectorGuards {
+                    slide_id: slide.detail.id.clone(),
+                    kind: element.kind,
+                    part: element.part.clone(),
+                    text_hash: guard_text_hash.clone(),
+                    fingerprint: element.fingerprint.clone(),
+                },
+            },
+            cell,
+        });
+        *seen = seen.saturating_add(1);
+    }
+    Ok(())
 }
 
 fn match_page(
@@ -840,7 +914,16 @@ fn project_element(
     media: &mut BTreeMap<String, ImageView>,
 ) -> Result<ElementView, JsonError> {
     let shape = read_shape(element, path.clone());
-    let text = projected_element_text(element, core_kind, slide_rels, package)?;
+    let (table, table_text) = if core_kind == CoreElementKind::GraphicFrameTable {
+        project_table(element)
+    } else {
+        (None, None)
+    };
+    let text = if table_text.is_some() {
+        table_text
+    } else {
+        projected_element_text(element, core_kind, slide_rels, package)?
+    };
     let text_hash = text.as_ref().map(|text| text.text_hash.clone());
     let mut image_support = ImageEditSupport::Unresolved;
     let image = if core_kind == CoreElementKind::Picture {
@@ -922,6 +1005,7 @@ fn project_element(
         placeholder: project_placeholder(element, layout_part),
         text_layout: project_text_layout(element),
         text,
+        table,
         image,
     })
 }
@@ -1070,12 +1154,56 @@ fn project_text_body(body: pptx_compose_core::pptx::text::TextBody) -> TextView 
     }
 }
 
+fn project_table(element: &XmlElement) -> (Option<TableView>, Option<TextView>) {
+    let Some(table) = first_descendant(element, "tbl") else {
+        return (None, None);
+    };
+    let mut rows = Vec::new();
+    let mut bodies = Vec::new();
+    for (row_index, row_element) in child_elements(table, "tr").enumerate() {
+        let Ok(row_index) = u32::try_from(row_index) else {
+            break;
+        };
+        let mut cells = Vec::new();
+        for (col_index, cell_element) in child_elements(row_element, "tc").enumerate() {
+            let Ok(col_index) = u32::try_from(col_index) else {
+                break;
+            };
+            let body = child_element(cell_element, "txBody").map(read_text_body);
+            if let Some(body) = &body
+                && !body.normalized.is_empty()
+            {
+                bodies.push(body.clone());
+            }
+            cells.push(TableCell {
+                row: row_index,
+                col: col_index,
+                text: body.map(project_text_body),
+            });
+        }
+        rows.push(TableRow {
+            row: row_index,
+            cells,
+        });
+    }
+    let table = TableView { rows };
+    let text = if bodies.is_empty() {
+        None
+    } else {
+        Some(project_text_body(merge_text_bodies(bodies)))
+    };
+    (Some(table), text)
+}
+
 fn projected_element_text(
     element: &XmlElement,
     core_kind: CoreElementKind,
     slide_rels: &RelationshipSet,
     package: &Package,
 ) -> Result<Option<TextView>, JsonError> {
+    if core_kind == CoreElementKind::GraphicFrameTable {
+        return Ok(None);
+    }
     if let Some(tx_body) = first_descendant(element, "txBody") {
         return Ok(Some(project_text(tx_body)));
     }
@@ -1512,17 +1640,19 @@ fn editable(
         ImageEditSupport::Unresolved => (false, None),
     };
     let (bounds_supported, bounds_reason) = bounds_edit_support(core_kind);
-    let text = has_text.then_some(if core_kind.supports_replace_text() {
-        EditableSupport {
-            supported: true,
-            reason: None,
-        }
-    } else {
-        EditableSupport {
-            supported: false,
-            reason: Some("unsupported_kind".to_owned()),
-        }
-    });
+    let text = (has_text && core_kind != CoreElementKind::GraphicFrameTable).then_some(
+        if core_kind.supports_replace_text() {
+            EditableSupport {
+                supported: true,
+                reason: None,
+            }
+        } else {
+            EditableSupport {
+                supported: false,
+                reason: Some("unsupported_kind".to_owned()),
+            }
+        },
+    );
     let bounds = (bounds_supported && has_cnvpr).then_some(EditableSupport {
         supported: bounds_supported,
         reason: bounds_reason.map(str::to_owned),
@@ -1636,6 +1766,17 @@ fn first_descendant<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a
         }
     }
     None
+}
+
+fn child_elements<'a>(
+    element: &'a XmlElement,
+    local_name: &'a str,
+) -> impl Iterator<Item = &'a XmlElement> {
+    element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .filter(move |child| child.name.local_name == local_name)
 }
 
 fn child_element<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a XmlElement> {
@@ -2091,6 +2232,88 @@ fn graphic_frame_kinds_are_emitted_from_graphic_data_uri() {
 
 #[cfg(test)]
 #[test]
+fn table_cells_are_exposed_as_addressable_text() {
+    use pptx_compose_core::{
+        opc::{
+            package::{OFFICE_DOCUMENT_REL_TYPE, Package},
+            part_name::PartName,
+            relationships::{Relationship, RelationshipSource},
+        },
+        pptx::presentation::PresentationDocument,
+    };
+
+    const SLIDE_REL_TYPE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+
+    let presentation_part = PartName::from_zip_entry("ppt/presentation.xml").expect("part name");
+
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("[Content_Types].xml", content_types_xml().to_vec())
+        .expect("content types part inserts");
+    package
+        .insert_zip_entry("ppt/presentation.xml", presentation_xml().to_vec())
+        .expect("presentation part inserts");
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", table_slide_xml().to_vec())
+        .expect("slide part inserts");
+
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        OFFICE_DOCUMENT_REL_TYPE,
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlide",
+        SLIDE_REL_TYPE,
+        "slides/slide1.xml",
+    ));
+
+    let pkg = PresentationDocument::open(package).expect("presentation opens");
+    let value = build_view(&pkg, request_for(&pkg, ViewMode::SlideDetail, None))
+        .expect("slide detail builds");
+    let table = value["slides"][0]["elements"]
+        .as_array()
+        .expect("elements array")
+        .iter()
+        .find(|element| element["kind"] == "table")
+        .expect("table is projected");
+
+    assert_eq!(table["editable"].get("text"), None);
+    assert_eq!(
+        table["text"]["plain"],
+        "Header A\nHeader B\nFocus Area\nStrategic Objective"
+    );
+    assert_eq!(table["table"]["rows"][0]["cells"][0]["row"], 0);
+    assert_eq!(table["table"]["rows"][0]["cells"][0]["col"], 0);
+    assert_eq!(
+        table["table"]["rows"][1]["cells"][1]["text"]["paragraphs"][0]["runs"][0]["text"],
+        "Strategic Objective"
+    );
+
+    let matches = find_text(
+        &pkg,
+        FindTextRequest {
+            query: "Strategic".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        },
+    )
+    .expect("find_text searches table cells");
+    assert_eq!(matches.matches.len(), 1);
+    assert_eq!(matches.matches[0].element_id, table["id"].as_str().unwrap());
+    assert_eq!(
+        matches.matches[0].cell,
+        Some(TableCellRef { row: 1, col: 1 })
+    );
+    assert_eq!(matches.matches[0].matched_text, "Strategic");
+}
+
+#[cfg(test)]
+#[test]
 fn bounds_editability_matches_move_resize_supported_kinds() {
     use pptx_compose_core::{
         opc::{
@@ -2333,6 +2556,11 @@ fn graphic_frame_slide_xml() -> &'static [u8] {
 }
 
 #[cfg(test)]
+fn table_slide_xml() -> &'static [u8] {
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="8" name="Results Table"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Header A</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Header B</a:t></a:r></a:p></a:txBody></a:tc></a:tr><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Focus Area</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Strategic Objective</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#
+}
+
+#[cfg(test)]
 fn group_connector_slide_xml() -> &'static [u8] {
     br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:grpSp><p:nvGrpSpPr><p:cNvPr id="12" name="Unsupported Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:grpSpPr><p:sp><p:nvSpPr><p:cNvPr id="13" name="Nested Shape"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:spPr></p:sp></p:grpSp><p:cxnSp><p:nvCxnSpPr><p:cNvPr id="14" name="Unsupported Connector"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1000" cy="1000"/></a:xfrm></p:spPr></p:cxnSp></p:spTree></p:cSld></p:sld>"#
 }
@@ -2481,6 +2709,7 @@ fn test_element(index: u32) -> ElementView {
         placeholder: None,
         text_layout: None,
         text: None,
+        table: None,
         image: None,
     }
 }
