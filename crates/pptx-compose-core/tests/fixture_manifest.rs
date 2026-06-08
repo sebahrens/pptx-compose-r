@@ -79,14 +79,10 @@ mod corpus {
             .expect("malformed fixture contains a slide XML part");
 
         let error = parse_document(&slide.bytes).expect_err("malformed slide XML is rejected");
-        assert!(
-            malformed
-                .expected_warnings
-                .iter()
-                .any(|warning| warning == error.code().as_str()),
-            "malformed fixture expected one of {:?}, got {}",
-            malformed.expected_warnings,
-            error.code().as_str()
+        super::fixtures::assert_expected_warnings(
+            &malformed.path,
+            &malformed.expected_warnings,
+            [error.code().as_str()],
         );
 
         let mut package = Package::new();

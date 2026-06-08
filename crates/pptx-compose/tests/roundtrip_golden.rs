@@ -9,7 +9,7 @@ use pptx_compose_core::{
         part_name::PartName,
         relationships::{Relationship, RelationshipSource},
     },
-    validation::{ValidationMode, ValidationStatus, validate_package},
+    validation::{Severity, ValidationMode, ValidationStatus, validate_package},
     xml::{document::XmlElement, parser::parse_document},
     zip::reader::{RawEntry, from_bytes},
 };
@@ -17,44 +17,50 @@ use pptx_compose_edit::{
     media_inputs::{MediaBinding, MediaSource},
     patch::parse_patch,
 };
-use pptx_compose_json::schemas::ValidationStatus as JsonValidationStatus;
+use pptx_compose_json::schemas::{
+    Severity as JsonSeverity, ValidationReport, ValidationStatus as JsonValidationStatus,
+};
 
 #[path = "../../pptx-compose-core/tests/support/fixtures.rs"]
 mod fixtures;
 
-mod roundtrip {
+mod roundtrip_golden {
     use super::*;
 
-    #[test]
-    fn no_edit_byte_identity() -> Result<()> {
-        let manifest = fixtures::load_manifest();
-        let roundtrip_fixtures = manifest
-            .entries
-            .iter()
-            .filter(|entry| entry.invariants.iter().any(|item| item == "roundtrip"))
-            .collect::<Vec<_>>();
+    pub mod roundtrip {
+        use super::*;
 
-        assert!(
-            !roundtrip_fixtures.is_empty(),
-            "fixture manifest must include at least one roundtrip fixture"
-        );
-        assert!(
-            roundtrip_fixtures.iter().any(|entry| entry
-                .features
+        #[test]
+        fn no_edit_byte_identity() -> Result<()> {
+            let manifest = fixtures::load_manifest();
+            let roundtrip_fixtures = manifest
+                .entries
                 .iter()
-                .any(|feature| feature == "mc-alternate-content")
-                && entry
+                .filter(|entry| entry.invariants.iter().any(|item| item == "roundtrip"))
+                .collect::<Vec<_>>();
+
+            assert!(
+                !roundtrip_fixtures.is_empty(),
+                "fixture manifest must include at least one roundtrip fixture"
+            );
+            assert!(
+                roundtrip_fixtures.iter().any(|entry| entry
                     .features
                     .iter()
-                    .any(|feature| feature == "unknown-part")),
-            "roundtrip fixtures must cover mc:AlternateContent and unknown parts"
-        );
+                    .any(|feature| feature == "mc-alternate-content")
+                    && entry
+                        .features
+                        .iter()
+                        .any(|feature| feature == "unknown-part")),
+                "roundtrip fixtures must cover mc:AlternateContent and unknown parts"
+            );
 
-        for fixture in roundtrip_fixtures {
-            assert_no_edit_roundtrip(fixture.path.as_str())?;
+            for fixture in roundtrip_fixtures {
+                assert_no_edit_roundtrip(fixture)?;
+            }
+
+            Ok(())
         }
-
-        Ok(())
     }
 }
 
@@ -136,8 +142,8 @@ mod edits {
     }
 }
 
-fn assert_no_edit_roundtrip(relative_path: &str) -> Result<()> {
-    let path = fixtures::fixture_path(relative_path);
+fn assert_no_edit_roundtrip(fixture: &fixtures::FixtureEntry) -> Result<()> {
+    let path = fixtures::fixture_path(&fixture.path);
     let input = std::fs::read(&path).map_err(|source| {
         Error::parse_error(
             format!("Could not read fixture {}.", path.display()),
@@ -146,19 +152,22 @@ fn assert_no_edit_roundtrip(relative_path: &str) -> Result<()> {
     })?;
     let original_entries = from_bytes(&input)?;
     let original_package = package_from_entries(&original_entries)?;
-    assert_valid_no_edit_package(&original_package, relative_path);
+    assert_valid_no_edit_package(&original_package, fixture);
 
     let document = PresentationDocument::from_bytes(input.clone())?;
+    assert_valid_facade_validation(&document.validate()?, fixture);
     let output = document.write_vec_with_options(WriteOptions {
         mode: WriteMode::Preserve,
         ..WriteOptions::default()
     })?;
 
+    let reopened = PresentationDocument::from_bytes(output.clone())?;
+    assert_valid_facade_validation(&reopened.validate()?, fixture);
     let written_entries = from_bytes(&output)?;
     let written_package = package_from_entries(&written_entries)?;
-    assert_valid_no_edit_package(&written_package, relative_path);
-    assert_equal_part_sets(&original_entries, &written_entries, relative_path);
-    assert_byte_identical_parts(&original_entries, &written_entries, relative_path);
+    assert_valid_no_edit_package(&written_package, fixture);
+    assert_equal_part_sets(&original_entries, &written_entries, &fixture.path);
+    assert_byte_identical_parts(&original_entries, &written_entries, &fixture.path);
 
     Ok(())
 }
@@ -299,14 +308,53 @@ fn optional_attr<'a>(element: &'a XmlElement, name: &str) -> Option<&'a str> {
         .map(|attribute| attribute.value.as_str())
 }
 
-fn assert_valid_no_edit_package(package: &Package, fixture: &str) {
+fn assert_valid_no_edit_package(package: &Package, fixture: &fixtures::FixtureEntry) {
     let validation = validate_package(package, ValidationMode::NoEdit);
     assert_eq!(
         validation.status,
         ValidationStatus::Valid,
-        "{fixture}: no-edit package validation failed: {:#?}",
+        "{}: no-edit package validation failed: {:#?}",
+        fixture.path,
         validation.findings
     );
+    fixtures::assert_expected_warnings(
+        &fixture.path,
+        &fixture.expected_warnings,
+        validation
+            .findings
+            .iter()
+            .filter(|finding| finding.severity == Severity::Warning)
+            .map(|finding| finding_code_to_string(finding.code)),
+    );
+}
+
+fn assert_valid_facade_validation(report: &ValidationReport, fixture: &fixtures::FixtureEntry) {
+    assert_eq!(
+        report.status,
+        JsonValidationStatus::Valid,
+        "{}: facade validation failed: {:#?}",
+        fixture.path,
+        report.findings
+    );
+    fixtures::assert_expected_warnings(
+        &fixture.path,
+        &fixture.expected_warnings,
+        report
+            .findings
+            .iter()
+            .filter(|finding| finding.severity == JsonSeverity::Warning)
+            .map(|finding| finding_code_to_string(finding.code)),
+    );
+}
+
+fn finding_code_to_string<T>(code: T) -> String
+where
+    T: serde::Serialize,
+{
+    serde_json::to_value(code)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unserializable_finding_code".to_owned())
 }
 
 fn assert_equal_part_sets(

@@ -3,8 +3,8 @@ path = "legacy/sample.pptx"
 source_app = "legacy"
 features = ["legacy-smoke", "minimal-package"]
 expected_warnings = []
-invariants = ["contains-presentation-part"]
-consuming_test = "fixture_manifest::manifest::every_entry_file_exists"
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "roundtrip_golden::roundtrip::no_edit_byte_identity"
 
 [[entries]]
 path = "minimal/alternate-content-unknown-part.pptx"
