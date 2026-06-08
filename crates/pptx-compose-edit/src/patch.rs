@@ -403,7 +403,7 @@ pub struct ReplaceTextOperation {
     #[schemars(
         description = "Optional run-property overrides accepted only when mode is run_scoped. Supports font_size_pt, bold, italic, color_hex, font_family, and paragraph-level align."
     )]
-    pub run_style: Option<TextBoxStyle>,
+    pub run_style: Option<TextRunStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "Optional conservative text-fit policy. preserve may warn on overflow risk, fail_if_overflow rejects obvious overflow, and shrink_text is accepted only when no shrink is required in V1."
@@ -611,7 +611,7 @@ pub struct Bounds {
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct TextBoxStyle {
+pub struct TextRunStyle {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size_pt: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -626,12 +626,71 @@ pub struct TextBoxStyle {
     pub align: Option<TextAlign>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextBoxStyle {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size_pt: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub align: Option<TextAlign>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub autofit: Option<TextBoxAutofit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_anchor: Option<TextVerticalAnchor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inset_l: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inset_r: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inset_t: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inset_b: Option<i64>,
+}
+
+impl TextBoxStyle {
+    #[must_use]
+    pub fn run_style(&self) -> TextRunStyle {
+        TextRunStyle {
+            font_size_pt: self.font_size_pt,
+            bold: self.bold,
+            italic: self.italic,
+            font_family: self.font_family.clone(),
+            color_hex: self.color_hex.clone(),
+            align: self.align,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TextAlign {
     Left,
     Center,
     Right,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TextBoxAutofit {
+    NoAutofit,
+    NormAutoFit,
+    ShapeAutoFit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TextVerticalAnchor {
+    Top,
+    Middle,
+    Bottom,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]

@@ -143,7 +143,7 @@ Optional fields:
 
 - `name`
 - `alt_text`
-- `style`: implementation-defined basic font/fill options. V1 validates `font_size_pt`, `bold`, `italic`, `color_hex`, `font_family`, and `align` (`left`/`center`/`right`).
+- `style`: implementation-defined basic font/fill and text-body options. V1 validates `font_size_pt`, `bold`, `italic`, `color_hex`, `font_family`, `align` (`left`/`center`/`right`), `autofit` (`no_autofit`/`norm_auto_fit`/`shape_auto_fit`), `vertical_anchor` (`top`/`middle`/`bottom`), and body inset EMU fields `inset_l`, `inset_r`, `inset_t`, and `inset_b`.
 - `insert`: `{ "z_order": "front" }` by default.
 
 Supported V1 style fields must be explicit in implementation docs. Unknown style fields fail validation rather than being silently ignored.

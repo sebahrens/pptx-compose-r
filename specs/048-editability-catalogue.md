@@ -33,7 +33,7 @@ Anything whose correctness depends on a cache, a proprietary layout algorithm, a
 | Paragraph props (align/indent/spacing/line-spacing) | `a:pPr @algn @marL @lvl @indent`, `a:lnSpc`, `a:spcBef/spcAft` | preserve-only (align writable on new boxes) | Only `algn` is writable, and only in `add_text_box`. | Lost if a paragraph is rewritten by whole-element `replace_text`. |
 | Bullets / numbering / list styles | `a:pPr/a:buChar|buAutoNum|buNone`, `a:txBody/a:lstStyle` | deferred / preserve-only | Auto-numbering needs cross-paragraph sync. `add_text_box` writes an empty `lstStyle`. | Lost if a paragraph is rewritten. |
 | Hyperlinks / fields / soft breaks | `a:r/a:hlinkClick`, `a:p/a:fld`, `a:p/a:br` | preserve-only, preserved by run-scoped text | Detected to raise `formatting_simplified`; survive only when the run structure is not rewritten. Hyperlink editing also needs rel management. | High: lost through a whole-element paragraph rewrite. |
-| Text body props (wrap/anchor/inset/autofit) | `a:txBody/a:bodyPr`, `a:spAutoFit/normAutoFit` | preserve-only | Not read; `add_text_box` hardcodes `wrap=square` + `spAutoFit`. | Preserved on existing shapes. |
+| Text body props (wrap/anchor/inset/autofit) | `a:txBody/a:bodyPr`, `a:noAutofit/a:normAutoFit/a:spAutoFit` | v1-edit on new text; preserve-only on existing shapes | Read in `text_layout.body_pr`; settable in `add_text_box.style` for new boxes. Existing shapes preserve their bodyPr unless directly replaced by a lossy whole-element edit. | Preserved on existing shapes. |
 
 ## Geometry
 

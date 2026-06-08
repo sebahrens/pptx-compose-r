@@ -136,7 +136,10 @@ This is the "deterministic default style" referenced by 031 and the resolution o
 
 - The element carries **no explicit fill, line, or shadow** (`p:spPr` contains only `a:xfrm` + `a:prstGeom`), so the text box is transparent and unbordered.
 - The single run carries `lang="en-US"` and no explicit font size, color, or typeface; rendered appearance therefore inherits from the slide layout/master placeholder defaults and theme. This is intentional and deterministic: the emitted bytes do not vary by environment.
-- `a:bodyPr` uses `wrap="square"` with `a:spAutoFit`.
+- By default, `a:bodyPr` uses `wrap="square"`, `rtlCol="0"`, and
+  `a:spAutoFit`, exposed as `style.autofit: "shape_auto_fit"`. Callers that
+  need fixed template bounds should set `style.autofit: "no_autofit"` and, when
+  needed, explicit `vertical_anchor` and inset fields.
 
 ### V1 `style` Field Whitelist
 
@@ -150,6 +153,12 @@ This is the "deterministic default style" referenced by 031 and the resolution o
 | `font_family` | string | Adds `<a:latin typeface="{font_family}"/>` under `a:rPr`. |
 | `color_hex` | string `RRGGBB` | Adds `<a:solidFill><a:srgbClr val="{color_hex}"/></a:solidFill>` under `a:rPr`. |
 | `align` | `left`\|`center`\|`right` | Sets `a:p/a:pPr/@algn` = `l`\|`ctr`\|`r`. |
+| `autofit` | `no_autofit`\|`norm_auto_fit`\|`shape_auto_fit` | Emits `a:noAutofit`, `a:normAutoFit`, or `a:spAutoFit` under `a:bodyPr`; omitted defaults to `shape_auto_fit`. |
+| `vertical_anchor` | `top`\|`middle`\|`bottom` | Sets `a:bodyPr/@anchor` = `t`\|`ctr`\|`b`. |
+| `inset_l` | integer EMUs, non-negative | Sets `a:bodyPr/@lIns`. |
+| `inset_r` | integer EMUs, non-negative | Sets `a:bodyPr/@rIns`. |
+| `inset_t` | integer EMUs, non-negative | Sets `a:bodyPr/@tIns`. |
+| `inset_b` | integer EMUs, non-negative | Sets `a:bodyPr/@bIns`. |
 
 These same fields are the only ones reported as supported in the `capabilities` block (042). The read-side `style_summary` (042) exposes the corresponding `font_size_pt`/`bold` for inspection.
 

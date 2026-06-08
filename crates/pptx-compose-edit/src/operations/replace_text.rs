@@ -23,12 +23,12 @@ use serde_json::json;
 
 use crate::{
     operations::{
-        ResolvedElement, ResolvedNotesSlide, ResolvedTableCell, add_text_box::validate_style,
+        ResolvedElement, ResolvedNotesSlide, ResolvedTableCell, add_text_box::validate_run_style,
         is_real_shape_tree_child,
     },
     patch::{
         FitPolicy, FitPolicyMode, FormatPolicy, PatchEffects, ReplaceTextMode,
-        ReplaceTextOperation, TextAlign, TextBoxStyle,
+        ReplaceTextOperation, TextAlign, TextRunStyle,
     },
     selectors::RunSelector,
 };
@@ -43,7 +43,7 @@ pub struct ReplaceText {
     pub format_policy: FormatPolicy,
     pub allow_formatting_simplification: bool,
     pub run: Option<RunSelector>,
-    pub run_style: Option<TextBoxStyle>,
+    pub run_style: Option<TextRunStyle>,
     pub fit_policy: Option<FitPolicy>,
 }
 
@@ -957,7 +957,7 @@ trait RunScopedTextOperation {
     fn newline_message(&self) -> &'static str;
     fn match_guard_message(&self) -> &'static str;
     fn allow_default_run(&self) -> bool;
-    fn run_style(&self) -> Option<&TextBoxStyle> {
+    fn run_style(&self) -> Option<&TextRunStyle> {
         None
     }
 }
@@ -995,7 +995,7 @@ impl RunScopedTextOperation for ReplaceText {
         false
     }
 
-    fn run_style(&self) -> Option<&TextBoxStyle> {
+    fn run_style(&self) -> Option<&TextRunStyle> {
         self.run_style.as_ref()
     }
 }
@@ -1410,7 +1410,7 @@ fn replace_run_text(
 fn run_scoped_replacement_nodes(
     run_template: &XmlElement,
     text: &str,
-    run_style: Option<&TextBoxStyle>,
+    run_style: Option<&TextRunStyle>,
     operation: &impl RunScopedTextOperation,
     target: &ResolvedElement,
 ) -> Result<Vec<XmlNode>> {
@@ -1473,7 +1473,7 @@ fn validate_run_scoped_text_body(
             .with_location(operation.location(Some(target))));
         }
     }
-    validate_style("replace_text.run_style", operation.run_style())
+    validate_run_style("replace_text.run_style", operation.run_style())
         .map_err(|error| error.with_location(operation.location(Some(target))))?;
     Ok(())
 }
@@ -1493,7 +1493,7 @@ fn validate_xml_text(text: &str, allow_soft_break: bool) -> Result<()> {
     Ok(())
 }
 
-fn apply_paragraph_style(paragraph: &mut XmlElement, style: Option<&TextBoxStyle>) {
+fn apply_paragraph_style(paragraph: &mut XmlElement, style: Option<&TextRunStyle>) {
     let Some(align) = style.and_then(|style| style.align) else {
         return;
     };
@@ -1501,7 +1501,7 @@ fn apply_paragraph_style(paragraph: &mut XmlElement, style: Option<&TextBoxStyle
     set_attribute(p_pr, "algn", align_value(align));
 }
 
-fn apply_run_style(run: &mut XmlElement, style: Option<&TextBoxStyle>) {
+fn apply_run_style(run: &mut XmlElement, style: Option<&TextRunStyle>) {
     let Some(style) = style else {
         return;
     };

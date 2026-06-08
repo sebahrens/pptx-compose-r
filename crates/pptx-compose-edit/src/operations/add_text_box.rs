@@ -14,7 +14,10 @@ use crate::{
     operations::{
         ResolvedSlide, bounds::validate_bounds, ensure_slide_namespaces, insert_shape_tree_child,
     },
-    patch::{AddTextBoxOperation, Bounds, InsertOptions, PatchEffects, TextAlign, TextBoxStyle},
+    patch::{
+        AddTextBoxOperation, Bounds, InsertOptions, PatchEffects, TextAlign, TextBoxAutofit,
+        TextBoxStyle, TextRunStyle, TextVerticalAnchor,
+    },
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -112,6 +115,32 @@ impl AddTextBox {
 }
 
 pub(crate) fn validate_style(label: &str, style: Option<&TextBoxStyle>) -> Result<()> {
+    let Some(style) = style else {
+        return Ok(());
+    };
+
+    validate_run_style(label, Some(&style.run_style()))?;
+
+    for (field, inset) in [
+        ("inset_l", style.inset_l),
+        ("inset_r", style.inset_r),
+        ("inset_t", style.inset_t),
+        ("inset_b", style.inset_b),
+    ] {
+        if let Some(inset) = inset
+            && inset < 0
+        {
+            return Err(Error::new(
+                ErrorCode::InvalidInput,
+                format!("{label}.{field} must be non-negative EMUs."),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_run_style(label: &str, style: Option<&TextRunStyle>) -> Result<()> {
     let Some(style) = style else {
         return Ok(());
     };
@@ -232,16 +261,52 @@ fn text_body(text: &str, style: Option<&TextBoxStyle>) -> XmlElement {
         "p:txBody",
         &[],
         vec![
-            node(element(
-                "a:bodyPr",
-                &[("wrap", "square"), ("rtlCol", "0")],
-                vec![node(element("a:spAutoFit", &[], Vec::new()))],
-            )),
+            node(body_pr(style)),
             node(element("a:lstStyle", &[], Vec::new())),
         ]
         .into_iter()
         .chain(paragraphs)
         .collect(),
+    )
+}
+
+fn body_pr(style: Option<&TextBoxStyle>) -> XmlElement {
+    let mut attrs = vec![
+        ("wrap".to_owned(), "square".to_owned()),
+        ("rtlCol".to_owned(), "0".to_owned()),
+    ];
+    if let Some(style) = style {
+        if let Some(anchor) = style.vertical_anchor {
+            attrs.push((
+                "anchor".to_owned(),
+                vertical_anchor_value(anchor).to_owned(),
+            ));
+        }
+        if let Some(inset) = style.inset_l {
+            attrs.push(("lIns".to_owned(), inset.to_string()));
+        }
+        if let Some(inset) = style.inset_r {
+            attrs.push(("rIns".to_owned(), inset.to_string()));
+        }
+        if let Some(inset) = style.inset_t {
+            attrs.push(("tIns".to_owned(), inset.to_string()));
+        }
+        if let Some(inset) = style.inset_b {
+            attrs.push(("bIns".to_owned(), inset.to_string()));
+        }
+    }
+
+    let autofit = style
+        .and_then(|style| style.autofit)
+        .unwrap_or(TextBoxAutofit::ShapeAutoFit);
+    let attr_refs = attrs
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    element(
+        "a:bodyPr",
+        &attr_refs,
+        vec![node(element(autofit_element(autofit), &[], Vec::new()))],
     )
 }
 
@@ -317,6 +382,22 @@ fn align_value(align: TextAlign) -> &'static str {
         TextAlign::Left => "l",
         TextAlign::Center => "ctr",
         TextAlign::Right => "r",
+    }
+}
+
+fn autofit_element(autofit: TextBoxAutofit) -> &'static str {
+    match autofit {
+        TextBoxAutofit::NoAutofit => "a:noAutofit",
+        TextBoxAutofit::NormAutoFit => "a:normAutoFit",
+        TextBoxAutofit::ShapeAutoFit => "a:spAutoFit",
+    }
+}
+
+fn vertical_anchor_value(anchor: TextVerticalAnchor) -> &'static str {
+    match anchor {
+        TextVerticalAnchor::Top => "t",
+        TextVerticalAnchor::Middle => "ctr",
+        TextVerticalAnchor::Bottom => "b",
     }
 }
 
@@ -482,6 +563,12 @@ fn builds_template() {
             font_family: Some("Aptos".to_owned()),
             color_hex: Some("112233".to_owned()),
             align: Some(TextAlign::Center),
+            autofit: Some(TextBoxAutofit::NoAutofit),
+            vertical_anchor: Some(TextVerticalAnchor::Middle),
+            inset_l: Some(91_440),
+            inset_r: Some(91_440),
+            inset_t: Some(45_720),
+            inset_b: Some(45_720),
         }),
         insert: None,
     };
@@ -510,7 +597,7 @@ fn builds_template() {
     assert!(slide_xml.contains(r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#));
     assert!(
         slide_xml.contains(
-            r#"<a:bodyPr wrap="square" rtlCol="0"><a:spAutoFit/></a:bodyPr><a:lstStyle/>"#
+            r#"<a:bodyPr wrap="square" rtlCol="0" anchor="ctr" lIns="91440" rIns="91440" tIns="45720" bIns="45720"><a:noAutofit/></a:bodyPr><a:lstStyle/>"#
         )
     );
     assert!(slide_xml.contains(r#"<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" dirty="0" sz="1800" b="1" i="0"><a:solidFill><a:srgbClr val="112233"/></a:solidFill><a:latin typeface="Aptos"/></a:rPr><a:t>Hello</a:t></a:r></a:p>"#));

@@ -112,6 +112,40 @@ fn patch_schema_rejects_unknown_text_box_style_keys() {
 }
 
 #[test]
+fn patch_schema_accepts_text_box_body_pr_style_keys_only_on_add_text_box() {
+    let schema = patch_json_schema().expect("patch schema emits");
+    assert_schema_accepts(
+        schema.clone(),
+        patch_with_operation(json!({
+            "operation_id": "op-1",
+            "op": "add_text_box",
+            "slide_id": "slide-1",
+            "text": "Hello",
+            "bounds": { "x": 0, "y": 0, "cx": 100, "cy": 100 },
+            "style": {
+                "autofit": "no_autofit",
+                "vertical_anchor": "middle",
+                "inset_l": 91440,
+                "inset_r": 91440,
+                "inset_t": 45720,
+                "inset_b": 45720
+            }
+        })),
+    );
+    assert_schema_rejects(
+        schema,
+        patch_with_operation(json!({
+            "operation_id": "op-1",
+            "op": "replace_text",
+            "element_id": "slide-1:shape-4",
+            "text": "Updated title",
+            "mode": "run_scoped",
+            "run_style": { "autofit": "no_autofit" }
+        })),
+    );
+}
+
+#[test]
 fn patch_schema_rejects_set_alt_text_alt_text_alias() {
     assert_schema_rejects(
         patch_json_schema().expect("patch schema emits"),

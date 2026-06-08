@@ -29,7 +29,7 @@ use pptx_compose_edit::{
     },
     patch::{
         Bounds, FormatPolicy, ImageDedupe, ImageFit, InsertOptions, ReplaceTextMode, TextAlign,
-        TextBoxStyle, ZOrder, ZOrderKeyword,
+        TextRunStyle, ZOrder, ZOrderKeyword,
     },
     selectors::RunSelector,
 };
@@ -493,7 +493,7 @@ mod construction_golden {
                 run_end_index: None,
                 text_hash: None,
             }),
-            run_style: Some(TextBoxStyle {
+            run_style: Some(TextRunStyle {
                 font_size_pt: Some(20),
                 bold: Some(false),
                 italic: Some(true),
@@ -607,7 +607,7 @@ mod construction_golden {
             format_policy: FormatPolicy::PreserveExistingRuns,
             allow_formatting_simplification: true,
             run: None,
-            run_style: Some(TextBoxStyle {
+            run_style: Some(TextRunStyle {
                 font_size_pt: Some(20),
                 bold: None,
                 italic: None,
