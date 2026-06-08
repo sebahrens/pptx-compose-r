@@ -35,6 +35,37 @@ macros or encryption.
 - **`rsm-technology-strategy.pptx`** — smaller (12-slide) strategy deck from a professional
   services firm; a lighter-weight real-world baseline.
 
+## Localized (machine-translated) variants
+
+Ten derived decks — German (`-de`) and French (`-fr`) for each of the five source
+decks — generated **through the V1 agent edit surface** as a real-world exercise of
+`inspect` → run-scoped `replace_text` → `apply` → `validate`. They are wired into
+`fixtures/manifest.toml` with the `localized` feature and round-trip byte-exact clean
+(same `expected_warnings` as their source).
+
+How they were produced: every editable `shape`/`text_box` run was translated and
+replaced with `mode: run_scoped` (bare `element_id` selectors, no guards), which
+preserves paragraph auto-numbering, bullets, and per-run bold/colour.
+
+Known untranslated content (current V1 engine limitations, tracked in beads — do not
+treat as translation bugs):
+
+- **SmartArt diagrams and charts** keep their original-language text: that text lives in
+  `ppt/diagrams/data*.xml` and chart XML / embedded workbooks and is **not text-editable
+  in V1** (release blocker `pptx-compose-9x09`).
+- **Table cells** are not translated (cell-level editing not yet wired into this pipeline).
+- **In-run line breaks are flattened to a space** (e.g. the agenda block on
+  `worldbank-cpf-*` slide 4): `run_scoped` cannot emit `<a:br/>` and `U+000B` is illegal
+  XML, so multi-line runs render as one wrapped line (`pptx-compose-t6pa`).
+
+| Files | Lang | replace_text ops |
+|-------|------|-----------------:|
+| `worldbank-cpf-concept-note-{de,fr}.pptx` | DE / FR | 266 / 266 |
+| `worldbank-macro-economic-update-{de,fr}.pptx` | DE / FR | 97 / 99 |
+| `worldbank-smart-rwanda-roadshow-{de,fr}.pptx` | DE / FR | 370 / 392 |
+| `oecd-economic-outlook-2017-{de,fr}.pptx` | DE / FR | 282 / 283 |
+| `rsm-technology-strategy-{de,fr}.pptx` | DE / FR | 72 / 75 |
+
 ## Provenance & licensing
 
 These are retained as **black-box test inputs**, not redistributed as original works.
@@ -57,4 +88,19 @@ b379de7dce5a5b623597dcb41dac51a4c0ed3415d65d0128aa12b5451804b4d6  worldbank-macr
 c76979a1ec16ea693bba6bdef048445f124e79459b4393e44cb7ebafbf575668  worldbank-smart-rwanda-roadshow.pptx
 8b7d9767076a17abb26826732d0f8fede168c46b94cf8c3dc9d59a3ae2adde70  oecd-economic-outlook-2017.pptx
 df538264185cfa715ec832a17290c9c0bed630f0492fd60b7993213454406aae  rsm-technology-strategy.pptx
+```
+
+Localized variants (derived; regenerate if the translation pipeline changes):
+
+```
+e097250aba583a730ba343bbf63545dba25b7591df06dab5e94f537a74d7257b  worldbank-cpf-concept-note-de.pptx
+eb52f1dfd84195aefbe195b20e8c317e4f272a34959de1308be6b1eb369ffc11  worldbank-cpf-concept-note-fr.pptx
+5e2fd3a9530ab61e01f1daaa8494c5b42f0b8553b98f983dd42975032e6a4ab4  worldbank-macro-economic-update-de.pptx
+c24f5fbf9eca56fdddba51ff52fc11c6c790a9a2ed31db07d1601499bd14c904  worldbank-macro-economic-update-fr.pptx
+4833dfa6c75522d0d709a952588782520ac6faf231dd0d6b25a056fe494a36a1  worldbank-smart-rwanda-roadshow-de.pptx
+83296d386fe7017bff2cdaf768c1ec6d935d16a8efc6082daa961a69d9f0681e  worldbank-smart-rwanda-roadshow-fr.pptx
+4f2bda5a5dfc24848e3951d88e7a7a79fb32d1a6103b877ee0da09d88b191db4  oecd-economic-outlook-2017-de.pptx
+46c71db9f21d1d3c904ba06f186db3267c4ed1452e87aad7630b68ac2af1b043  oecd-economic-outlook-2017-fr.pptx
+6eb1e29ccf23a08becdbf6cef37dc9a005ace19dbe735cb2908b94c42cb1423a  rsm-technology-strategy-de.pptx
+d0e5d5037b1abf38a42a96e4cf2c7a6197666b6fdace0a1da870de70143a626f  rsm-technology-strategy-fr.pptx
 ```

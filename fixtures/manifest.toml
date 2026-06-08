@@ -95,22 +95,6 @@ invariants = ["contains-presentation-part", "roundtrip"]
 consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
 
 [[entries]]
-path = "real-world/worldbank-macro-economic-update-de.pptx"
-source_app = "powerpoint"
-features = ["real-world", "consulting", "text", "chart", "media", "image", "external-relationship", "localized"]
-expected_warnings = ["external_relationship_not_checked"]
-invariants = ["contains-presentation-part", "roundtrip"]
-consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
-
-[[entries]]
-path = "real-world/worldbank-macro-economic-update-fr.pptx"
-source_app = "powerpoint"
-features = ["real-world", "consulting", "text", "chart", "media", "image", "external-relationship", "localized"]
-expected_warnings = ["external_relationship_not_checked"]
-invariants = ["contains-presentation-part", "roundtrip"]
-consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
-
-[[entries]]
 path = "real-world/worldbank-smart-rwanda-roadshow.pptx"
 source_app = "powerpoint"
 features = ["real-world", "consulting", "text", "media", "image", "unicode-metadata"]
@@ -130,6 +114,92 @@ consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_
 path = "real-world/rsm-technology-strategy.pptx"
 source_app = "powerpoint"
 features = ["real-world", "consulting", "text", "media", "image", "external-relationship"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+# --- Localized (machine-translated) variants of the real-world decks ---
+# Produced by the V1 agent edit surface (replace_text over editable shape/text_box
+# elements) into German (-de) and French (-fr). NOTE: SmartArt-diagram and chart
+# text is NOT translated -- it is not yet text-editable in V1 (release blocker
+# pptx-compose-9x09). Once that lands these fixtures should be regenerated.
+
+[[entries]]
+path = "real-world/worldbank-cpf-concept-note-de.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "embedding", "external-relationship", "localized"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/worldbank-cpf-concept-note-fr.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "embedding", "external-relationship", "localized"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/worldbank-macro-economic-update-de.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "external-relationship", "localized"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/worldbank-macro-economic-update-fr.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "external-relationship", "localized"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/worldbank-smart-rwanda-roadshow-de.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "media", "image", "unicode-metadata", "localized"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/worldbank-smart-rwanda-roadshow-fr.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "media", "image", "unicode-metadata", "localized"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/oecd-economic-outlook-2017-de.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "embedding", "localized"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/oecd-economic-outlook-2017-fr.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "embedding", "localized"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/rsm-technology-strategy-de.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "media", "image", "external-relationship", "localized"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/rsm-technology-strategy-fr.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "media", "image", "external-relationship", "localized"]
 expected_warnings = ["external_relationship_not_checked"]
 invariants = ["contains-presentation-part", "roundtrip"]
 consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
