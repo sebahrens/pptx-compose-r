@@ -1068,6 +1068,7 @@ fn replace_text_preserve_fit_policy_reports_overflow_risk() {
             "op": "replace_text",
             "element_id": "slide-1:shape-3",
             "text": "This translated title is intentionally very long and should not fit in the tiny placeholder box without changing the layout.",
+            "allow_formatting_simplification": true,
             "fit_policy": {
                 "mode": "preserve"
             }
@@ -1106,7 +1107,8 @@ fn replace_text_default_policy_reports_overflow_risk() {
             "operation_id": "replace-title",
             "op": "replace_text",
             "element_id": "slide-1:shape-3",
-            "text": "This translated title is intentionally very long and should not fit in the tiny placeholder box without changing the layout."
+            "text": "This translated title is intentionally very long and should not fit in the tiny placeholder box without changing the layout.",
+            "allow_formatting_simplification": true
         })],
     );
 

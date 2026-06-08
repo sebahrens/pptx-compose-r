@@ -25,7 +25,7 @@ Anything whose correctness depends on a cache, a proprietary layout algorithm, a
 
 | Feature | OOXML location | Status | Rationale | Preservation risk |
 | --- | --- | --- | --- | --- |
-| Whole-element text replace (text box / shape) | `p:sp/p:txBody/a:p/a:r/a:t` | v1-edit (`replace_text`) | Gated to `text_box`/`shape`. Plain-text, whole-element rewrite. | High: nuke-and-rebuild collapses multi-run `rPr` to the first run and drops `a:fld`/`a:hlinkClick`/`a:hlinkMouseOver`/`a:br`. Reported via `formatting_simplified`. |
+| Whole-element text replace (text box / shape) | `p:sp/p:txBody/a:p/a:r/a:t` | v1-edit (`replace_text`) | Gated to `text_box`/`shape`. Plain-text, whole-element rewrite. | High: nuke-and-rebuild collapses multi-run `rPr` to the first run and drops `a:pPr`, `a:fld`/`a:hlinkClick`/`a:hlinkMouseOver`/`a:br`, and literal line breaks inside `a:t`. Reported via `formatting_simplified`. |
 | Run-scoped in-place text replace | `a:r/a:t` (single run) | v1-edit (`replace_text` with `mode: run_scoped`) | Mutates one run, preserves siblings + hyperlinks/fields/breaks. | Low by design; this primitive exists to remove the high risk above. |
 | Run properties write (size/bold/italic/color/family) | `a:rPr @sz @b @i`, `a:solidFill/a:srgbClr`, `a:latin@typeface` | v1-edit on new text and run-scoped replacement | Settable in `add_text_box`. Overrides in `replace_text` only on the run-scoped mode. | Medium: writing onto the whole-element path would widen the lossy blast radius — forbidden. |
 | Run properties read | `a:rPr @sz @b @i @u`, `a:solidFill/a:srgbClr`, `a:latin@typeface`, `@lang` | v1-read | Surfaced as a run-style summary for context. | None (read-only). |

@@ -319,6 +319,58 @@ mod construction_golden {
     }
 
     #[test]
+    fn replace_text_whole_element_refuses_numbered_paragraph_without_confirmation() -> Result<()> {
+        let package = package_with_slide(NUMBERED_PARAGRAPH_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated".to_owned(),
+            current_text_match: Some("Numbered item".to_owned()),
+            mode: ReplaceTextMode::WholeElement,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            allow_formatting_simplification: false,
+            run: None,
+            run_style: None,
+            fit_policy: None,
+        };
+
+        let error = operation
+            .validate(&package, &target)
+            .expect_err("numbered paragraph rewrite requires confirmation");
+
+        assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+        Ok(())
+    }
+
+    #[test]
+    fn replace_text_warns_when_confirmed_rewrite_drops_literal_line_breaks() -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(LITERAL_LINE_BREAK_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated".to_owned(),
+            current_text_match: Some("First\nSecond".to_owned()),
+            mode: ReplaceTextMode::WholeElement,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            allow_formatting_simplification: true,
+            run: None,
+            run_style: None,
+            fit_policy: None,
+        };
+
+        let effects = operation.apply(&mut package, &target)?;
+        let output = element_xml_at_path(&package, &slide_part, &[1])?;
+
+        assert!(has_warning_code(&effects.warnings, "formatting_simplified"));
+        assert!(!output.contains("First\nSecond"));
+        assert!(output.contains(r#"<a:t>Updated</a:t>"#));
+        Ok(())
+    }
+
+    #[test]
     fn replace_text_run_scoped_preserves_sibling_runs_and_rich_constructs() -> Result<()> {
         let slide_part = slide_part()?;
         let mut package = package_with_slide(RICH_TEXT_SLIDE_XML)?;
@@ -750,6 +802,11 @@ mod construction_golden {
     const MULTI_RUN_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="1800" b="1"/><a:t>First</a:t></a:r><a:r><a:rPr lang="en-US" sz="2400" i="1"/><a:t>Second</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
 
     const RICH_TEXT_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:fld id="{00000000-0000-0000-0000-000000000000}" type="slidenum"><a:rPr lang="en-US"/><a:t>Field</a:t></a:fld><a:r><a:rPr lang="en-US"><a:hlinkClick r:id="rId2"/></a:rPr><a:t>Linked</a:t></a:r><a:br/><a:r><a:t>Break</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
+
+    const NUMBERED_PARAGRAPH_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:buAutoNum type="romanUcPeriod"/></a:pPr><a:r><a:t>Numbered item</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
+
+    const LITERAL_LINE_BREAK_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>First
+Second</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
 
     const NOTES_LINKED_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/></p:spTree></p:cSld></p:sld>"#;
 

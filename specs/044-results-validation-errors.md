@@ -65,9 +65,10 @@ whole_element` performs its documented plain-text rewrite and the source text
 body contains formatting or rich text constructs that cannot be preserved. The
 warning is contractual, not cosmetic: it MUST be present whenever the original
 `a:txBody` has `run_count > 1` or contains `a:fld`, `a:hlinkClick`,
-`a:hlinkMouseOver`, or `a:br`. The rewrite collapses multi-run formatting to the
-first run's `a:rPr` when preserving formatting and drops those rich constructs
-while resynthesizing `a:p`/`a:r`/`a:t` from replacement plain text. V1 has no
+`a:hlinkMouseOver`, `a:br`, `a:pPr`, or literal line-break characters inside
+`a:t`. The rewrite collapses multi-run formatting to the first run's `a:rPr`
+when preserving formatting and drops those rich constructs while resynthesizing
+`a:p`/`a:r`/`a:t` from replacement plain text. V1 has no
 non-destructive run-scoped replacement mode, and WholeElement operations MUST
 NOT accept run-property override fields; those belong to the future run-scoped
 primitive described in [041](041-agent-edit-operations.md#phase-2--replace_text-run-scoped-mode-the-gate)
@@ -76,10 +77,10 @@ and tracked by the deferred run-scoped primitive task.
 After the run-scoped primitive is implemented, `formatting_simplified` becomes a
 refuse-or-confirm condition for `mode: whole_element`. If the operation would
 drop multi-run formatting or rich constructs (`a:fld`, `a:hlinkClick`,
-`a:hlinkMouseOver`, or `a:br`), validation MUST fail with `unsupported_edit`
-unless the patch explicitly sets `allow_formatting_simplification: true`. A
-confirmed lossy rewrite still MUST emit `formatting_simplified`; confirmation is
-not a waiver of the warning.
+`a:hlinkMouseOver`, `a:br`, `a:pPr`, or literal line-break characters inside
+`a:t`), validation MUST fail with `unsupported_edit` unless the patch explicitly
+sets `allow_formatting_simplification: true`. A confirmed lossy rewrite still
+MUST emit `formatting_simplified`; confirmation is not a waiver of the warning.
 
 ## Validation Report
 

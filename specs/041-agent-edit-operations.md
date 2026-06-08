@@ -104,15 +104,18 @@ the existing `a:txBody` down to `bodyPr`/`lstStyle`, clones the first run's
 resynthesizes `a:p`/`a:r`/`a:t` by splitting the new text. As a consequence:
 
 - Multi-run paragraphs collapse to a single run style.
-- `a:fld`, `a:hlinkClick`, `a:hlinkMouseOver`, and `a:br` are detected but **not** preserved through the rewrite; they survive only incidentally and are lost when paragraphs are rewritten.
+- `a:pPr`, `a:fld`, `a:hlinkClick`, `a:hlinkMouseOver`, `a:br`, and literal
+  line-break characters inside `a:t` are detected but **not** preserved through
+  the rewrite; they survive only incidentally and are lost when paragraphs are
+  rewritten.
 
 These losses are reported via the `formatting_simplified` warning, which is the
 documented V1 contract. The warning MUST be emitted whenever the original
 `a:txBody` has `run_count > 1` or contains any detected rich construct
-(`a:fld`, `a:hlinkClick`, `a:hlinkMouseOver`, or `a:br`) that the rewrite cannot
-preserve. Run-property overrides (size/bold/italic/color/family/align) MUST NOT
-be added to this whole-element path; on `mode: whole_element` they fail
-validation.
+(`a:pPr`, `a:fld`, `a:hlinkClick`, `a:hlinkMouseOver`, `a:br`, or literal
+line-break characters inside `a:t`) that the rewrite cannot preserve.
+Run-property overrides (size/bold/italic/color/family/align) MUST NOT be added
+to this whole-element path; on `mode: whole_element` they fail validation.
 
 Newlines in whole-element replacement text must have a documented mapping. V1
 maps `\n` to PowerPoint paragraphs (hard breaks), never soft `a:br` breaks, and
@@ -284,8 +287,9 @@ Whole-element refusal with run-scoped support:
 
 - Since `run_scoped` is implemented, `mode: whole_element` remains available only
   for intentionally plain-text rewrites. If the source `a:txBody` has
-  `run_count > 1` or contains `a:fld`, `a:hlinkClick`, `a:hlinkMouseOver`, or
-  `a:br`, validation MUST reject the operation with `unsupported_edit` unless
+  `run_count > 1` or contains `a:pPr`, `a:fld`, `a:hlinkClick`,
+  `a:hlinkMouseOver`, `a:br`, or literal line-break characters inside `a:t`,
+  validation MUST reject the operation with `unsupported_edit` unless
   `allow_formatting_simplification: true` is present.
 - When explicitly confirmed, the operation still emits the
   `formatting_simplified` warning and performs the documented lossy

@@ -1777,7 +1777,9 @@ fn replacement_text_body(existing: &XmlElement, operation: &ReplaceText) -> XmlE
 
 fn should_warn_formatting_simplified(existing: &XmlElement, operation: &ReplaceText) -> bool {
     if operation.format_policy == FormatPolicy::SingleRunDefaultStyle {
-        return first_run_properties(existing).is_some() || run_count(existing) > 1;
+        return first_run_properties(existing).is_some()
+            || run_count(existing) > 1
+            || contains_rich_text_construct(existing);
     }
     run_count(existing) > 1 || contains_rich_text_construct(existing)
 }
@@ -2009,16 +2011,41 @@ fn run_count(element: &XmlElement) -> usize {
 }
 
 fn contains_rich_text_construct(element: &XmlElement) -> bool {
+    element.children.iter().any(|child| match child {
+        XmlNode::Element(child) => {
+            matches!(
+                child.name.local_name.as_str(),
+                "pPr" | "fld" | "hlinkClick" | "hlinkMouseOver" | "br"
+            ) || contains_literal_text_line_break(child)
+                || contains_rich_text_construct(child)
+        }
+        XmlNode::Text(_)
+        | XmlNode::CData(_)
+        | XmlNode::Comment(_)
+        | XmlNode::ProcessingInstruction(_)
+        | XmlNode::DocType(_)
+        | XmlNode::GeneralRef(_) => false,
+    })
+}
+
+fn contains_literal_text_line_break(element: &XmlElement) -> bool {
+    if element.name.local_name == "t" {
+        return element.children.iter().any(|child| match child {
+            XmlNode::Text(text) | XmlNode::CData(text) => {
+                text.contains('\n') || text.contains('\r')
+            }
+            XmlNode::Element(child) => contains_literal_text_line_break(child),
+            XmlNode::Comment(_)
+            | XmlNode::ProcessingInstruction(_)
+            | XmlNode::DocType(_)
+            | XmlNode::GeneralRef(_) => false,
+        });
+    }
     element
         .children
         .iter()
         .filter_map(XmlNode::as_element)
-        .any(|child| {
-            matches!(
-                child.name.local_name.as_str(),
-                "fld" | "hlinkClick" | "hlinkMouseOver" | "br"
-            ) || contains_rich_text_construct(child)
-        })
+        .any(contains_literal_text_line_break)
 }
 
 fn target_element<'a>(
