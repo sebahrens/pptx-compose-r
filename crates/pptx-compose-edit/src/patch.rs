@@ -406,6 +406,11 @@ pub struct ReplaceTextOperation {
     pub run_style: Option<TextBoxStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
+        description = "Optional conservative text-fit policy. preserve may warn on overflow risk, fail_if_overflow rejects obvious overflow, and shrink_text is accepted only when no shrink is required in V1."
+    )]
+    pub fit_policy: Option<FitPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
         description = "Run selector for speaker-notes or table-cell replacements. Element text may alternatively carry run selection inside selector.run."
     )]
     pub run: Option<RunSelector>,
@@ -435,6 +440,22 @@ pub enum FormatPolicy {
     PreserveExistingRuns,
     PreserveFirstRun,
     SingleRunDefaultStyle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FitPolicy {
+    pub mode: FitPolicyMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_font_size_pt: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FitPolicyMode {
+    Preserve,
+    FailIfOverflow,
+    ShrinkText,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize, JsonSchema)]
@@ -1193,6 +1214,7 @@ fn all_op_names_matches_operation_variants() {
             format_policy: None,
             allow_formatting_simplification: false,
             run_style: None,
+            fit_policy: None,
             run: None,
         }),
         Operation::AddTextBox(AddTextBoxOperation {

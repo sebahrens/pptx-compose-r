@@ -27,7 +27,8 @@ use crate::{
         is_real_shape_tree_child,
     },
     patch::{
-        FormatPolicy, PatchEffects, ReplaceTextMode, ReplaceTextOperation, TextAlign, TextBoxStyle,
+        FitPolicy, FitPolicyMode, FormatPolicy, PatchEffects, ReplaceTextMode,
+        ReplaceTextOperation, TextAlign, TextBoxStyle,
     },
     selectors::RunSelector,
 };
@@ -43,6 +44,7 @@ pub struct ReplaceText {
     pub allow_formatting_simplification: bool,
     pub run: Option<RunSelector>,
     pub run_style: Option<TextBoxStyle>,
+    pub fit_policy: Option<FitPolicy>,
 }
 
 impl From<&ReplaceTextOperation> for ReplaceText {
@@ -59,6 +61,7 @@ impl From<&ReplaceTextOperation> for ReplaceText {
             allow_formatting_simplification: operation.allow_formatting_simplification,
             run: operation.run_selector().cloned(),
             run_style: operation.run_style.clone(),
+            fit_policy: operation.fit_policy,
         }
     }
 }
@@ -169,7 +172,7 @@ impl ReplaceText {
             )
             .with_location(self.location(Some(target)))
         })?;
-        self.validate_text_body(target, tx_body)
+        self.validate_text_body(target, element, tx_body)
     }
 
     pub fn apply(&self, package: &mut Package, target: &ResolvedElement) -> Result<PatchEffects> {
@@ -215,6 +218,9 @@ impl ReplaceText {
                 "message": "Existing rich text structure could not be preserved exactly."
             }));
         }
+        if let Some(fit_warning) = rewrite.fit_warning {
+            warnings.push(fit_warning);
+        }
 
         Ok(PatchEffects {
             changed_parts: vec![part_name.zip_entry_name().to_owned()],
@@ -246,14 +252,65 @@ impl ReplaceText {
         Ok(())
     }
 
-    fn validate_text_body(&self, target: &ResolvedElement, tx_body: &XmlElement) -> Result<()> {
+    fn validate_text_body(
+        &self,
+        target: &ResolvedElement,
+        element: &XmlElement,
+        tx_body: &XmlElement,
+    ) -> Result<()> {
         match self.mode {
             ReplaceTextMode::WholeElement => {
                 self.validate_whole_element_text_body(target, tx_body)?;
-                self.validate_whole_element_match(target, tx_body)
+                self.validate_whole_element_match(target, tx_body)?;
             }
-            ReplaceTextMode::RunScoped => validate_run_scoped_text_body(self, target, tx_body),
+            ReplaceTextMode::RunScoped => validate_run_scoped_text_body(self, target, tx_body)?,
         }
+        self.validate_fit_policy(target, element, tx_body)
+    }
+
+    fn validate_fit_policy(
+        &self,
+        target: &ResolvedElement,
+        element: &XmlElement,
+        tx_body: &XmlElement,
+    ) -> Result<()> {
+        let Some(policy) = self.fit_policy else {
+            return Ok(());
+        };
+        let estimate = estimate_text_fit(element, tx_body, &self.text);
+        match policy.mode {
+            FitPolicyMode::Preserve => Ok(()),
+            FitPolicyMode::FailIfOverflow if estimate.status == FitStatus::Overflow => {
+                Err(Error::new(
+                    ErrorCode::UnsupportedEdit,
+                    "replace_text fit_policy fail_if_overflow rejected likely text overflow.",
+                )
+                .with_location(self.location(Some(target))))
+            }
+            FitPolicyMode::ShrinkText if estimate.status == FitStatus::Overflow => {
+                Err(Error::new(
+                    ErrorCode::UnsupportedEdit,
+                    "replace_text fit_policy shrink_text requires run-size rewriting that is not supported for this target in V1.",
+                )
+                .with_location(self.location(Some(target))))
+            }
+            FitPolicyMode::FailIfOverflow | FitPolicyMode::ShrinkText => Ok(()),
+        }
+    }
+
+    fn fit_warning(&self, element: &XmlElement, tx_body: &XmlElement) -> Option<serde_json::Value> {
+        let policy = self.fit_policy?;
+        if policy.mode != FitPolicyMode::Preserve {
+            return None;
+        }
+        let estimate = estimate_text_fit(element, tx_body, &self.text);
+        (estimate.status == FitStatus::Overflow).then(|| {
+            json!({
+                "code": "text_overflow_risk",
+                "message": "Conservative text-fit estimate predicts likely overflow.",
+                "fit": estimate.to_json()
+            })
+        })
     }
 
     fn validate_whole_element_text_body(
@@ -1066,7 +1123,8 @@ fn rewrite_text_body(
                 "Text body node is not an element.",
             )
         })?;
-    operation.validate_text_body(target, tx_body)?;
+    operation.validate_text_body(target, element, tx_body)?;
+    let fit_warning = operation.fit_warning(element, tx_body);
     match operation.mode {
         ReplaceTextMode::WholeElement => {
             let replacement = replacement_text_body(tx_body, operation);
@@ -1074,6 +1132,7 @@ fn rewrite_text_body(
             element.children[tx_body_index] = XmlNode::Element(replacement);
             Ok(RewriteResult {
                 formatting_simplified,
+                fit_warning,
             })
         }
         ReplaceTextMode::RunScoped => {
@@ -1087,6 +1146,7 @@ fn rewrite_text_body(
             replace_run_scoped_text(tx_body, operation, target)?;
             Ok(RewriteResult {
                 formatting_simplified: false,
+                fit_warning,
             })
         }
     }
@@ -1138,6 +1198,7 @@ fn notes_body_tx_body_mut(element: &mut XmlElement) -> Option<&mut XmlElement> {
 
 struct RewriteResult {
     formatting_simplified: bool,
+    fit_warning: Option<serde_json::Value>,
 }
 
 fn selected_run_text(
@@ -1635,6 +1696,18 @@ fn attr_present(element: &XmlElement, local_name: &str) -> bool {
         .any(|attr| attr.name.local_name == local_name)
 }
 
+fn attr_value<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .iter()
+        .find(|attr| attr.name.local_name == local_name)
+        .map(|attr| attr.value.as_str())
+}
+
+fn attr_i64(element: &XmlElement, local_name: &str) -> Option<i64> {
+    attr_value(element, local_name)?.parse().ok()
+}
+
 fn attr_u32_gt_one(element: &XmlElement, local_name: &str) -> bool {
     element
         .attributes
@@ -1705,6 +1778,164 @@ fn should_warn_formatting_simplified(existing: &XmlElement, operation: &ReplaceT
         return first_run_properties(existing).is_some() || run_count(existing) > 1;
     }
     run_count(existing) > 1 || contains_rich_text_construct(existing)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FitStatus {
+    Fits,
+    Overflow,
+}
+
+#[derive(Clone, Debug)]
+struct FitEstimate {
+    status: FitStatus,
+    confidence: &'static str,
+    estimated_lines: u32,
+    available_height_emu: i64,
+    scale_needed: f64,
+    suggested_font_size_pt: u32,
+    reason: Option<&'static str>,
+}
+
+impl FitEstimate {
+    fn to_json(&self) -> serde_json::Value {
+        json!({
+            "status": match self.status {
+                FitStatus::Fits => "fits",
+                FitStatus::Overflow => "overflow",
+            },
+            "confidence": self.confidence,
+            "estimated_lines": self.estimated_lines,
+            "available_height_emu": self.available_height_emu,
+            "scale_needed": self.scale_needed,
+            "suggested_font_size_pt": self.suggested_font_size_pt,
+            "reason": self.reason,
+        })
+    }
+}
+
+fn estimate_text_fit(
+    element: &XmlElement,
+    tx_body: &XmlElement,
+    replacement_text: &str,
+) -> FitEstimate {
+    const EMU_PER_PT: f64 = 12_700.0;
+    let bounds = element_bounds(element);
+    let body_pr = child_element(tx_body, "bodyPr");
+    let inset_l = body_pr
+        .and_then(|body_pr| attr_i64(body_pr, "lIns"))
+        .unwrap_or(91_440);
+    let inset_r = body_pr
+        .and_then(|body_pr| attr_i64(body_pr, "rIns"))
+        .unwrap_or(91_440);
+    let inset_t = body_pr
+        .and_then(|body_pr| attr_i64(body_pr, "tIns"))
+        .unwrap_or(45_720);
+    let inset_b = body_pr
+        .and_then(|body_pr| attr_i64(body_pr, "bIns"))
+        .unwrap_or(45_720);
+    let font_size = first_font_size_pt(tx_body).unwrap_or_else(|| fallback_font_size_pt(element));
+    let Some((cx, cy)) = bounds else {
+        return FitEstimate {
+            status: FitStatus::Fits,
+            confidence: "low",
+            estimated_lines: 0,
+            available_height_emu: 0,
+            scale_needed: 1.0,
+            suggested_font_size_pt: font_size,
+            reason: Some("missing_bounds"),
+        };
+    };
+    let available_width = cx.saturating_sub(inset_l).saturating_sub(inset_r).max(1) as f64;
+    let available_height = cy.saturating_sub(inset_t).saturating_sub(inset_b).max(0);
+    let glyph_width = f64::from(font_size) * EMU_PER_PT * average_glyph_em(replacement_text);
+    let line_height = f64::from(font_size) * EMU_PER_PT * 1.2;
+    let estimated_lines = estimate_lines(replacement_text, available_width, glyph_width);
+    let needed_height = f64::from(estimated_lines) * line_height;
+    let scale_needed = if needed_height <= 0.0 {
+        1.0
+    } else {
+        ((available_height as f64) / needed_height).min(1.0)
+    };
+    let status = if needed_height > available_height as f64 {
+        FitStatus::Overflow
+    } else {
+        FitStatus::Fits
+    };
+    FitEstimate {
+        status,
+        confidence: confidence(replacement_text, first_font_size_pt(tx_body).is_some()),
+        estimated_lines,
+        available_height_emu: available_height,
+        scale_needed,
+        suggested_font_size_pt: suggested_font_size(font_size, scale_needed),
+        reason: (status == FitStatus::Overflow).then_some("estimated_text_height_exceeds_box"),
+    }
+}
+
+fn element_bounds(element: &XmlElement) -> Option<(i64, i64)> {
+    let xfrm = child_element(element, "spPr")
+        .or_else(|| child_element(element, "grpSpPr"))
+        .and_then(|properties| child_element(properties, "xfrm"))
+        .or_else(|| child_element(element, "xfrm"))?;
+    let ext = child_element(xfrm, "ext")?;
+    Some((attr_i64(ext, "cx")?, attr_i64(ext, "cy")?))
+}
+
+fn first_font_size_pt(element: &XmlElement) -> Option<u32> {
+    let run_properties = first_run_properties(element)?;
+    let sz = attr_i64(run_properties, "sz")?;
+    u32::try_from(sz / 100).ok().filter(|size| *size > 0)
+}
+
+fn fallback_font_size_pt(element: &XmlElement) -> u32 {
+    match first_descendant(element, "ph").and_then(|placeholder| attr_value(placeholder, "type")) {
+        Some("title" | "ctrTitle") => 32,
+        Some("subTitle") => 24,
+        Some("dt" | "ftr" | "sldNum" | "hdr") => 12,
+        _ => 18,
+    }
+}
+
+fn average_glyph_em(text: &str) -> f64 {
+    if text.chars().any(is_cjk) { 0.85 } else { 0.55 }
+}
+
+fn estimate_lines(text: &str, available_width: f64, glyph_width: f64) -> u32 {
+    let chars_per_line = (available_width / glyph_width.max(1.0)).floor().max(1.0) as usize;
+    let mut lines = 0_u32;
+    for paragraph in text.split('\n') {
+        let chars = paragraph.chars().count().max(1);
+        let paragraph_lines = chars.div_ceil(chars_per_line);
+        lines = lines.saturating_add(u32::try_from(paragraph_lines).unwrap_or(u32::MAX));
+    }
+    lines.max(1)
+}
+
+fn suggested_font_size(font_size: u32, scale_needed: f64) -> u32 {
+    ((f64::from(font_size) * scale_needed).floor() as u32).max(1)
+}
+
+fn confidence(text: &str, direct_font_size: bool) -> &'static str {
+    if direct_font_size && !text.chars().any(is_complex_script) {
+        "medium"
+    } else {
+        "low"
+    }
+}
+
+fn is_cjk(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0x3040..=0x30FF | 0xAC00..=0xD7AF
+    )
+}
+
+fn is_complex_script(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x0590..=0x08FF | 0x0900..=0x0D7F | 0x1780..=0x18AF
+    )
 }
 
 fn paragraph(text: &str, run_properties: Option<&XmlElement>) -> XmlElement {
@@ -2009,6 +2240,7 @@ fn replaces_and_maps_newlines() {
         allow_formatting_simplification: false,
         run: None,
         run_style: None,
+        fit_policy: None,
     };
 
     let effects = operation

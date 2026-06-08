@@ -87,9 +87,75 @@ pub struct ElementView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accessibility: Option<AccessibilityView>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<PlaceholderView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_layout: Option<TextLayoutView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<TextView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PlaceholderView {
+    pub r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idx: Option<u32>,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout_part: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextLayoutView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_pr: Option<BodyPrView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paragraph_defaults: Option<ParagraphDefaultsView>,
+    pub style_confidence: StyleConfidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BodyPrView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inset_l: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inset_r: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inset_t: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inset_b: Option<i64>,
+    pub autofit: AutofitKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ParagraphDefaultsView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub align: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AutofitKind {
+    NoAutofit,
+    NormAutoFit,
+    ShapeAutoFit,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StyleConfidence {
+    DirectOnly,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -591,6 +657,8 @@ pub mod binary {
                         "sha256:4444444444444444444444444444444444444444444444444444444444444444"
                             .to_owned(),
                     accessibility: None,
+                    placeholder: None,
+                    text_layout: None,
                     text: None,
                     image: Some(reference_image()),
                 }],

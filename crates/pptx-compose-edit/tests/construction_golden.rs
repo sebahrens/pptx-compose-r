@@ -248,6 +248,7 @@ mod construction_golden {
             allow_formatting_simplification: false,
             run: None,
             run_style: None,
+            fit_policy: None,
         };
 
         operation.apply(&mut package, &target)?;
@@ -274,6 +275,7 @@ mod construction_golden {
             allow_formatting_simplification: true,
             run: None,
             run_style: None,
+            fit_policy: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;
@@ -302,6 +304,7 @@ mod construction_golden {
             allow_formatting_simplification: true,
             run: None,
             run_style: None,
+            fit_policy: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;
@@ -335,6 +338,7 @@ mod construction_golden {
                 text_hash: None,
             }),
             run_style: None,
+            fit_policy: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;
@@ -374,6 +378,7 @@ mod construction_golden {
                 text_hash: None,
             }),
             run_style: None,
+            fit_policy: None,
         };
 
         operation.apply(&mut package, &target)?;
@@ -405,6 +410,7 @@ mod construction_golden {
                 text_hash: None,
             }),
             run_style: None,
+            fit_policy: None,
         };
 
         let error = operation
@@ -443,6 +449,7 @@ mod construction_golden {
                 color_hex: Some("112233".to_owned()),
                 align: Some(TextAlign::Center),
             }),
+            fit_policy: None,
         };
 
         operation.apply(&mut package, &target)?;
@@ -556,6 +563,7 @@ mod construction_golden {
                 color_hex: None,
                 align: None,
             }),
+            fit_policy: None,
         };
 
         let error = operation
@@ -583,6 +591,7 @@ mod construction_golden {
             allow_formatting_simplification: false,
             run: None,
             run_style: None,
+            fit_policy: None,
         };
 
         let error = operation
@@ -615,6 +624,7 @@ mod construction_golden {
                 text_hash: None,
             }),
             run_style: None,
+            fit_policy: None,
         };
 
         let error = operation
@@ -642,6 +652,7 @@ mod construction_golden {
             allow_formatting_simplification: false,
             run: None,
             run_style: None,
+            fit_policy: None,
         };
 
         let effects = operation.apply(&mut package, &target)?;

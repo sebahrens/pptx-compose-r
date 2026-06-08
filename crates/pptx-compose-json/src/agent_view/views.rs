@@ -40,10 +40,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    AccessibilityView, AgentView, Bounds, Capabilities, Editable, EditableSupport, ElementKind,
-    ElementPageView, ElementSelector, ElementView, FindTextResult, FindTextScope, ImageView,
-    IntrinsicSizePx, Paragraph, PresentationView, Run, SelectorGuards, SlideView, StyleSummary,
-    TextMatch, TextSpan, TextView, TruncationMarker, XmlLocation,
+    AccessibilityView, AgentView, AutofitKind, BodyPrView, Bounds, Capabilities, Editable,
+    EditableSupport, ElementKind, ElementPageView, ElementSelector, ElementView, FindTextResult,
+    FindTextScope, ImageView, IntrinsicSizePx, Paragraph, ParagraphDefaultsView, PlaceholderView,
+    PresentationView, Run, SelectorGuards, SlideView, StyleConfidence, StyleSummary,
+    TextLayoutView, TextMatch, TextSpan, TextView, TruncationMarker, XmlLocation,
     pagination::{CursorScope, ViewMeta, bounded_limit, cursor_offset, paginate},
 };
 use crate::{
@@ -684,10 +685,15 @@ fn project_slide(
             rels: Vec::new(),
         });
     let mut elements = Vec::new();
+    let layout_part = slide
+        .layout
+        .as_ref()
+        .map(|layout| trim_part(layout.part_name.as_str()));
     collect_elements(
         sp_tree,
         &slide.agent_id(),
         slide.part_name.clone(),
+        layout_part.as_deref(),
         &rels,
         pkg.package(),
         &mut elements,
@@ -725,6 +731,7 @@ fn collect_elements(
     parent: &XmlElement,
     slide_id: &str,
     slide_part: PartName,
+    layout_part: Option<&str>,
     slide_rels: &RelationshipSet,
     package: &Package,
     output: &mut Vec<ElementView>,
@@ -734,6 +741,7 @@ fn collect_elements(
         parent,
         slide_id,
         slide_part,
+        layout_part,
         slide_rels,
         package,
         &[],
@@ -748,6 +756,7 @@ fn collect_elements_at(
     parent: &XmlElement,
     slide_id: &str,
     slide_part: PartName,
+    layout_part: Option<&str>,
     slide_rels: &RelationshipSet,
     package: &Package,
     path_prefix: &[u32],
@@ -775,6 +784,7 @@ fn collect_elements_at(
             child,
             slide_id,
             slide_part.clone(),
+            layout_part,
             path.clone(),
             core_kind,
             slide_rels,
@@ -788,6 +798,7 @@ fn collect_elements_at(
                 child,
                 slide_id,
                 slide_part.clone(),
+                layout_part,
                 slide_rels,
                 package,
                 &sp_tree_path,
@@ -812,6 +823,7 @@ fn project_element(
     element: &XmlElement,
     slide_id: &str,
     slide_part: PartName,
+    layout_part: Option<&str>,
     path: SpTreePath,
     core_kind: CoreElementKind,
     slide_rels: &RelationshipSet,
@@ -898,9 +910,65 @@ fn project_element(
             text_hash,
         }),
         accessibility: project_accessibility(&shape),
+        placeholder: project_placeholder(element, layout_part),
+        text_layout: project_text_layout(element),
         text,
         image,
     })
+}
+
+fn project_placeholder(element: &XmlElement, layout_part: Option<&str>) -> Option<PlaceholderView> {
+    let placeholder = first_descendant(element, "ph")?;
+    let placeholder_type = optional_attr(placeholder, "type").unwrap_or("body");
+    Some(PlaceholderView {
+        r#type: placeholder_type.to_owned(),
+        idx: optional_attr(placeholder, "idx").and_then(parse_u32),
+        source: "slide".to_owned(),
+        layout_part: layout_part.map(str::to_owned),
+    })
+}
+
+fn project_text_layout(element: &XmlElement) -> Option<TextLayoutView> {
+    let tx_body = first_descendant(element, "txBody")?;
+    let body_pr = child_element(tx_body, "bodyPr").map(project_body_pr);
+    let paragraph_defaults = first_descendant(tx_body, "pPr").and_then(project_paragraph_defaults);
+    Some(TextLayoutView {
+        body_pr,
+        paragraph_defaults,
+        style_confidence: StyleConfidence::DirectOnly,
+    })
+}
+
+fn project_body_pr(body_pr: &XmlElement) -> BodyPrView {
+    BodyPrView {
+        wrap: optional_attr(body_pr, "wrap").map(str::to_owned),
+        anchor: optional_attr(body_pr, "anchor").map(str::to_owned),
+        inset_l: optional_attr(body_pr, "lIns").and_then(parse_i64),
+        inset_r: optional_attr(body_pr, "rIns").and_then(parse_i64),
+        inset_t: optional_attr(body_pr, "tIns").and_then(parse_i64),
+        inset_b: optional_attr(body_pr, "bIns").and_then(parse_i64),
+        autofit: autofit_kind(body_pr),
+    }
+}
+
+fn project_paragraph_defaults(p_pr: &XmlElement) -> Option<ParagraphDefaultsView> {
+    let align = optional_attr(p_pr, "algn").map(str::to_owned);
+    align.map(|align| ParagraphDefaultsView { align: Some(align) })
+}
+
+fn autofit_kind(body_pr: &XmlElement) -> AutofitKind {
+    if child_element(body_pr, "noAutofit").is_some() {
+        AutofitKind::NoAutofit
+    } else if child_element(body_pr, "normAutofit")
+        .or_else(|| child_element(body_pr, "normAutoFit"))
+        .is_some()
+    {
+        AutofitKind::NormAutoFit
+    } else if child_element(body_pr, "spAutoFit").is_some() {
+        AutofitKind::ShapeAutoFit
+    } else {
+        AutofitKind::Unknown
+    }
 }
 
 fn project_accessibility(shape: &Shape) -> Option<AccessibilityView> {
@@ -1559,6 +1627,30 @@ fn first_descendant<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a
         }
     }
     None
+}
+
+fn child_element<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a XmlElement> {
+    element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .find(|child| child.name.local_name == local_name)
+}
+
+fn optional_attr<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.local_name == local_name)
+        .map(|attribute| attribute.value.as_str())
+}
+
+fn parse_i64(value: &str) -> Option<i64> {
+    value.parse().ok()
+}
+
+fn parse_u32(value: &str) -> Option<u32> {
+    value.parse().ok()
 }
 
 fn to_value<T: Serialize>(value: T) -> Result<Value, JsonError> {
@@ -2377,6 +2469,8 @@ fn test_element(index: u32) -> ElementView {
         fingerprint: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             .to_owned(),
         accessibility: None,
+        placeholder: None,
+        text_layout: None,
         text: None,
         image: None,
     }

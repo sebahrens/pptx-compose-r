@@ -595,6 +595,34 @@ fn agent_view_advertises_set_document_metadata() {
 }
 
 #[test]
+fn inspect_emits_placeholder_and_text_layout_metadata() {
+    let bytes = text_deck_with_slide(&placeholder_text_slide());
+    let document = PresentationDocument::from_bytes(&bytes).expect("placeholder deck opens");
+    let view = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("placeholder deck inspects");
+    let element = inspect_element(&view, "slide-1:shape-3");
+
+    assert_eq!(element["placeholder"]["type"], "title");
+    assert_eq!(element["placeholder"]["idx"], 1);
+    assert_eq!(element["placeholder"]["source"], "slide");
+    assert_eq!(element["text_layout"]["body_pr"]["wrap"], "square");
+    assert_eq!(element["text_layout"]["body_pr"]["anchor"], "ctr");
+    assert_eq!(element["text_layout"]["body_pr"]["inset_l"], 91440);
+    assert_eq!(element["text_layout"]["body_pr"]["autofit"], "no_autofit");
+    assert_eq!(element["text_layout"]["paragraph_defaults"]["align"], "ctr");
+    assert_eq!(element["text_layout"]["style_confidence"], "direct_only");
+}
+
+#[test]
 fn set_document_metadata_round_trips_and_preserves_clean_parts() {
     let bytes = metadata_deck();
     let original_entries = from_bytes(&bytes).expect("original entries read");
@@ -949,6 +977,83 @@ fn replace_text_dry_run_reports_effects_without_mutating_document() {
 
     let written = document.write_vec().expect("document writes after dry-run");
     assert_eq!(written, bytes, "dry-run must not mutate document bytes");
+}
+
+#[test]
+fn replace_text_fail_if_overflow_rejects_obvious_dry_run_overflow() {
+    let bytes = text_deck_with_slide(&placeholder_text_slide());
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-text-fit-fail",
+        vec![serde_json::json!({
+            "operation_id": "replace-title",
+            "op": "replace_text",
+            "element_id": "slide-1:shape-3",
+            "text": "This translated title is intentionally very long and should not fit in the tiny placeholder box without changing the layout.",
+            "fit_policy": {
+                "mode": "fail_if_overflow"
+            }
+        })],
+    );
+
+    let output = document
+        .apply_patch_with_diff(
+            patch,
+            MediaInputs::default(),
+            ApplyPatchOptions {
+                dry_run: true,
+                validate: true,
+            },
+        )
+        .expect("fit dry-run returns a report");
+
+    assert_eq!(output.report.status, PatchStatus::DryRunFailed);
+    let operation = &output.report.operation_reports[0];
+    assert_eq!(operation.status, OperationStatus::Failed);
+    assert_eq!(
+        operation.error.as_ref().expect("operation has error").code,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit
+    );
+}
+
+#[test]
+fn replace_text_preserve_fit_policy_reports_overflow_risk() {
+    let bytes = text_deck_with_slide(&placeholder_text_slide());
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-text-fit-preserve",
+        vec![serde_json::json!({
+            "operation_id": "replace-title",
+            "op": "replace_text",
+            "element_id": "slide-1:shape-3",
+            "text": "This translated title is intentionally very long and should not fit in the tiny placeholder box without changing the layout.",
+            "fit_policy": {
+                "mode": "preserve"
+            }
+        })],
+    );
+
+    let output = document
+        .apply_patch_with_diff(
+            patch,
+            MediaInputs::default(),
+            ApplyPatchOptions {
+                dry_run: true,
+                validate: true,
+            },
+        )
+        .expect("preserve fit dry-run succeeds");
+
+    assert_eq!(output.report.status, PatchStatus::DryRunSuccess);
+    let warning = output.report.operation_reports[0]
+        .warnings
+        .iter()
+        .find(|warning| warning["code"] == "text_overflow_risk")
+        .expect("overflow risk warning is reported");
+    assert_eq!(warning["fit"]["status"], "overflow");
+    assert_eq!(warning["fit"]["confidence"], "medium");
 }
 
 #[test]
@@ -2694,6 +2799,24 @@ fn notes_slide_rels() -> String {
 
 fn text_slide() -> String {
     text_slide_with_text("Original title")
+}
+
+fn placeholder_text_slide() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="3" name="Title Placeholder"/><p:cNvSpPr txBox="1"/><p:nvPr><p:ph type="title" idx="1"/></p:nvPr></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="914400" cy="274320"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+        <p:txBody><a:bodyPr wrap="square" anchor="ctr" lIns="91440" rIns="91440" tIns="45720" bIns="45720"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr sz="3200"/><a:t>Title</a:t></a:r></a:p></p:txBody>
+      </p:sp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+        .to_owned()
 }
 
 fn notes_linked_slide() -> String {
