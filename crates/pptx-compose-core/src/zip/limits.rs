@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use crate::error::{Error, Result};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResourceLimits {
+pub struct ZipResourceLimits {
     pub max_compressed_package_bytes: u64,
     pub max_uncompressed_package_bytes: u64,
     pub max_part_count: usize,
@@ -14,7 +14,9 @@ pub struct ResourceLimits {
     pub max_xml_node_count: u64,
 }
 
-impl Default for ResourceLimits {
+pub type ResourceLimits = ZipResourceLimits;
+
+impl Default for ZipResourceLimits {
     fn default() -> Self {
         Self {
             max_compressed_package_bytes: 524_288_000,
@@ -31,54 +33,42 @@ impl Default for ResourceLimits {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OpenOptions {
-    pub resource_limits: ResourceLimits,
+    pub resource_limits: ZipResourceLimits,
 }
 
-pub(crate) struct LimitEnforcingReader<'a, R> {
-    inner: R,
-    limits: &'a ResourceLimits,
+pub(crate) struct LimitTracker<'a> {
+    limits: &'a ZipResourceLimits,
     entry_name: &'a str,
     entry_specific_uncompressed_limit: Option<u64>,
     compressed_size: u64,
     entry_uncompressed_bytes: u64,
     package_uncompressed_bytes: &'a mut u64,
-    error: Option<Error>,
 }
 
-impl<'a, R> LimitEnforcingReader<'a, R>
-where
-    R: Read,
-{
+impl<'a> LimitTracker<'a> {
     pub(crate) fn new(
-        inner: R,
-        limits: &'a ResourceLimits,
+        limits: &'a ZipResourceLimits,
         entry_name: &'a str,
         entry_specific_uncompressed_limit: Option<u64>,
         compressed_size: u64,
         package_uncompressed_bytes: &'a mut u64,
     ) -> Self {
         Self {
-            inner,
             limits,
             entry_name,
             entry_specific_uncompressed_limit,
             compressed_size,
             entry_uncompressed_bytes: 0,
             package_uncompressed_bytes,
-            error: None,
         }
     }
 
     #[cfg(test)]
-    const fn uncompressed_read(&self) -> u64 {
+    pub(crate) const fn uncompressed_read(&self) -> u64 {
         self.entry_uncompressed_bytes
     }
 
-    pub(crate) fn take_error(&mut self) -> Option<Error> {
-        self.error.take()
-    }
-
-    fn max_read_len(&self, requested: usize) -> usize {
+    pub(crate) fn max_read_len(&self, requested: usize) -> usize {
         let single_part = bytes_until_crossing(
             self.entry_uncompressed_bytes,
             self.limits.max_single_part_uncompressed_bytes,
@@ -107,6 +97,13 @@ where
 
         let limit = single_part.min(entry_specific).min(package).min(ratio);
         requested.min(usize::try_from(limit).unwrap_or(usize::MAX))
+    }
+
+    pub(crate) fn record_read(&mut self, count: usize) -> Result<()> {
+        let count = u64::try_from(count).unwrap_or(u64::MAX);
+        self.entry_uncompressed_bytes = self.entry_uncompressed_bytes.saturating_add(count);
+        *self.package_uncompressed_bytes = (*self.package_uncompressed_bytes).saturating_add(count);
+        self.check_limits()
     }
 
     fn check_limits(&self) -> Result<()> {
@@ -157,6 +154,47 @@ where
     }
 }
 
+pub(crate) struct LimitEnforcingReader<'a, R> {
+    inner: R,
+    tracker: LimitTracker<'a>,
+    error: Option<Error>,
+}
+
+impl<'a, R> LimitEnforcingReader<'a, R>
+where
+    R: Read,
+{
+    pub(crate) fn new(
+        inner: R,
+        limits: &'a ZipResourceLimits,
+        entry_name: &'a str,
+        entry_specific_uncompressed_limit: Option<u64>,
+        compressed_size: u64,
+        package_uncompressed_bytes: &'a mut u64,
+    ) -> Self {
+        Self {
+            inner,
+            tracker: LimitTracker::new(
+                limits,
+                entry_name,
+                entry_specific_uncompressed_limit,
+                compressed_size,
+                package_uncompressed_bytes,
+            ),
+            error: None,
+        }
+    }
+
+    #[cfg(test)]
+    const fn uncompressed_read(&self) -> u64 {
+        self.tracker.uncompressed_read()
+    }
+
+    pub(crate) fn take_error(&mut self) -> Option<Error> {
+        self.error.take()
+    }
+}
+
 impl<R> Read for LimitEnforcingReader<'_, R>
 where
     R: Read,
@@ -170,15 +208,10 @@ where
             return Err(limit_io_error());
         }
 
-        let read_len = self.max_read_len(buf.len()).max(1);
+        let read_len = self.tracker.max_read_len(buf.len()).max(1);
         let count = self.inner.read(&mut buf[..read_len])?;
-        self.entry_uncompressed_bytes = self
-            .entry_uncompressed_bytes
-            .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
-        *self.package_uncompressed_bytes = (*self.package_uncompressed_bytes)
-            .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
 
-        if let Err(error) = self.check_limits() {
+        if let Err(error) = self.tracker.record_read(count) {
             self.error = Some(error);
             return Err(limit_io_error());
         }
@@ -189,7 +222,7 @@ where
 
 pub(crate) fn ensure_compressed_package_size(
     compressed_package_bytes: u64,
-    limits: &ResourceLimits,
+    limits: &ZipResourceLimits,
 ) -> Result<()> {
     if compressed_package_bytes > limits.max_compressed_package_bytes {
         return Err(Error::resource_limit_exceeded(format!(
@@ -201,7 +234,7 @@ pub(crate) fn ensure_compressed_package_size(
     Ok(())
 }
 
-pub(crate) fn ensure_part_count(part_count: usize, limits: &ResourceLimits) -> Result<()> {
+pub(crate) fn ensure_part_count(part_count: usize, limits: &ZipResourceLimits) -> Result<()> {
     if part_count > limits.max_part_count {
         return Err(Error::resource_limit_exceeded(format!(
             "ZIP package exceeded the maximum part count of {}.",
@@ -222,7 +255,7 @@ fn limit_io_error() -> io::Error {
 
 #[cfg(test)]
 #[test]
-fn aborts_zip_bomb_during_inflate() {
+fn aborts_streaming_inflate_when_ratio_limit_crosses() {
     use std::io::{Cursor, Read};
 
     use zip::ZipArchive;
