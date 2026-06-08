@@ -79,14 +79,19 @@ fn mcp_eval_corpus_contains_required_cases() {
                 .is_some_and(|invariants| !invariants.is_empty()),
             "{case_name}: transcript declares output invariants"
         );
-        assert_transcript_arguments_validate(case_name, &transcript);
+        assert_transcript_arguments_validate(case_name, &transcript, input_ref.trim(), &repo_root);
         if case_name == "stale-revision" {
             assert_stale_revision_transcript(&transcript);
         }
     }
 }
 
-fn assert_transcript_arguments_validate(case_name: &str, transcript: &Value) {
+fn assert_transcript_arguments_validate(
+    case_name: &str,
+    transcript: &Value,
+    input_ref: &str,
+    repo_root: &Path,
+) {
     let tools = transcript["tools"]
         .as_array()
         .unwrap_or_else(|| panic!("{case_name}: tools is an array"));
@@ -94,13 +99,13 @@ fn assert_transcript_arguments_validate(case_name: &str, transcript: &Value) {
         let name = step["name"]
             .as_str()
             .unwrap_or_else(|| panic!("{case_name}: tool step {index} has a string name"));
-        let arguments = substitute_placeholders(step["arguments"].clone());
+        let arguments = substitute_placeholders(step["arguments"].clone(), input_ref);
         assert!(
             step["expect"]["status"].is_string(),
             "{case_name}: tool step {index} declares expected status"
         );
         assert_tool_arguments_validate(case_name, index, name, &arguments);
-        assert_tool_runtime_argument_invariants(case_name, index, name, &arguments);
+        assert_tool_runtime_argument_invariants(case_name, index, name, &arguments, repo_root);
     }
 }
 
@@ -120,19 +125,33 @@ fn assert_tool_runtime_argument_invariants(
     index: usize,
     name: &str,
     arguments: &Value,
+    repo_root: &Path,
 ) {
-    if name != "pptx_export" {
-        return;
+    match name {
+        "pptx_open" => {
+            let path = arguments
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("{case_name}: tool step {index} pptx_open has a path"));
+            let resolved = repo_root.join(path);
+            assert!(
+                resolved.exists(),
+                "{case_name}: tool step {index} pptx_open path exists after placeholder substitution: {path}"
+            );
+        }
+        "pptx_export" => {
+            let output_path = arguments.get("output_path").and_then(Value::as_str);
+            let inline = arguments
+                .get("inline")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            assert!(
+                output_path.is_some() || inline,
+                "{case_name}: tool step {index} pptx_export must set inline=true when output_path is absent"
+            );
+        }
+        _ => {}
     }
-    let output_path = arguments.get("output_path").and_then(Value::as_str);
-    let inline = arguments
-        .get("inline")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    assert!(
-        output_path.is_some() || inline,
-        "{case_name}: tool step {index} pptx_export must set inline=true when output_path is absent"
-    );
 }
 
 fn tool_input_schema(name: &str) -> Option<Value> {
@@ -155,28 +174,28 @@ fn schema_for<T: JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).expect("input schema serializes")
 }
 
-fn substitute_placeholders(value: Value) -> Value {
+fn substitute_placeholders(value: Value, input_ref: &str) -> Value {
     match value {
-        Value::String(value) => substitute_string_placeholder(&value),
+        Value::String(value) => substitute_string_placeholder(&value, input_ref),
         Value::Array(values) => Value::Array(
             values
                 .into_iter()
-                .map(substitute_placeholders)
+                .map(|value| substitute_placeholders(value, input_ref))
                 .collect::<Vec<_>>(),
         ),
         Value::Object(values) => Value::Object(
             values
                 .into_iter()
-                .map(|(key, value)| (key, substitute_placeholders(value)))
+                .map(|(key, value)| (key, substitute_placeholders(value, input_ref)))
                 .collect(),
         ),
         value => value,
     }
 }
 
-fn substitute_string_placeholder(value: &str) -> Value {
+fn substitute_string_placeholder(value: &str, input_ref: &str) -> Value {
     match value {
-        "{input}" => json!("fixtures/minimal/minimal.pptx"),
+        "{input}" => json!(input_ref),
         "{session_id}" => json!("session-1"),
         "{revision}" => json!(1),
         "{new_revision}" => json!(2),
