@@ -33,6 +33,7 @@ const DIGITAL_SIGNATURE_XML_CONTENT_TYPE: &str =
 pub fn check_invariants(pkg: &Package, findings: &mut Vec<Finding>) {
     check_duplicate_slide_id(pkg, findings);
     check_xml_well_formed(pkg, findings);
+    check_slide_xml_invariants(pkg, findings);
     check_dirty_xml_parts(pkg, findings);
     check_external_relationship_not_checked(pkg, findings);
     check_part_dropped(pkg, findings);
@@ -77,9 +78,6 @@ fn check_dirty_xml_parts(pkg: &Package, findings: &mut Vec<Finding>) {
             Ok(document) => {
                 if let Some(root) = document.root_element() {
                     check_missing_namespace_declaration(part_name, root, findings);
-                    if is_slide_part(pkg, part_name) {
-                        check_duplicate_drawing_id(part_name, root, findings);
-                    }
                 }
             }
             Err(error) => findings.push(Finding::new(
@@ -93,6 +91,21 @@ fn check_dirty_xml_parts(pkg: &Package, findings: &mut Vec<Finding>) {
                 location(&[("part", part_name.zip_entry_name().to_owned())]),
                 Some("Regenerate or repair the dirty XML before writing.".to_owned()),
             )),
+        }
+    }
+}
+
+fn check_slide_xml_invariants(pkg: &Package, findings: &mut Vec<Finding>) {
+    for part in pkg.parts().iter() {
+        let part_name = part.name();
+        if !is_xml_part(part_name) || !is_slide_part(pkg, part_name) {
+            continue;
+        }
+
+        if let Ok(document) = parse_document(part.bytes())
+            && let Some(root) = document.root_element()
+        {
+            check_duplicate_drawing_id(part_name, root, findings);
         }
     }
 }
@@ -477,6 +490,43 @@ mod tests {
                 "part": "ppt/slides/slide1.xml",
                 "prefix": "a",
                 "qualified_name": "a:xfrm"
+            })
+        );
+    }
+
+    #[test]
+    fn detects_duplicate_drawing_ids_in_clean_slide_parts() {
+        let slide_part =
+            PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid slide part");
+        let mut package = Package::new();
+        package
+            .insert_zip_entry(
+                "ppt/slides/slide1.xml",
+                br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="4" name="Title"/></p:nvSpPr></p:sp><p:pic><p:nvPicPr><p:cNvPr id="4" name="Picture"/></p:nvPicPr></p:pic></p:spTree></p:cSld></p:sld>"#.to_vec(),
+            )
+            .expect("slide inserted");
+        package
+            .content_types_mut()
+            .insert_default("xml", "application/xml");
+        package.push_slide_id(SlideIdEntry {
+            slide_id: "256".to_owned(),
+            relationship_id: Some("rId1".to_owned()),
+            part: Some(slide_part),
+        });
+
+        let outcome = validate_package(&package, ValidationMode::Edited);
+
+        assert_eq!(outcome.status, ValidationStatus::Invalid);
+        let duplicate_drawing = outcome
+            .findings
+            .iter()
+            .find(|finding| finding.code == FindingCode::DuplicateDrawingId)
+            .expect("duplicate drawing id finding");
+        assert_eq!(
+            duplicate_drawing.location,
+            serde_json::json!({
+                "part": "ppt/slides/slide1.xml",
+                "drawing_id": "4"
             })
         );
     }
