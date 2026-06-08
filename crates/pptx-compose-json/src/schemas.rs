@@ -91,7 +91,9 @@ pub enum OperationStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OperationTarget {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub slide_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub element_id: String,
     pub part: String,
 }
@@ -364,6 +366,34 @@ fn roundtrips_044_examples() {
             }
           ],
           "changed_parts": ["ppt/slides/slide1.xml"],
+          "validation": { "status": "valid", "errors": 0, "warnings": 0 }
+        }"#,
+    );
+
+    assert_roundtrip::<PatchReport>(
+        r#"{
+          "schema": "pptx-compose.patch_report.v1",
+          "version": 1,
+          "status": "applied",
+          "dry_run": false,
+          "document_id": "sha256:old",
+          "base_revision": 1,
+          "new_document_id": "sha256:new",
+          "new_revision": 2,
+          "operation_reports": [
+            {
+              "operation_id": "op-1",
+              "op": "set_document_metadata",
+              "status": "applied",
+              "target": {
+                "part": "docProps/core.xml"
+              },
+              "changed_parts": ["docProps/core.xml"],
+              "created_element_ids": [],
+              "warnings": []
+            }
+          ],
+          "changed_parts": ["docProps/core.xml"],
           "validation": { "status": "valid", "errors": 0, "warnings": 0 }
         }"#,
     );

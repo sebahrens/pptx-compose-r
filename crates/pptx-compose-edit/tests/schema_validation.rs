@@ -64,6 +64,10 @@ fn emitted_json_instances_validate_against_published_schemas() {
         serde_json::to_value(patch_report()).expect("patch report serializes"),
     );
     assert_schema_accepts(
+        patch_report_json_schema().expect("patch report schema emits"),
+        part_only_patch_report(),
+    );
+    assert_schema_accepts(
         validation_report_json_schema().expect("validation report schema emits"),
         serde_json::to_value(validation_report()).expect("validation report serializes"),
     );
@@ -447,6 +451,36 @@ fn patch_report() -> PatchReport {
             warnings: 0,
         },
     }
+}
+
+fn part_only_patch_report() -> Value {
+    json!({
+        "schema": PATCH_REPORT_SCHEMA,
+        "version": PATCH_REPORT_VERSION,
+        "status": "applied",
+        "dry_run": false,
+        "document_id": "sha256:old",
+        "base_revision": 1,
+        "new_document_id": "sha256:new",
+        "new_revision": 2,
+        "operation_reports": [{
+            "operation_id": "op-1",
+            "op": "set_document_metadata",
+            "status": "applied",
+            "target": {
+                "part": "docProps/core.xml"
+            },
+            "changed_parts": ["docProps/core.xml"],
+            "created_element_ids": [],
+            "warnings": []
+        }],
+        "changed_parts": ["docProps/core.xml"],
+        "validation": {
+            "status": "valid",
+            "errors": 0,
+            "warnings": 0
+        }
+    })
 }
 
 fn validation_report() -> ValidationReport {

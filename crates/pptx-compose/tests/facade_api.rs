@@ -659,6 +659,11 @@ fn set_document_metadata_round_trips_and_preserves_clean_parts() {
         .expect("metadata applies");
     assert_eq!(report.changed_parts, vec!["docProps/core.xml"]);
     assert_ne!(report.new_document_id, report.document_id);
+    let report_json = serde_json::to_value(&report).expect("metadata report serializes");
+    assert_eq!(
+        report_json["operation_reports"][0]["target"],
+        serde_json::json!({ "part": "docProps/core.xml" })
+    );
 
     let written = document
         .write_vec_with_options(WriteOptions {
