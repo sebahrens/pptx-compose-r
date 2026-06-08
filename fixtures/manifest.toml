@@ -1,4 +1,12 @@
 [[entries]]
+path = "minimal.pptx"
+source_app = "synthetic"
+features = ["minimal-package", "text"]
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "roundtrip::no_edit_byte_identity"
+
+[[entries]]
 path = "legacy/sample.pptx"
 source_app = "legacy"
 features = ["legacy-smoke", "minimal-package"]
@@ -82,6 +90,22 @@ consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_
 path = "real-world/worldbank-macro-economic-update.pptx"
 source_app = "powerpoint"
 features = ["real-world", "consulting", "text", "chart", "media", "image", "external-relationship"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/worldbank-macro-economic-update-de.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "external-relationship", "localized"]
+expected_warnings = ["external_relationship_not_checked"]
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/worldbank-macro-economic-update-fr.pptx"
+source_app = "powerpoint"
+features = ["real-world", "consulting", "text", "chart", "media", "image", "external-relationship", "localized"]
 expected_warnings = ["external_relationship_not_checked"]
 invariants = ["contains-presentation-part", "roundtrip"]
 consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"

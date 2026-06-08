@@ -51,41 +51,59 @@ mod manifest {
     }
 
     #[test]
-    fn every_required_family_pptx_has_manifest_entry() {
+    fn every_v1_pptx_fixture_has_manifest_entry() {
         let manifest = load_manifest();
 
+        for rel_path in pptx_fixture_paths() {
+            assert!(
+                manifest.contains_path(&rel_path),
+                "fixture manifest must include PPTX fixture `{rel_path}`"
+            );
+        }
+    }
+
+    #[test]
+    fn required_families_are_present_on_disk() {
         for family in REQUIRED_FIXTURE_FAMILIES {
             let family_path = fixture_path(family);
-            let entries = std::fs::read_dir(&family_path).unwrap_or_else(|error| {
-                panic!(
-                    "could not read fixture family {}: {error}",
-                    family_path.display()
-                )
-            });
+            assert!(
+                family_path.is_dir(),
+                "required fixture family must exist: {}",
+                family_path.display()
+            );
+        }
+    }
 
-            for entry in entries {
-                let entry = entry.unwrap_or_else(|error| {
-                    panic!(
-                        "could not read fixture family entry {}: {error}",
-                        family_path.display()
-                    )
-                });
-                let path = entry.path();
-                if !is_pptx(&path) {
-                    continue;
-                }
+    fn pptx_fixture_paths() -> Vec<String> {
+        let root = fixture_path("");
+        let mut paths = Vec::new();
+        collect_pptx_fixture_paths(&root, &root, &mut paths);
+        paths.sort();
+        paths
+    }
 
-                let rel_path = format!(
-                    "{}{}",
-                    family,
-                    path.file_name()
-                        .expect("fixture file has a file name")
-                        .to_string_lossy()
-                );
-                assert!(
-                    manifest.contains_path(&rel_path),
-                    "fixture manifest must include PPTX fixture `{rel_path}`"
-                );
+    fn collect_pptx_fixture_paths(root: &Path, directory: &Path, paths: &mut Vec<String>) {
+        let mut entries = std::fs::read_dir(directory)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", directory.display()))
+            .map(|entry| {
+                entry.unwrap_or_else(|error| {
+                    panic!("could not read entry in {}: {error}", directory.display())
+                })
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.path());
+
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_pptx_fixture_paths(root, &path, paths);
+            } else if is_pptx(&path) {
+                let rel_path = path
+                    .strip_prefix(root)
+                    .expect("fixture path is under fixture root")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                paths.push(rel_path);
             }
         }
     }
@@ -118,7 +136,7 @@ mod corpus {
             SourceApp::Synthetic,
         ] {
             assert!(
-                manifest.has_source_app(source_app),
+                !manifest.entries_for_source_app(source_app).is_empty(),
                 "fixture manifest must include source_app `{source_app:?}`"
             );
         }
@@ -139,10 +157,35 @@ mod corpus {
             "embedding",
             "malformed",
             "real-world",
+            "localized",
         ] {
             assert!(
                 manifest.has_feature(required_feature),
                 "fixture manifest must include feature `{required_feature}`"
+            );
+        }
+
+        for expected_warning in [
+            "external_relationship_not_checked",
+            "malformed_xml",
+            "unsafe_path",
+        ] {
+            assert!(
+                manifest.has_warning(expected_warning),
+                "fixture manifest must include expected warning `{expected_warning}`"
+            );
+        }
+
+        for required_invariant in [
+            "contains-presentation-part",
+            "roundtrip",
+            "edit-add-image",
+            "malformed",
+            "unsafe-path",
+        ] {
+            assert!(
+                manifest.has_invariant(required_invariant),
+                "fixture manifest must include invariant `{required_invariant}`"
             );
         }
 
@@ -154,6 +197,7 @@ mod corpus {
             assert!(
                 manifest
                     .entries_with_feature("source-family")
+                    .into_iter()
                     .any(|entry| entry.source_app == source_app),
                 "fixture manifest must include a source-family fixture for `{source_app:?}`"
             );
@@ -162,8 +206,18 @@ mod corpus {
         assert!(
             manifest
                 .entries_with_feature("real-world")
+                .into_iter()
                 .any(|entry| entry.has_invariant("roundtrip")),
             "fixture manifest must include a real-world roundtrip fixture"
+        );
+
+        assert!(
+            !manifest
+                .entries_consumed_by(
+                    "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+                )
+                .is_empty(),
+            "fixture manifest must record entries consumed by persistence tests"
         );
     }
 

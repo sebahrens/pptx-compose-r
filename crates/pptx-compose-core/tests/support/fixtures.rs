@@ -41,9 +41,7 @@ impl FixtureManifest {
 
     #[allow(dead_code)]
     pub fn has_source_app(&self, source_app: SourceApp) -> bool {
-        self.entries
-            .iter()
-            .any(|entry| entry.source_app == source_app)
+        !self.entries_for_source_app(source_app).is_empty()
     }
 
     #[allow(dead_code)]
@@ -55,14 +53,57 @@ impl FixtureManifest {
 
     #[allow(dead_code)]
     pub fn has_feature(&self, feature: &str) -> bool {
-        self.entries.iter().any(|entry| entry.has_feature(feature))
+        !self.entries_with_feature(feature).is_empty()
     }
 
     #[allow(dead_code)]
-    pub fn entries_with_feature(&self, feature: &str) -> impl Iterator<Item = &FixtureEntry> {
+    pub fn has_warning(&self, warning: &str) -> bool {
+        !self.entries_with_warning(warning).is_empty()
+    }
+
+    #[allow(dead_code)]
+    pub fn has_invariant(&self, invariant: &str) -> bool {
+        !self.entries_with_invariant(invariant).is_empty()
+    }
+
+    #[allow(dead_code)]
+    pub fn entries_for_source_app(&self, source_app: SourceApp) -> Vec<&FixtureEntry> {
+        self.entries
+            .iter()
+            .filter(move |entry| entry.source_app == source_app)
+            .collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn entries_with_feature(&self, feature: &str) -> Vec<&FixtureEntry> {
         self.entries
             .iter()
             .filter(move |entry| entry.has_feature(feature))
+            .collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn entries_with_warning(&self, warning: &str) -> Vec<&FixtureEntry> {
+        self.entries
+            .iter()
+            .filter(move |entry| entry.has_expected_warning(warning))
+            .collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn entries_with_invariant(&self, invariant: &str) -> Vec<&FixtureEntry> {
+        self.entries
+            .iter()
+            .filter(move |entry| entry.has_invariant(invariant))
+            .collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn entries_consumed_by(&self, consuming_test: &str) -> Vec<&FixtureEntry> {
+        self.entries
+            .iter()
+            .filter(move |entry| entry.consuming_test == consuming_test)
+            .collect()
     }
 
     #[allow(dead_code)]
@@ -88,6 +129,10 @@ impl FixtureEntry {
 
     pub fn has_invariant(&self, invariant: &str) -> bool {
         self.invariants.iter().any(|item| item == invariant)
+    }
+
+    pub fn has_expected_warning(&self, warning: &str) -> bool {
+        self.expected_warnings.iter().any(|item| item == warning)
     }
 
     fn validate(&self) {
