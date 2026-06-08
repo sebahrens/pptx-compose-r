@@ -299,8 +299,10 @@ impl ReplaceText {
     }
 
     fn fit_warning(&self, element: &XmlElement, tx_body: &XmlElement) -> Option<serde_json::Value> {
-        let policy = self.fit_policy?;
-        if policy.mode != FitPolicyMode::Preserve {
+        if self
+            .fit_policy
+            .is_some_and(|policy| policy.mode != FitPolicyMode::Preserve)
+        {
             return None;
         }
         let estimate = estimate_text_fit(element, tx_body, &self.text);

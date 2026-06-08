@@ -1096,6 +1096,42 @@ fn replace_text_preserve_fit_policy_reports_overflow_risk() {
 }
 
 #[test]
+fn replace_text_default_policy_reports_overflow_risk() {
+    let bytes = text_deck_with_slide(&placeholder_text_slide());
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-text-fit-default",
+        vec![serde_json::json!({
+            "operation_id": "replace-title",
+            "op": "replace_text",
+            "element_id": "slide-1:shape-3",
+            "text": "This translated title is intentionally very long and should not fit in the tiny placeholder box without changing the layout."
+        })],
+    );
+
+    let output = document
+        .apply_patch_with_diff(
+            patch,
+            MediaInputs::default(),
+            ApplyPatchOptions {
+                dry_run: true,
+                validate: true,
+            },
+        )
+        .expect("default fit dry-run succeeds");
+
+    assert_eq!(output.report.status, PatchStatus::DryRunSuccess);
+    let warning = output.report.operation_reports[0]
+        .warnings
+        .iter()
+        .find(|warning| warning["code"] == "text_overflow_risk")
+        .expect("overflow risk warning is reported");
+    assert_eq!(warning["fit"]["status"], "overflow");
+    assert_eq!(warning["fit"]["confidence"], "medium");
+}
+
+#[test]
 fn guarded_selector_replace_text_applies_and_rejects_stale_fingerprint() {
     let bytes = text_deck();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
