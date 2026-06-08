@@ -303,6 +303,8 @@ fn write_atomic(
             fs::hard_link(&temp_path, path).map_err(|source| {
                 if source.kind() == io::ErrorKind::AlreadyExists {
                     output_exists_error(path)
+                } else if source.kind() == io::ErrorKind::CrossesDevices {
+                    cross_device_publish_error(&temp_path, path, source)
                 } else {
                     CliError::write_with_source(
                         format!(
@@ -328,6 +330,17 @@ fn write_atomic(
         let _ = fs::remove_file(&temp_path);
     }
     result
+}
+
+fn cross_device_publish_error(temp_path: &Path, path: &Path, source: io::Error) -> CliError {
+    CliError::write_with_source(
+        format!(
+            "Could not atomically publish {} to {} without replacing an existing file because the temporary output is on a different filesystem. Use --temp-dir on the same filesystem as the output path.",
+            temp_path.display(),
+            path.display()
+        ),
+        source,
+    )
 }
 
 fn output_exists_error(path: &Path) -> CliError {
@@ -512,6 +525,22 @@ fn unique_dir() -> PathBuf {
     ));
     fs::create_dir_all(&root).expect("test dir creates");
     root
+}
+
+#[cfg(test)]
+#[test]
+fn cross_device_atomic_publish_error_is_actionable() {
+    use pptx_compose::core::error::ErrorCode;
+
+    let error = cross_device_publish_error(
+        Path::new("/tmp/report.json.tmp"),
+        Path::new("/workspace/report.json"),
+        io::Error::from(io::ErrorKind::CrossesDevices),
+    );
+
+    assert_eq!(error.code(), ErrorCode::WriteFailed);
+    assert!(error.details().message.contains("different filesystem"));
+    assert!(error.details().message.contains("--temp-dir"));
 }
 
 #[cfg(test)]

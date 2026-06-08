@@ -516,6 +516,8 @@ impl PresentationDocument {
                 fs::hard_link(&temp_path, output_path).map_err(|source| {
                     if source.kind() == std::io::ErrorKind::AlreadyExists {
                         output_exists_error(output_path)
+                    } else if source.kind() == std::io::ErrorKind::CrossesDevices {
+                        cross_device_publish_error(&temp_path, output_path, source)
                     } else {
                         Error::with_source(
                             ErrorCode::WriteFailed,
@@ -824,6 +826,22 @@ fn output_exists_error(output_path: &Path) -> Error {
             "Output path {} already exists; pass --overwrite to replace it.",
             output_path.display()
         ),
+    )
+}
+
+fn cross_device_publish_error(
+    temp_path: &Path,
+    output_path: &Path,
+    source: std::io::Error,
+) -> Error {
+    Error::with_source(
+        ErrorCode::WriteFailed,
+        format!(
+            "Could not atomically publish {} to {} without replacing an existing file because the temporary output is on a different filesystem. Use an atomic temp path on the same filesystem as the output or configure --temp-dir accordingly.",
+            temp_path.display(),
+            output_path.display()
+        ),
+        source,
     )
 }
 
@@ -1656,7 +1674,7 @@ mod tests {
     use super::{
         PresentationDocument, WriteOptions,
         capabilities::{CapabilitiesOptions, capabilities},
-        package_from_entries_with_limits,
+        cross_device_publish_error, package_from_entries_with_limits,
     };
     use crate::edit::patch::ALL_OP_NAMES;
 
@@ -1664,6 +1682,19 @@ mod tests {
     fn facade_crate_compiles() {
         let crate_name = env!("CARGO_PKG_NAME");
         assert_eq!(crate_name, "pptx-compose");
+    }
+
+    #[test]
+    fn cross_device_atomic_publish_error_is_actionable() {
+        let error = cross_device_publish_error(
+            std::path::Path::new("/tmp/out.tmp"),
+            std::path::Path::new("/workspace/out.pptx"),
+            std::io::Error::from(std::io::ErrorKind::CrossesDevices),
+        );
+
+        assert_eq!(error.code(), ErrorCode::WriteFailed);
+        assert!(error.message().contains("different filesystem"));
+        assert!(error.message().contains("atomic temp path"));
     }
 
     #[test]
