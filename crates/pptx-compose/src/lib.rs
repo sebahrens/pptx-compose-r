@@ -50,7 +50,6 @@ use pptx_compose_core::{
         ZipEntryMetadata,
         limits::OpenOptions as CoreOpenOptions,
         reader::{RawEntry, from_bytes_with_options, open_reader_with_options},
-        sniff::sniff_package,
         writer::{self as zip_writer, DirtyEntry, PackageZipWriter, WriteEntry},
     },
 };
@@ -140,7 +139,6 @@ impl PresentationDocument {
         let compressed_package_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
         ensure_facade_compressed_package_size(compressed_package_bytes, options.resource_limits())?;
         let source_bytes = bytes.to_vec();
-        sniff_package(&mut Cursor::new(source_bytes.as_slice()))?;
         let entries = from_bytes_with_options(
             &source_bytes,
             &CoreOpenOptions {
@@ -184,7 +182,6 @@ impl PresentationDocument {
     where
         R: std::io::Read + std::io::Seek,
     {
-        sniff_package(&mut reader)?;
         let entries = open_reader_with_options(
             &mut reader,
             &CoreOpenOptions {

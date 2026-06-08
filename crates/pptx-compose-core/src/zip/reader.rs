@@ -13,6 +13,7 @@ use crate::{
         limits::{
             LimitEnforcingReader, OpenOptions, ensure_compressed_package_size, ensure_part_count,
         },
+        sniff::{reject_encrypted_zip_entries, reject_unsupported_package_format},
     },
 };
 
@@ -59,10 +60,39 @@ where
 {
     let compressed_package_bytes = stream_len(&mut reader)?;
     ensure_compressed_package_size(compressed_package_bytes, &options.resource_limits)?;
+    sniff_reader(&mut reader)?;
 
     let mut archive = ZipArchive::new(reader)
         .map_err(|source| Error::parse_error("Could not open ZIP package.", source))?;
-    read_archive_entries(&mut archive, options)
+    let entries = read_archive_entries(&mut archive, options)?;
+    reject_encrypted_zip_entries(&entries)?;
+    Ok(entries)
+}
+
+fn sniff_reader<R>(reader: &mut R) -> Result<()>
+where
+    R: Read + Seek,
+{
+    let current = reader
+        .stream_position()
+        .map_err(|source| Error::parse_error("Could not read ZIP stream position.", source))?;
+    reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|source| Error::parse_error("Could not seek to ZIP stream start.", source))?;
+
+    let mut head = [0_u8; 8];
+    let bytes_read = reader
+        .read(&mut head)
+        .map_err(|source| Error::parse_error("Could not read package leading bytes.", source));
+    let restore_result = reader
+        .seek(SeekFrom::Start(current))
+        .map_err(|source| Error::parse_error("Could not restore ZIP stream position.", source));
+
+    match (bytes_read, restore_result) {
+        (Ok(bytes_read), Ok(_)) => reject_unsupported_package_format(&head[..bytes_read]),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
 }
 
 fn read_archive_entries<R>(
