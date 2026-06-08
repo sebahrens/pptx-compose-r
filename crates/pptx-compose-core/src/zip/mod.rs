@@ -5,6 +5,8 @@ pub mod reader;
 pub mod sniff;
 pub mod writer;
 
+pub use reader::{RawEntry, ZipEntry, read_zip_entries};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZipEntryMetadata {
     pub entry_index: usize,

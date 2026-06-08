@@ -18,43 +18,52 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RawEntry {
+pub struct ZipEntry {
     pub name: PartName,
     pub bytes: Vec<u8>,
     pub meta: ZipEntryMetadata,
 }
 
-pub fn from_bytes(bytes: &[u8]) -> Result<Vec<RawEntry>> {
+pub type RawEntry = ZipEntry;
+
+pub fn from_bytes(bytes: &[u8]) -> Result<Vec<ZipEntry>> {
     from_bytes_with_options(bytes, &OpenOptions::default())
 }
 
-pub fn from_bytes_with_options(bytes: &[u8], options: &OpenOptions) -> Result<Vec<RawEntry>> {
+pub fn from_bytes_with_options(bytes: &[u8], options: &OpenOptions) -> Result<Vec<ZipEntry>> {
     ensure_compressed_package_size(bytes.len() as u64, &options.resource_limits)?;
     open_reader_with_options(Cursor::new(bytes), options)
 }
 
-pub fn open_reader<R>(reader: R) -> Result<Vec<RawEntry>>
+pub fn open_reader<R>(reader: R) -> Result<Vec<ZipEntry>>
 where
     R: Read + Seek,
 {
     open_reader_with_options(reader, &OpenOptions::default())
 }
 
-pub fn open_reader_with_options<R>(reader: R, options: &OpenOptions) -> Result<Vec<RawEntry>>
+pub fn open_reader_with_options<R>(reader: R, options: &OpenOptions) -> Result<Vec<ZipEntry>>
 where
     R: Read + Seek,
 {
-    read_entries_with_options(reader, options)
+    read_zip_entries(reader, options)
 }
 
-pub fn read_entries<R>(reader: R) -> Result<Vec<RawEntry>>
+pub fn read_entries<R>(reader: R) -> Result<Vec<ZipEntry>>
 where
     R: Read + Seek,
 {
-    read_entries_with_options(reader, &OpenOptions::default())
+    read_zip_entries(reader, &OpenOptions::default())
 }
 
-pub fn read_entries_with_options<R>(mut reader: R, options: &OpenOptions) -> Result<Vec<RawEntry>>
+pub fn read_entries_with_options<R>(reader: R, options: &OpenOptions) -> Result<Vec<ZipEntry>>
+where
+    R: Read + Seek,
+{
+    read_zip_entries(reader, options)
+}
+
+pub fn read_zip_entries<R>(mut reader: R, options: &OpenOptions) -> Result<Vec<ZipEntry>>
 where
     R: Read + Seek,
 {
@@ -151,7 +160,7 @@ where
                 source,
             ));
         }
-        entries.push(RawEntry {
+        entries.push(ZipEntry {
             name: normalized_name,
             bytes,
             meta,
@@ -194,6 +203,47 @@ fn media_part_limit(
     } else {
         None
     }
+}
+
+#[cfg(test)]
+#[test]
+fn enumerates_entries_in_archive_order() {
+    use std::io::Write as _;
+
+    let mut bytes = Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut bytes);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        writer
+            .start_file("slides/second.xml", options)
+            .expect("start first ZIP entry");
+        writer.write_all(b"second").expect("write first ZIP entry");
+        writer
+            .start_file("slides/first.xml", options)
+            .expect("start second ZIP entry");
+        writer.write_all(b"first").expect("write second ZIP entry");
+        writer.finish().expect("finish ZIP package");
+    }
+
+    let entries = read_zip_entries(Cursor::new(bytes.into_inner()), &OpenOptions::default())
+        .expect("ZIP entries read");
+
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].name.as_str(), "/slides/second.xml");
+    assert_eq!(entries[0].bytes, b"second");
+    assert_eq!(entries[0].meta.entry_index, 0);
+    assert_eq!(entries[0].meta.original_name, "slides/second.xml");
+    assert_eq!(
+        entries[0].meta.compression_method,
+        zip::CompressionMethod::Stored
+    );
+    assert_eq!(entries[0].meta.compressed_size, 6);
+    assert_eq!(entries[0].meta.uncompressed_size, 6);
+    assert_eq!(entries[1].name.as_str(), "/slides/first.xml");
+    assert_eq!(entries[1].bytes, b"first");
+    assert_eq!(entries[1].meta.entry_index, 1);
 }
 
 #[cfg(test)]
