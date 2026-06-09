@@ -452,10 +452,7 @@ fn element_text_hash(
         let text_body = read_text_body(tx_body);
         return Ok(Some(text_hash::text_hash(&text_body.normalized)));
     }
-    if !matches!(
-        kind,
-        ElementKind::GraphicFrameChart | ElementKind::GraphicFrameDiagram
-    ) {
+    if kind != ElementKind::GraphicFrameDiagram {
         return Ok(None);
     }
 

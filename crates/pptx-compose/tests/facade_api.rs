@@ -1937,7 +1937,7 @@ fn table_and_diagram_graphic_frames_accept_bounds_and_alt_text_edits() {
 }
 
 #[test]
-fn chart_and_diagram_related_text_is_inspectable_findable_and_run_editable() {
+fn chart_text_is_honest_unsupported_while_diagram_text_remains_editable() {
     let bytes = graphic_frame_deck_with_clean_extras();
     let view = PresentationDocument::from_bytes(&bytes)
         .expect("fixture opens")
@@ -1963,49 +1963,93 @@ fn chart_and_diagram_related_text_is_inspectable_findable_and_run_editable() {
         .find(|element| element["id"] == "slide-1:graphic-9")
         .expect("diagram element projected");
 
-    assert_eq!(chart["text"]["plain"], "Revenue Chart");
-    assert_eq!(chart["editable"]["text"]["supported"], true);
+    assert_eq!(chart.get("text"), None);
+    assert_eq!(chart["editable"]["text"]["supported"], false);
+    assert_eq!(
+        chart["editable"]["text"]["reason"],
+        "chart_cache_workbook_sync_unsupported"
+    );
+    assert_eq!(
+        chart["text_coverage_warnings"][0]["code"],
+        "chart_text_unsupported"
+    );
+    assert_eq!(
+        chart["text_coverage_warnings"][0]["reason"],
+        "chart_cache_workbook_sync_unsupported"
+    );
     assert_eq!(diagram["text"]["plain"], "SmartArt Node");
     assert_eq!(diagram["editable"]["text"]["supported"], true);
 
-    let matches = PresentationDocument::from_bytes(&bytes)
-        .expect("fixture opens")
-        .find_text(FindTextRequest {
-            query: "Revenue".to_owned(),
-            scope: FindTextScope::Deck,
-            cursor: None,
-            limit: None,
+    for hidden_chart_text in [
+        "Revenue Chart",
+        "North Category",
+        "South Category",
+        "Actual Series",
+        "Workbook Label",
+    ] {
+        let matches = PresentationDocument::from_bytes(&bytes)
+            .expect("fixture opens")
+            .find_text(FindTextRequest {
+                query: hidden_chart_text.to_owned(),
+                scope: FindTextScope::Deck,
+                cursor: None,
+                limit: None,
+            })
+            .expect("find_text succeeds");
+        assert!(
+            matches.matches.is_empty(),
+            "unsupported chart text must not be find-text editable: {hidden_chart_text}"
+        );
+    }
+
+    let mut rejected = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let chart_patch = patch_with_operations(
+        &bytes,
+        "reject-chart-text",
+        vec![serde_json::json!({
+            "operation_id": "replace-chart-title",
+            "op": "replace_text",
+            "element_id": "slide-1:graphic-7",
+            "mode": "run_scoped",
+            "run": { "paragraph_index": 0, "run_index": 0 },
+            "text": "Revenue Updated",
+            "match": "Revenue Chart"
+        })],
+    );
+    let rejected_report = rejected
+        .apply_patch(chart_patch, MediaInputs::default())
+        .expect("unsupported chart text edit returns a failed report");
+    assert_eq!(rejected_report.status, PatchStatus::Failed);
+    assert_eq!(
+        rejected_report.operation_reports[0]
+            .error
+            .as_ref()
+            .expect("failed operation has error")
+            .code,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit
+    );
+    let rejected_written = rejected
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
         })
-        .expect("find_text succeeds");
-    assert_eq!(matches.matches.len(), 1);
-    assert_eq!(matches.matches[0].element_id, "slide-1:graphic-7");
-    assert_eq!(matches.matches[0].part, "ppt/slides/slide1.xml");
+        .expect("failed edit deck writes");
+    assert_eq!(rejected_written, bytes);
 
     let original_entries = from_bytes(&bytes).expect("original entries read");
     let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
     let patch = patch_with_operations(
         &bytes,
-        "replace-chart-diagram-text",
-        vec![
-            serde_json::json!({
-                "operation_id": "replace-chart-title",
-                "op": "replace_text",
-                "element_id": "slide-1:graphic-7",
-                "mode": "run_scoped",
-                "run": { "paragraph_index": 0, "run_index": 0 },
-                "text": "Revenue Updated",
-                "match": "Revenue Chart"
-            }),
-            serde_json::json!({
-                "operation_id": "replace-diagram-node",
-                "op": "replace_text",
-                "element_id": "slide-1:graphic-9",
-                "mode": "run_scoped",
-                "run": { "paragraph_index": 0, "run_index": 0 },
-                "text": "SmartArt Updated",
-                "match": "SmartArt Node"
-            }),
-        ],
+        "replace-diagram-text",
+        vec![serde_json::json!({
+            "operation_id": "replace-diagram-node",
+            "op": "replace_text",
+            "element_id": "slide-1:graphic-9",
+            "mode": "run_scoped",
+            "run": { "paragraph_index": 0, "run_index": 0 },
+            "text": "SmartArt Updated",
+            "match": "SmartArt Node"
+        })],
     );
 
     let report = document
@@ -2014,11 +2058,7 @@ fn chart_and_diagram_related_text_is_inspectable_findable_and_run_editable() {
     assert_eq!(report.status, PatchStatus::Applied);
     assert_eq!(
         report.changed_parts,
-        vec![
-            "ppt/charts/chart1.xml",
-            "ppt/diagrams/data1.xml",
-            "ppt/diagrams/drawing1.xml"
-        ]
+        vec!["ppt/diagrams/data1.xml", "ppt/diagrams/drawing1.xml"]
     );
 
     let written = document
@@ -2032,14 +2072,10 @@ fn chart_and_diagram_related_text_is_inspectable_findable_and_run_editable() {
         "replace related graphic text",
         &original_entries,
         &written_entries,
-        &[
-            "ppt/charts/chart1.xml",
-            "ppt/diagrams/data1.xml",
-            "ppt/diagrams/drawing1.xml",
-        ],
+        &["ppt/diagrams/data1.xml", "ppt/diagrams/drawing1.xml"],
         &[],
     );
-    assert!(entry_text(&written_entries, "ppt/charts/chart1.xml").contains("Revenue Updated"));
+    assert!(!entry_text(&written_entries, "ppt/charts/chart1.xml").contains("Revenue Updated"));
     assert!(entry_text(&written_entries, "ppt/diagrams/data1.xml").contains("SmartArt Updated"));
     assert!(entry_text(&written_entries, "ppt/diagrams/drawing1.xml").contains("SmartArt Updated"));
 }
@@ -3493,7 +3529,28 @@ fn chart_part() -> String {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <c:chart>
-    <c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Revenue Chart</a:t></a:r></a:p></c:rich></c:tx></c:title>
+    <c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Revenue </a:t></a:r><a:r><a:t>Chart</a:t></a:r></a:p></c:rich></c:tx></c:title>
+    <c:plotArea>
+      <c:barChart>
+        <c:ser>
+          <c:tx>
+            <c:strRef>
+              <c:f>Sheet1!$B$1</c:f>
+              <c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Actual Series</c:v></c:pt></c:strCache>
+            </c:strRef>
+          </c:tx>
+          <c:cat>
+            <c:strRef>
+              <c:f>Sheet1!$A$2:$A$3</c:f>
+              <c:strCache><c:ptCount val="2"/><c:pt idx="0"><c:v>North Category</c:v></c:pt><c:pt idx="1"><c:v>South Category</c:v></c:pt></c:strCache>
+            </c:strRef>
+          </c:cat>
+          <c:dLbls>
+            <c:dLbl><c:tx><c:strRef><c:f>Sheet1!$C$2</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Workbook Label</c:v></c:pt></c:strCache></c:strRef></c:tx></c:dLbl>
+          </c:dLbls>
+        </c:ser>
+      </c:barChart>
+    </c:plotArea>
   </c:chart>
 </c:chartSpace>"#
         .to_owned()

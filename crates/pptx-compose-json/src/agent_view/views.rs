@@ -1125,6 +1125,17 @@ fn text_coverage_warnings_for_element(
     core_kind: CoreElementKind,
     bounds: Option<&pptx_compose_core::pptx::shape::Bounds>,
 ) -> Vec<TextCoverageWarning> {
+    if core_kind == CoreElementKind::GraphicFrameChart {
+        return vec![TextCoverageWarning {
+            code: "chart_text_unsupported".to_owned(),
+            slide_id: slide_id.to_owned(),
+            element_id: element_id.to_owned(),
+            kind,
+            part: part.to_owned(),
+            reason: "chart_cache_workbook_sync_unsupported".to_owned(),
+            detail: "V1 does not edit visible chart text unless chart XML caches and backing workbook label cells can be kept consistent. This chart is preserved but chart title, axis, legend, data label, series, and category text are not find-text or replace_text targets.".to_owned(),
+        }];
+    }
     if core_kind != CoreElementKind::Picture
         || !bounds.is_some_and(|bounds| bounds.cx > 0 && bounds.cy > 0)
     {
@@ -1385,10 +1396,7 @@ fn projected_element_text(
     if let Some(tx_body) = child_element(element, "txBody") {
         return Ok(Some(project_text(tx_body)));
     }
-    if !matches!(
-        core_kind,
-        CoreElementKind::GraphicFrameChart | CoreElementKind::GraphicFrameDiagram
-    ) {
+    if core_kind != CoreElementKind::GraphicFrameDiagram {
         return Ok(None);
     }
     let related_parts = related_graphic_text_parts(element, slide_rels, package)?;
@@ -1802,22 +1810,29 @@ fn editable(
         }
     };
     let (bounds_supported, bounds_reason) = bounds_edit_support(core_kind);
-    let text = has_text.then_some(if core_kind.supports_replace_text() {
-        EditableSupport {
+    let text = if core_kind == CoreElementKind::GraphicFrameChart {
+        Some(EditableSupport {
+            supported: false,
+            reason: Some("chart_cache_workbook_sync_unsupported".to_owned()),
+        })
+    } else if has_text && core_kind.supports_replace_text() {
+        Some(EditableSupport {
             supported: true,
             reason: None,
-        }
-    } else if core_kind == CoreElementKind::GraphicFrameTable {
-        EditableSupport {
+        })
+    } else if has_text && core_kind == CoreElementKind::GraphicFrameTable {
+        Some(EditableSupport {
             supported: true,
             reason: Some("table_cell_coordinates_required".to_owned()),
-        }
-    } else {
-        EditableSupport {
+        })
+    } else if has_text {
+        Some(EditableSupport {
             supported: false,
             reason: Some("unsupported_kind".to_owned()),
-        }
-    });
+        })
+    } else {
+        None
+    };
     let bounds = (bounds_supported && has_cnvpr).then_some(EditableSupport {
         supported: bounds_supported,
         reason: bounds_reason.map(str::to_owned),
