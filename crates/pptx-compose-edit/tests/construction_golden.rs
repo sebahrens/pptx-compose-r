@@ -444,6 +444,41 @@ mod construction_golden {
     }
 
     #[test]
+    fn replace_text_run_scoped_replaces_range_spanning_soft_break() -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(RICH_TEXT_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Localized debt\u{000B}Localized association".to_owned(),
+            current_text_match: Some("Linked\nBreak".to_owned()),
+            mode: ReplaceTextMode::RunScoped,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            allow_formatting_simplification: false,
+            run: Some(RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: Some(1),
+                text_hash: None,
+            }),
+            run_style: None,
+            fit_policy: None,
+        };
+
+        operation.apply(&mut package, &target)?;
+        let output = element_xml_at_path(&package, &slide_part, &[1])?;
+
+        assert!(output.contains(r#"<a:t>Localized debt</a:t></a:r><a:br/><a:r>"#));
+        assert!(output.contains(r#"<a:t>Localized association</a:t></a:r>"#));
+        assert!(!output.contains(r#"<a:t>Linked</a:t>"#));
+        assert!(!output.contains(r#"<a:t>Break</a:t>"#));
+        assert_eq!(output.matches("<a:br/>").count(), 1);
+        assert!(output.contains(r#"<a:fld id="{00000000-0000-0000-0000-000000000000}" type="slidenum"><a:rPr lang="en-US"/><a:t>Field</a:t></a:fld>"#));
+        Ok(())
+    }
+
+    #[test]
     fn replace_text_run_scoped_rejects_carriage_return() -> Result<()> {
         let mut package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
         let target = target(ElementKind::TextBox);

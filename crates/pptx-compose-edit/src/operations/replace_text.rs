@@ -1318,11 +1318,19 @@ fn selected_run_text(
     let indices = run_indices(tx_body, run, operation, target)?;
     let paragraph = paragraph_at(tx_body, run.paragraph_index, operation, target)?;
     let mut text = String::new();
-    for run_index in indices {
-        let run_element = paragraph.children[run_index]
-            .as_element()
-            .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run node is not an element."))?;
-        text.push_str(&run_text(run_element));
+    let first_index = indices[0];
+    let last_index = *indices
+        .last()
+        .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run range is empty."))?;
+    for node in &paragraph.children[first_index..=last_index] {
+        let Some(element) = node.as_element() else {
+            continue;
+        };
+        match element.name.local_name.as_str() {
+            "r" => text.push_str(&run_text(element)),
+            "br" => text.push('\n'),
+            _ => {}
+        }
     }
     Ok(text)
 }
@@ -1351,9 +1359,20 @@ fn replace_run_scoped_text(
     }
     let indices = run_indices(tx_body, run, operation, target)?;
     let first_index = indices[0];
+    let last_index = *indices
+        .last()
+        .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run range is empty."))?;
     let paragraph = paragraph_at_mut(tx_body, run.paragraph_index, operation, target)?;
-    for remove_index in indices.iter().skip(1).rev() {
-        paragraph.children.remove(*remove_index);
+    let mut remove_indices = indices.iter().skip(1).copied().collect::<Vec<_>>();
+    remove_indices.extend((first_index + 1..last_index).filter(|index| {
+        paragraph.children[*index]
+            .as_element()
+            .is_some_and(|child| child.name.local_name == "br")
+    }));
+    remove_indices.sort_unstable();
+    remove_indices.dedup();
+    for remove_index in remove_indices.into_iter().rev() {
+        paragraph.children.remove(remove_index);
     }
     let first_run = paragraph.children[first_index]
         .as_element()

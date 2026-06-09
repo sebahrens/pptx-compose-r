@@ -673,14 +673,21 @@ fn run_selector_for_span(text: &TextView, span: TextSpan) -> Option<FindTextRunS
     for (paragraph_index, paragraph) in text.paragraphs.iter().enumerate() {
         let paragraph_index = u32::try_from(paragraph_index).ok()?;
         let mut run_ranges = Vec::new();
-        let mut cursor = paragraph_start;
+        let mut search_start = 0_usize;
         for (run_index, run) in paragraph.runs.iter().enumerate() {
             let run_index = u32::try_from(run_index).ok()?;
-            let run_start = cursor;
-            cursor = cursor.checked_add(u32::try_from(run.text.chars().count()).ok()?)?;
-            run_ranges.push((run_index, run_start, cursor, run.text.as_str()));
+            let relative_start = paragraph.text[search_start..].find(&run.text)?;
+            let byte_start = search_start + relative_start;
+            let byte_end = byte_start + run.text.len();
+            let run_start = paragraph_start
+                .checked_add(u32::try_from(paragraph.text[..byte_start].chars().count()).ok()?)?;
+            let run_end = paragraph_start
+                .checked_add(u32::try_from(paragraph.text[..byte_end].chars().count()).ok()?)?;
+            run_ranges.push((run_index, run_start, run_end, run.text.as_str()));
+            search_start = byte_end;
         }
-        let paragraph_end = cursor;
+        let paragraph_end =
+            paragraph_start.checked_add(u32::try_from(paragraph.text.chars().count()).ok()?)?;
         if span.start >= paragraph_start && span.end <= paragraph_end {
             let start = run_ranges
                 .iter()
@@ -691,11 +698,13 @@ fn run_selector_for_span(text: &TextView, span: TextSpan) -> Option<FindTextRunS
             if start.0 > end.0 {
                 return None;
             }
-            let selected = run_ranges
-                .iter()
-                .filter(|(run_index, _, _, _)| *run_index >= start.0 && *run_index <= end.0)
-                .map(|(_, _, _, run_text)| *run_text)
-                .collect::<String>();
+            let selected = substring_by_char_span(
+                &paragraph.text,
+                TextSpan {
+                    start: span.start.saturating_sub(paragraph_start),
+                    end: span.end.saturating_sub(paragraph_start),
+                },
+            );
             return Some(FindTextRunSelector {
                 paragraph_index,
                 run_index: start.0,
@@ -1234,7 +1243,7 @@ fn project_text_body(body: pptx_compose_core::pptx::text::TextBody) -> TextView 
         .into_iter()
         .map(|paragraph| {
             let paragraph_text = truncate_text(
-                paragraph.runs.iter().map(|run| run.text.as_str()).collect(),
+                paragraph.text,
                 PARAGRAPH_PREVIEW_CHARS,
                 "Use element_detail for this element to inspect the full paragraph text.",
             );
@@ -1450,32 +1459,10 @@ fn read_related_text_body(root: &XmlElement) -> pptx_compose_core::pptx::text::T
     collect_related_paragraphs(root, &mut paragraphs);
     let plain = paragraphs
         .iter()
-        .map(|paragraph| {
-            paragraph
-                .runs
-                .iter()
-                .map(|run| run.text.as_str())
-                .collect::<String>()
-        })
+        .map(|paragraph| paragraph.text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let normalized = text_hash::normalize_segments(
-        &paragraphs
-            .iter()
-            .enumerate()
-            .flat_map(|(index, paragraph)| {
-                let mut segments = paragraph
-                    .runs
-                    .iter()
-                    .map(|run| text_hash::TextSegment::Run(run.text.as_str()))
-                    .collect::<Vec<_>>();
-                if index + 1 < paragraphs.len() {
-                    segments.push(text_hash::TextSegment::SoftBreak);
-                }
-                segments
-            })
-            .collect::<Vec<_>>(),
-    );
+    let normalized = merged_paragraphs_normalized(&paragraphs);
     pptx_compose_core::pptx::text::TextBody {
         paragraphs,
         plain,
@@ -1520,37 +1507,23 @@ fn merge_text_bodies(
     }
     let plain = paragraphs
         .iter()
-        .map(|paragraph| {
-            paragraph
-                .runs
-                .iter()
-                .map(|run| run.text.as_str())
-                .collect::<String>()
-        })
+        .map(|paragraph| paragraph.text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let normalized = text_hash::normalize_segments(
-        &paragraphs
-            .iter()
-            .enumerate()
-            .flat_map(|(index, paragraph)| {
-                let mut segments = paragraph
-                    .runs
-                    .iter()
-                    .map(|run| text_hash::TextSegment::Run(run.text.as_str()))
-                    .collect::<Vec<_>>();
-                if index + 1 < paragraphs.len() {
-                    segments.push(text_hash::TextSegment::SoftBreak);
-                }
-                segments
-            })
-            .collect::<Vec<_>>(),
-    );
+    let normalized = merged_paragraphs_normalized(&paragraphs);
     pptx_compose_core::pptx::text::TextBody {
         paragraphs,
         plain,
         normalized,
     }
+}
+
+fn merged_paragraphs_normalized(paragraphs: &[pptx_compose_core::pptx::text::Paragraph]) -> String {
+    paragraphs
+        .iter()
+        .map(|paragraph| paragraph.normalized.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn truncate_text(
@@ -2943,6 +2916,34 @@ fn long_text_payloads_are_truncated_with_markers() {
             .expect("run truncation")
             .shown_chars,
         RUN_PREVIEW_CHARS as u32
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn paragraph_text_preserves_intra_paragraph_soft_breaks() {
+    let xml = br#"<a:txBody xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+        <a:p>
+            <a:r><a:t>Public Debt</a:t></a:r>
+            <a:br/>
+            <a:r><a:t>Association between High Public Debt and Low Growth</a:t></a:r>
+        </a:p>
+    </a:txBody>"#;
+    let document = parse_document(xml).expect("text body XML parses");
+    let text = project_text(document.root_element().expect("txBody root"));
+
+    assert_eq!(
+        text.plain,
+        "Public Debt\nAssociation between High Public Debt and Low Growth"
+    );
+    assert_eq!(
+        text.paragraphs[0].text,
+        "Public Debt\nAssociation between High Public Debt and Low Growth"
+    );
+    assert_eq!(text.paragraphs[0].runs[0].text, "Public Debt");
+    assert_eq!(
+        text.paragraphs[0].runs[1].text,
+        "Association between High Public Debt and Low Growth"
     );
 }
 

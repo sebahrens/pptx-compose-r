@@ -22,6 +22,8 @@ pub struct Run {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Paragraph {
     pub index: u32,
+    pub text: String,
+    pub normalized: String,
     pub runs: Vec<Run>,
 }
 
@@ -46,6 +48,7 @@ pub fn read_text_body(txbody: &XmlElement) -> TextBody {
     for paragraph_element in child_elements(txbody, "p") {
         let paragraph_index = paragraphs.len() as u32;
         let mut runs = Vec::new();
+        let mut paragraph_projection = Vec::new();
 
         for child in paragraph_element
             .children
@@ -56,19 +59,25 @@ pub fn read_text_body(txbody: &XmlElement) -> TextBody {
                 "r" => {
                     let text = run_text(child);
                     projection.push(ProjectionSegment::Text(text.clone()));
+                    paragraph_projection.push(ProjectionSegment::Text(text.clone()));
                     runs.push(Run {
                         index: runs.len() as u32,
                         text,
                         style_summary: run_style_summary(child),
                     });
                 }
-                "br" => projection.push(ProjectionSegment::SoftBreak),
+                "br" => {
+                    projection.push(ProjectionSegment::SoftBreak);
+                    paragraph_projection.push(ProjectionSegment::SoftBreak);
+                }
                 _ => {}
             }
         }
 
         paragraphs.push(Paragraph {
             index: paragraph_index,
+            text: plain_projection(&paragraph_projection),
+            normalized: normalize_projection(&paragraph_projection),
             runs,
         });
     }
@@ -249,6 +258,13 @@ Q1
     assert_eq!(text_body.paragraphs.len(), 2);
     assert_eq!(text_body.paragraphs[0].index, 0);
     assert_eq!(text_body.paragraphs[1].index, 1);
+    assert_eq!(
+        text_body.paragraphs[0].text,
+        "  Cafe\u{301}\t results  \n\nQ1\n      "
+    );
+    assert_eq!(text_body.paragraphs[0].normalized, "Caf\u{e9} results\nQ1");
+    assert_eq!(text_body.paragraphs[1].text, "  next   line  ");
+    assert_eq!(text_body.paragraphs[1].normalized, "next line");
     assert_eq!(text_body.paragraphs[0].runs.len(), 2);
     assert_eq!(text_body.paragraphs[0].runs[0].index, 0);
     assert_eq!(text_body.paragraphs[0].runs[1].index, 1);
