@@ -285,6 +285,13 @@ Guard semantics:
 - The legacy operation-level `match` field guards the whole element text in
   `whole_element` mode. In `run_scoped` mode it guards the selected run text,
   not the whole element; mismatch returns `selector_guard_failed`.
+- Related chart/SmartArt text is only editable when the implementation can
+  prove companion cache targets. V1 accepts an explicit selected-run proof
+  (`match` or `selector.run.text_hash`), a shared SmartArt `modelId` mapping, or
+  an internally derived unique selected-run text/hash mapping. Bare numeric
+  paragraph/run coordinates are not sufficient for divergent or duplicate
+  related text; ambiguity fails with `unsupported_edit` instead of falling back
+  to positional cache mutation.
 
 Whole-element refusal with run-scoped support:
 

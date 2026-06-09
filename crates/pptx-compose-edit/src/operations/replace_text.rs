@@ -1073,6 +1073,22 @@ fn diagram_cache_mapping_is_unsupported(
     data: &[RelatedParagraphInfo],
     drawing: &[RelatedParagraphInfo],
 ) -> bool {
+    let data_model_ids = data
+        .iter()
+        .map(|paragraph| paragraph.model_id.as_deref())
+        .collect::<Vec<_>>();
+    let drawing_model_ids = drawing
+        .iter()
+        .map(|paragraph| paragraph.model_id.as_deref())
+        .collect::<Vec<_>>();
+    if data_model_ids.iter().all(Option::is_some) && drawing_model_ids.iter().all(Option::is_some) {
+        let mut sorted_data = data_model_ids;
+        let mut sorted_drawing = drawing_model_ids;
+        sorted_data.sort_unstable();
+        sorted_drawing.sort_unstable();
+        return sorted_data != sorted_drawing;
+    }
+
     let data_text = data
         .iter()
         .map(|paragraph| paragraph.normalized.as_str())
@@ -1082,26 +1098,14 @@ fn diagram_cache_mapping_is_unsupported(
         .map(|paragraph| paragraph.normalized.as_str())
         .collect::<Vec<_>>();
     if data_text == drawing_text {
-        return false;
+        return !all_unique(&data_text) || !all_unique(&drawing_text);
     }
-    let data_model_ids = data
-        .iter()
-        .map(|paragraph| paragraph.model_id.as_deref())
-        .collect::<Vec<_>>();
-    let drawing_model_ids = drawing
-        .iter()
-        .map(|paragraph| paragraph.model_id.as_deref())
-        .collect::<Vec<_>>();
-    if data_model_ids.iter().any(|model_id| model_id.is_none())
-        || drawing_model_ids.iter().any(|model_id| model_id.is_none())
-    {
-        return true;
-    }
-    let mut sorted_data = data_model_ids;
-    let mut sorted_drawing = drawing_model_ids;
-    sorted_data.sort_unstable();
-    sorted_drawing.sort_unstable();
-    sorted_data != sorted_drawing
+    true
+}
+
+fn all_unique(values: &[&str]) -> bool {
+    let mut seen = std::collections::BTreeSet::new();
+    values.iter().all(|value| seen.insert(*value))
 }
 
 fn related_paragraph_model_id(root: &XmlElement, target_index: u32) -> Option<String> {

@@ -2235,6 +2235,113 @@ fn diagram_drawing_mirror_syncs_multirun_paragraph_by_unique_source_run_text() {
 }
 
 #[test]
+fn diagram_drawing_mirror_rejects_duplicate_text_without_model_id_proof() {
+    let bytes = graphic_frame_deck_with_diagram_parts(
+        &duplicate_text_diagram_data_part_without_model_ids(),
+        &duplicate_text_diagram_drawing_part_without_model_ids(),
+    );
+    let view = PresentationDocument::from_bytes(&bytes)
+        .expect("fixture opens")
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide detail builds");
+    let diagram = view["slides"][0]["elements"]
+        .as_array()
+        .expect("slide_detail exposes elements")
+        .iter()
+        .find(|element| element["id"] == "slide-1:graphic-9")
+        .expect("diagram element projected");
+    assert_eq!(diagram["editable"]["text"]["supported"], false);
+    assert_eq!(
+        diagram["editable"]["text"]["reason"],
+        "diagram_drawing_cache_mapping_unsupported"
+    );
+
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-duplicate-diagram-node",
+        vec![serde_json::json!({
+            "operation_id": "replace-duplicate",
+            "op": "replace_text",
+            "element_id": "slide-1:graphic-9",
+            "mode": "run_scoped",
+            "run": { "paragraph_index": 1, "run_index": 0 },
+            "text": "Updated duplicate"
+        })],
+    );
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("ambiguous diagram edit returns a failed report");
+    assert_eq!(report.status, PatchStatus::Failed);
+    assert_eq!(
+        report.operation_reports[0]
+            .error
+            .as_ref()
+            .expect("failed operation has error")
+            .code,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit
+    );
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("failed edit deck writes");
+    assert_eq!(written, bytes);
+}
+
+#[test]
+fn diagram_drawing_mirror_allows_duplicate_text_with_shared_model_id_mapping() {
+    let bytes = graphic_frame_deck_with_diagram_parts(
+        &duplicate_text_diagram_data_part_with_model_ids(),
+        &duplicate_text_diagram_drawing_part_with_model_ids(),
+    );
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-model-id-duplicate-diagram-node",
+        vec![serde_json::json!({
+            "operation_id": "replace-duplicate-b",
+            "op": "replace_text",
+            "element_id": "slide-1:graphic-9",
+            "mode": "run_scoped",
+            "run": { "paragraph_index": 1, "run_index": 0 },
+            "text": "Updated duplicate"
+        })],
+    );
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("shared modelId duplicate edit applies");
+    assert_eq!(report.status, PatchStatus::Applied);
+    assert_eq!(
+        report.changed_parts,
+        vec!["ppt/diagrams/data1.xml", "ppt/diagrams/drawing1.xml"]
+    );
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("edited deck writes");
+    let written_entries = from_bytes(&written).expect("written entries read");
+    let data = entry_text(&written_entries, "ppt/diagrams/data1.xml");
+    let drawing = entry_text(&written_entries, "ppt/diagrams/drawing1.xml");
+    assert!(data.contains(r#"modelId="{NODE-B}"><dgm:t><a:p><a:r><a:t>Updated duplicate"#));
+    assert!(drawing.contains(r#"modelId="{NODE-B}"><dsp:txBody><a:p><a:r><a:t>Updated duplicate"#));
+    assert!(drawing.contains(r#"modelId="{NODE-A}"><dsp:txBody><a:p><a:r><a:t>Duplicate"#));
+}
+
+#[test]
 fn divergent_diagram_cache_without_model_id_mapping_is_not_patch_ready() {
     let bytes = graphic_frame_deck_with_diagram_parts(
         &multirun_diagram_data_part(),
@@ -3770,6 +3877,50 @@ fn reordered_mismatched_model_id_diagram_drawing_part() -> String {
     <dsp:sp modelId="{DRAWING-A}"><dsp:txBody><a:p><a:r><a:t>First node</a:t></a:r></a:p></dsp:txBody></dsp:sp>
     <dsp:sp modelId="{DRAWING-SYSTEM}"><dsp:txBody><a:p><a:r><a:t>System selection</a:t></a:r></a:p></dsp:txBody></dsp:sp>
     <dsp:sp modelId="{DRAWING-RISK}"><dsp:txBody><a:p><a:r><a:t>IT risk</a:t></a:r><a:br/><a:r><a:t>and</a:t></a:r><a:br/><a:r><a:t>security</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+  </dsp:spTree>
+</dsp:drawing>"#
+        .to_owned()
+}
+
+fn duplicate_text_diagram_data_part_without_model_ids() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <dgm:ptLst>
+    <dgm:pt><dgm:t><a:p><a:r><a:t>Duplicate</a:t></a:r></a:p></dgm:t></dgm:pt>
+    <dgm:pt><dgm:t><a:p><a:r><a:t>Duplicate</a:t></a:r></a:p></dgm:t></dgm:pt>
+  </dgm:ptLst>
+</dgm:dataModel>"#
+        .to_owned()
+}
+
+fn duplicate_text_diagram_drawing_part_without_model_ids() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <dsp:spTree>
+    <dsp:sp><dsp:txBody><a:p><a:r><a:t>Duplicate</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+    <dsp:sp><dsp:txBody><a:p><a:r><a:t>Duplicate</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+  </dsp:spTree>
+</dsp:drawing>"#
+        .to_owned()
+}
+
+fn duplicate_text_diagram_data_part_with_model_ids() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <dgm:ptLst>
+    <dgm:pt modelId="{NODE-A}"><dgm:t><a:p><a:r><a:t>Duplicate</a:t></a:r></a:p></dgm:t></dgm:pt>
+    <dgm:pt modelId="{NODE-B}"><dgm:t><a:p><a:r><a:t>Duplicate</a:t></a:r></a:p></dgm:t></dgm:pt>
+  </dgm:ptLst>
+</dgm:dataModel>"#
+        .to_owned()
+}
+
+fn duplicate_text_diagram_drawing_part_with_model_ids() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <dsp:spTree>
+    <dsp:sp modelId="{NODE-B}"><dsp:txBody><a:p><a:r><a:t>Duplicate</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+    <dsp:sp modelId="{NODE-A}"><dsp:txBody><a:p><a:r><a:t>Duplicate</a:t></a:r></a:p></dsp:txBody></dsp:sp>
   </dsp:spTree>
 </dsp:drawing>"#
         .to_owned()

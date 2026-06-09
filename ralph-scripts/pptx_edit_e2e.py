@@ -428,6 +428,9 @@ def build_replace_text(view: dict, ctx: dict) -> ScenarioPlan:
             "run": {"paragraph_index": paragraph_index, "run_index": run_index},
         },
     }
+    run_hash = run.get("text_hash")
+    if run_hash:
+        op["selector"]["run"]["text_hash"] = run_hash
     # Carry guards when present so the edit is matched, not blind.
     guard_hash = (el.get("text") or {}).get("text_hash")
     if guard_hash:

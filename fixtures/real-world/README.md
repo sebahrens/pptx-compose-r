@@ -44,8 +44,11 @@ decks — generated **through the V1 agent edit surface** as a real-world exerci
 (same `expected_warnings` as their source).
 
 How they were produced: every editable `shape`/`text_box` run was translated and
-replaced with `mode: run_scoped` (bare `element_id` selectors, no guards), which
-preserves paragraph auto-numbering, bullets, and per-run bold/colour.
+replaced with `mode: run_scoped`, preserving paragraph auto-numbering, bullets,
+and per-run bold/colour. Regeneration should use selector guards copied from the
+agent view, including element `text_hash`/`fingerprint` and selected-run
+`text_hash` when present; related SmartArt text additionally requires a safe
+cache mapping proof rather than bare numeric paragraph/run selectors.
 
 Known untranslated content (current V1 engine limitations, tracked in beads — do not
 treat as translation bugs):
