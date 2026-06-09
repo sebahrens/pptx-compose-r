@@ -253,6 +253,7 @@ pub struct TableRow {
 pub struct TableCell {
     pub row: u32,
     pub col: u32,
+    pub editable: Editable,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<TextView>,
 }

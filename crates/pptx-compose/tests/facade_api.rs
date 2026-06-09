@@ -1763,6 +1763,14 @@ fn text_editability_view_flag_matches_replace_text_acceptance() {
 
     for element in elements {
         let element_id = element["id"].as_str().expect("element id is a string");
+        if element["kind"] == "table" {
+            assert_eq!(element["editable"]["text"]["supported"], true);
+            assert_eq!(
+                element["editable"]["text"]["reason"],
+                "table_cell_coordinates_required"
+            );
+            continue;
+        }
         let advertised = element["editable"]
             .get("text")
             .map(|text| {
@@ -1792,6 +1800,34 @@ fn text_editability_view_flag_matches_replace_text_acceptance() {
             "{element_id}: editable.text.supported must match replace_text acceptance"
         );
     }
+
+    let table = elements
+        .iter()
+        .find(|element| element["kind"] == "table")
+        .expect("graphic frame deck exposes table");
+    assert_eq!(
+        table["table"]["rows"][0]["cells"][0]["editable"]["text"]["supported"],
+        true
+    );
+
+    let complete_bytes = graphic_frame_deck_with_slide(&graphic_frame_slide());
+    let mut candidate =
+        PresentationDocument::from_bytes(&complete_bytes).expect("candidate deck opens");
+    let patch = patch_with_operations(
+        &complete_bytes,
+        "replace-table-cell-capability",
+        vec![serde_json::json!({
+            "operation_id": "replace-table-cell",
+            "op": "replace_text",
+            "element_id": table["id"].as_str().expect("table id is a string"),
+            "cell": { "row": 0, "col": 0 },
+            "text": "replacement"
+        })],
+    );
+    let report = candidate
+        .apply_patch(patch, MediaInputs::default())
+        .expect("advertised table cell replacement applies");
+    assert_eq!(report.status, PatchStatus::Applied);
 }
 
 #[test]

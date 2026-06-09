@@ -1298,9 +1298,11 @@ fn project_table(element: &XmlElement) -> (Option<TableView>, Option<TextView>) 
             {
                 bodies.push(body.clone());
             }
+            let editable = table_cell_editable(cell_element, body.as_ref());
             cells.push(TableCell {
                 row: row_index,
                 col: col_index,
+                editable,
                 text: body.map(project_text_body),
             });
         }
@@ -1316,6 +1318,50 @@ fn project_table(element: &XmlElement) -> (Option<TableView>, Option<TextView>) 
         Some(project_text_body(merge_text_bodies(bodies)))
     };
     (Some(table), text)
+}
+
+fn table_cell_editable(
+    cell_element: &XmlElement,
+    body: Option<&pptx_compose_core::pptx::text::TextBody>,
+) -> Editable {
+    let text = body.and_then(|body| {
+        (!body.normalized.is_empty()).then(|| {
+            if is_merged_or_spanned_cell(cell_element) {
+                EditableSupport {
+                    supported: false,
+                    reason: Some("merged_or_spanned_cell".to_owned()),
+                }
+            } else {
+                EditableSupport {
+                    supported: true,
+                    reason: None,
+                }
+            }
+        })
+    });
+    Editable {
+        text,
+        bounds: None,
+        alt_text: None,
+        image: None,
+    }
+}
+
+fn is_merged_or_spanned_cell(cell_element: &XmlElement) -> bool {
+    attr_u32_gt_one(cell_element, "gridSpan")
+        || attr_u32_gt_one(cell_element, "rowSpan")
+        || attr_present(cell_element, "vMerge")
+        || child_element(cell_element, "vMerge").is_some()
+}
+
+fn attr_u32_gt_one(element: &XmlElement, local_name: &str) -> bool {
+    optional_attr(element, local_name)
+        .and_then(parse_u32)
+        .is_some_and(|value| value > 1)
+}
+
+fn attr_present(element: &XmlElement, local_name: &str) -> bool {
+    optional_attr(element, local_name).is_some()
 }
 
 fn projected_element_text(
@@ -1783,19 +1829,22 @@ fn editable(
         }
     };
     let (bounds_supported, bounds_reason) = bounds_edit_support(core_kind);
-    let text = (has_text && core_kind != CoreElementKind::GraphicFrameTable).then_some(
-        if core_kind.supports_replace_text() {
-            EditableSupport {
-                supported: true,
-                reason: None,
-            }
-        } else {
-            EditableSupport {
-                supported: false,
-                reason: Some("unsupported_kind".to_owned()),
-            }
-        },
-    );
+    let text = has_text.then_some(if core_kind.supports_replace_text() {
+        EditableSupport {
+            supported: true,
+            reason: None,
+        }
+    } else if core_kind == CoreElementKind::GraphicFrameTable {
+        EditableSupport {
+            supported: true,
+            reason: Some("table_cell_coordinates_required".to_owned()),
+        }
+    } else {
+        EditableSupport {
+            supported: false,
+            reason: Some("unsupported_kind".to_owned()),
+        }
+    });
     let bounds = (bounds_supported && has_cnvpr).then_some(EditableSupport {
         supported: bounds_supported,
         reason: bounds_reason.map(str::to_owned),
@@ -2511,16 +2560,32 @@ fn table_cells_are_exposed_as_addressable_text() {
         .find(|element| element["kind"] == "table")
         .expect("table is projected");
 
-    assert_eq!(table["editable"].get("text"), None);
+    assert_eq!(table["editable"]["text"]["supported"], true);
+    assert_eq!(
+        table["editable"]["text"]["reason"],
+        "table_cell_coordinates_required"
+    );
     assert_eq!(
         table["text"]["plain"],
-        "Header A\nHeader B\nFocus Area\nStrategic Objective"
+        "Header A\nHeader B\nFocus Area\nStrategic Objective\nMerged Label"
     );
     assert_eq!(table["table"]["rows"][0]["cells"][0]["row"], 0);
     assert_eq!(table["table"]["rows"][0]["cells"][0]["col"], 0);
     assert_eq!(
+        table["table"]["rows"][0]["cells"][0]["editable"]["text"]["supported"],
+        true
+    );
+    assert_eq!(
         table["table"]["rows"][1]["cells"][1]["text"]["paragraphs"][0]["runs"][0]["text"],
         "Strategic Objective"
+    );
+    assert_eq!(
+        table["table"]["rows"][2]["cells"][0]["editable"]["text"]["supported"],
+        false
+    );
+    assert_eq!(
+        table["table"]["rows"][2]["cells"][0]["editable"]["text"]["reason"],
+        "merged_or_spanned_cell"
     );
 
     let matches = find_text(
@@ -2787,7 +2852,7 @@ fn graphic_frame_slide_xml() -> &'static [u8] {
 
 #[cfg(test)]
 fn table_slide_xml() -> &'static [u8] {
-    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="8" name="Results Table"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Header A</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Header B</a:t></a:r></a:p></a:txBody></a:tc></a:tr><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Focus Area</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Strategic Objective</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="8" name="Results Table"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Header A</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Header B</a:t></a:r></a:p></a:txBody></a:tc></a:tr><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Focus Area</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Strategic Objective</a:t></a:r></a:p></a:txBody></a:tc></a:tr><a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Merged Label</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#
 }
 
 #[cfg(test)]
