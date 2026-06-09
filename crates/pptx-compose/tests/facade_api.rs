@@ -2156,6 +2156,85 @@ fn diagram_drawing_mirror_syncs_multirun_paragraph_by_model_id() {
 }
 
 #[test]
+fn diagram_drawing_mirror_syncs_multirun_paragraph_by_unique_source_run_text() {
+    let bytes = graphic_frame_deck_with_diagram_parts(
+        &multirun_diagram_data_part(),
+        &reordered_mismatched_model_id_diagram_drawing_part(),
+    );
+    let original_entries = from_bytes(&bytes).expect("original entries read");
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-multirun-diagram-node-without-model-id-map",
+        vec![
+            serde_json::json!({
+                "operation_id": "replace-it-risk",
+                "op": "replace_text",
+                "element_id": "slide-1:graphic-9",
+                "mode": "run_scoped",
+                "run": { "paragraph_index": 1, "run_index": 0 },
+                "text": "IT-Risiko"
+            }),
+            serde_json::json!({
+                "operation_id": "replace-and",
+                "op": "replace_text",
+                "element_id": "slide-1:graphic-9",
+                "mode": "run_scoped",
+                "run": { "paragraph_index": 1, "run_index": 1 },
+                "text": "und"
+            }),
+            serde_json::json!({
+                "operation_id": "replace-security",
+                "op": "replace_text",
+                "element_id": "slide-1:graphic-9",
+                "mode": "run_scoped",
+                "run": { "paragraph_index": 1, "run_index": 2 },
+                "text": "Sicherheit"
+            }),
+        ],
+    );
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("related diagram text patch applies by source run text");
+    assert_eq!(report.status, PatchStatus::Applied);
+    assert_eq!(
+        report.changed_parts,
+        vec!["ppt/diagrams/data1.xml", "ppt/diagrams/drawing1.xml"]
+    );
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("edited deck writes");
+    let written_entries = from_bytes(&written).expect("written entries read");
+    assert_exact_part_deltas(
+        "replace multirun diagram text without modelId map",
+        &original_entries,
+        &written_entries,
+        &["ppt/diagrams/data1.xml", "ppt/diagrams/drawing1.xml"],
+        &[],
+    );
+    let drawing = entry_text(&written_entries, "ppt/diagrams/drawing1.xml");
+    let translated_index = drawing
+        .find("IT-Risiko")
+        .expect("drawing contains translated first run");
+    assert!(
+        drawing[translated_index..].contains("und"),
+        "drawing keeps the second translated run in the mapped paragraph"
+    );
+    assert!(
+        drawing[translated_index..].contains("Sicherheit"),
+        "drawing keeps the third translated run in the mapped paragraph"
+    );
+    assert!(!drawing.contains("IT risk"));
+    assert!(!drawing.contains(">and<"));
+    assert!(!drawing.contains("security"));
+}
+
+#[test]
 fn divergent_diagram_cache_without_model_id_mapping_is_not_patch_ready() {
     let bytes = graphic_frame_deck_with_diagram_parts(
         &multirun_diagram_data_part(),
@@ -2228,7 +2307,7 @@ fn divergent_diagram_cache_without_model_id_mapping_is_not_patch_ready() {
             .as_ref()
             .expect("failed operation has error")
             .code,
-        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit
+        pptx_compose::json::schemas::ErrorCode::SelectorGuardFailed
     );
     let written = document
         .write_vec_with_options(WriteOptions {

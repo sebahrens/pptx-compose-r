@@ -402,14 +402,18 @@ impl ReplaceText {
         }
         let (part_name, _) = related_text_part(package, target, self)?;
         let drawing_part_name = diagram_drawing_mirror_part(package, target, &part_name);
-        let part = package.parts_mut().get_mut(&part_name).ok_or_else(|| {
-            Error::new(
-                ErrorCode::SelectorNotFound,
-                format!("Related text part {part_name} was not found."),
-            )
-            .with_location(self.location(Some(target)))
-        })?;
-        let mut document = parse_document(part.bytes()).map_err(|source| {
+        let part_bytes = package
+            .parts()
+            .get(&part_name)
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorCode::SelectorNotFound,
+                    format!("Related text part {part_name} was not found."),
+                )
+                .with_location(self.location(Some(target)))
+            })?
+            .bytes();
+        let mut document = parse_document(part_bytes).map_err(|source| {
             Error::with_source(
                 source.code(),
                 format!("Could not parse related text part {part_name}."),
@@ -427,8 +431,40 @@ impl ReplaceText {
             .then(|| diagram_model_id_for_operation(root, self, target))
             .transpose()?
             .flatten();
+        let mirror_operation = if target.kind == ElementKind::GraphicFrameDiagram {
+            match drawing_part_name.as_ref() {
+                Some(drawing_part_name) => {
+                    let run = self.run.as_ref().ok_or_else(|| {
+                        Error::new(
+                            ErrorCode::InvalidInput,
+                            "run_scoped replace_text requires selector.run.",
+                        )
+                        .with_location(self.location(Some(target)))
+                    })?;
+                    let source_run_text = selected_run_text(&tx_body, run, self, target)?;
+                    Some(resolve_diagram_drawing_mirror_operation(
+                        package,
+                        drawing_part_name,
+                        self,
+                        target,
+                        diagram_model_id.as_deref(),
+                        Some(source_run_text.as_str()),
+                    )?)
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
         replace_related_run_scoped_text(root, self, target)?;
 
+        let part = package.parts_mut().get_mut(&part_name).ok_or_else(|| {
+            Error::new(
+                ErrorCode::SelectorNotFound,
+                format!("Related text part {part_name} was not found."),
+            )
+            .with_location(self.location(Some(target)))
+        })?;
         *part.bytes_mut() = write_document(
             &document,
             &WriteOptions {
@@ -445,9 +481,8 @@ impl ReplaceText {
                     if replace_diagram_drawing_mirror(
                         package,
                         &drawing_part_name,
-                        self,
+                        mirror_operation.as_ref().unwrap_or(self),
                         target,
-                        diagram_model_id.as_deref(),
                     )? {
                         changed_parts.push(drawing_part_name.zip_entry_name().to_owned());
                     } else {
@@ -738,11 +773,23 @@ fn reject_unsupported_diagram_cache_mapping(
     let data_paragraphs = related_paragraph_infos(data_root);
     let drawing_paragraphs = related_paragraph_infos(drawing_root);
     if diagram_cache_mapping_is_unsupported(&data_paragraphs, &drawing_paragraphs) {
-        return Err(Error::new(
-            ErrorCode::UnsupportedEdit,
-            "SmartArt drawing cache order differs from diagram data and cannot be safely mapped by modelId.",
-        )
-        .with_location(operation.location(Some(target))));
+        let Some(run) = operation.run.as_ref() else {
+            return Err(Error::new(
+                ErrorCode::InvalidInput,
+                "run_scoped replace_text requires selector.run.",
+            )
+            .with_location(operation.location(Some(target))));
+        };
+        let data_tx_body = related_text_body(data_root, operation, target)?;
+        let source_run_text = selected_run_text(&data_tx_body, run, operation, target)?;
+        let diagram_model_id = related_paragraph_model_id(data_root, run.paragraph_index);
+        diagram_mirror_operation(
+            drawing_root,
+            operation,
+            target,
+            diagram_model_id.as_deref(),
+            Some(source_run_text.as_str()),
+        )?;
     }
     Ok(())
 }
@@ -760,7 +807,6 @@ fn replace_diagram_drawing_mirror(
     drawing_part_name: &PartName,
     operation: &ReplaceText,
     target: &ResolvedElement,
-    diagram_model_id: Option<&str>,
 ) -> Result<bool> {
     let Some(part) = package.parts_mut().get_mut(drawing_part_name) else {
         return Ok(false);
@@ -776,16 +822,15 @@ fn replace_diagram_drawing_mirror(
     let Some(root) = root_element_mut(&mut document) else {
         return Ok(false);
     };
-    let mirror_operation = diagram_mirror_operation(root, operation, target, diagram_model_id)?;
-    let tx_body = match related_text_body(root, &mirror_operation, target) {
+    let tx_body = match related_text_body(root, operation, target) {
         Ok(tx_body) => tx_body,
         Err(error) if error.code() == ErrorCode::UnsupportedEdit => return Ok(false),
         Err(error) => return Err(error),
     };
-    if validate_run_scoped_text_body(&mirror_operation, target, &tx_body).is_err() {
+    if validate_run_scoped_text_body(operation, target, &tx_body).is_err() {
         return Ok(false);
     }
-    replace_related_run_scoped_text(root, &mirror_operation, target)?;
+    replace_related_run_scoped_text(root, operation, target)?;
     *part.bytes_mut() = write_document(
         &document,
         &WriteOptions {
@@ -794,6 +839,40 @@ fn replace_diagram_drawing_mirror(
     )?;
     package.mark_dirty(drawing_part_name.clone());
     Ok(true)
+}
+
+fn resolve_diagram_drawing_mirror_operation(
+    package: &Package,
+    drawing_part_name: &PartName,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+    diagram_model_id: Option<&str>,
+    source_run_text: Option<&str>,
+) -> Result<ReplaceText> {
+    let part = package.parts().get(drawing_part_name).ok_or_else(|| {
+        Error::new(
+            ErrorCode::SelectorNotFound,
+            format!("Diagram drawing part {drawing_part_name} was not found."),
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let document = parse_document(part.bytes()).map_err(|source| {
+        Error::with_source(
+            source.code(),
+            format!("Could not parse diagram drawing part {drawing_part_name}."),
+            source,
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let root = document.root_element().ok_or_else(|| {
+        Error::malformed_xml("Diagram drawing XML does not contain a root element.")
+            .with_location(operation.location(Some(target)))
+    })?;
+    let mirror_operation =
+        diagram_mirror_operation(root, operation, target, diagram_model_id, source_run_text)?;
+    let tx_body = related_text_body(root, &mirror_operation, target)?;
+    validate_run_scoped_text_body(&mirror_operation, target, &tx_body)?;
+    Ok(mirror_operation)
 }
 
 fn diagram_model_id_for_operation(
@@ -816,6 +895,7 @@ fn diagram_mirror_operation(
     operation: &ReplaceText,
     target: &ResolvedElement,
     diagram_model_id: Option<&str>,
+    source_run_text: Option<&str>,
 ) -> Result<ReplaceText> {
     let Some(run) = operation.run.as_ref() else {
         return Ok(operation.clone());
@@ -836,7 +916,19 @@ fn diagram_mirror_operation(
             ..operation.clone()
         });
     }
-    Ok(operation.clone())
+    if let Some(mapped_run) =
+        source_text_diagram_mirror_run(root, operation, target, run, source_run_text)?
+    {
+        return Ok(ReplaceText {
+            run: Some(mapped_run),
+            ..operation.clone()
+        });
+    }
+    Err(Error::new(
+        ErrorCode::UnsupportedEdit,
+        "SmartArt drawing cache cannot be safely mapped to the selected diagram run.",
+    )
+    .with_location(operation.location(Some(target))))
 }
 
 fn guarded_diagram_mirror_run(
@@ -882,6 +974,53 @@ fn guarded_diagram_mirror_run(
         if let Some(expected_hash) = &run.text_hash
             && text_hash::text_hash(&current) != *expected_hash
         {
+            continue;
+        }
+        if matched_run.is_some() {
+            return Ok(None);
+        }
+        matched_run = Some(candidate_run);
+    }
+    Ok(matched_run)
+}
+
+fn source_text_diagram_mirror_run(
+    root: &XmlElement,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+    run: &RunSelector,
+    source_run_text: Option<&str>,
+) -> Result<Option<RunSelector>> {
+    let Some(source_run_text) = source_run_text else {
+        return Ok(None);
+    };
+    let tx_body = related_text_body(root, operation, target)?;
+    let paragraph_count = tx_body
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .filter(|element| element.name.local_name == "p")
+        .count();
+    let mut matched_run = None;
+    for paragraph_index in 0..paragraph_count {
+        let paragraph_index = u32::try_from(paragraph_index).map_err(|_| {
+            Error::new(
+                ErrorCode::InvalidInput,
+                "Diagram drawing mirror paragraph index is too large for this platform.",
+            )
+            .with_location(operation.location(Some(target)))
+        })?;
+        let mut candidate_run = run.clone();
+        candidate_run.paragraph_index = paragraph_index;
+        let candidate_operation = ReplaceText {
+            run: Some(candidate_run.clone()),
+            ..operation.clone()
+        };
+        let Ok(current) = selected_run_text(&tx_body, &candidate_run, &candidate_operation, target)
+        else {
+            continue;
+        };
+        if current != source_run_text {
             continue;
         }
         if matched_run.is_some() {
