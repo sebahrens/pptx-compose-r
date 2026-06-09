@@ -641,7 +641,10 @@ impl ReplaceNotesText {
 }
 
 fn is_related_text_target(kind: ElementKind) -> bool {
-    kind == ElementKind::GraphicFrameDiagram
+    matches!(
+        kind,
+        ElementKind::GraphicFrameChart | ElementKind::GraphicFrameDiagram
+    )
 }
 
 fn related_text_part(

@@ -1963,12 +1963,8 @@ fn chart_text_is_honest_unsupported_while_diagram_text_remains_editable() {
         .find(|element| element["id"] == "slide-1:graphic-9")
         .expect("diagram element projected");
 
-    assert_eq!(chart.get("text"), None);
-    assert_eq!(chart["editable"]["text"]["supported"], false);
-    assert_eq!(
-        chart["editable"]["text"]["reason"],
-        "chart_cache_workbook_sync_unsupported"
-    );
+    assert_eq!(chart["text"]["plain"], "Revenue Chart");
+    assert_eq!(chart["editable"]["text"]["supported"], true);
     assert_eq!(
         chart["text_coverage_warnings"][0]["code"],
         "chart_text_unsupported"
@@ -1980,8 +1976,19 @@ fn chart_text_is_honest_unsupported_while_diagram_text_remains_editable() {
     assert_eq!(diagram["text"]["plain"], "SmartArt Node");
     assert_eq!(diagram["editable"]["text"]["supported"], true);
 
+    let title_matches = PresentationDocument::from_bytes(&bytes)
+        .expect("fixture opens")
+        .find_text(FindTextRequest {
+            query: "Revenue ".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds");
+    assert_eq!(title_matches.matches.len(), 1);
+    assert_eq!(title_matches.matches[0].element_id, "slide-1:graphic-7");
+
     for hidden_chart_text in [
-        "Revenue Chart",
         "North Category",
         "South Category",
         "Actual Series",
@@ -2002,41 +2009,43 @@ fn chart_text_is_honest_unsupported_while_diagram_text_remains_editable() {
         );
     }
 
-    let mut rejected = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let original_entries = from_bytes(&bytes).expect("original entries read");
+    let mut chart_document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
     let chart_patch = patch_with_operations(
         &bytes,
-        "reject-chart-text",
+        "replace-chart-title-run",
         vec![serde_json::json!({
             "operation_id": "replace-chart-title",
             "op": "replace_text",
             "element_id": "slide-1:graphic-7",
             "mode": "run_scoped",
             "run": { "paragraph_index": 0, "run_index": 0 },
-            "text": "Revenue Updated",
-            "match": "Revenue Chart"
+            "text": "Sales ",
+            "match": "Revenue "
         })],
     );
-    let rejected_report = rejected
+    let chart_report = chart_document
         .apply_patch(chart_patch, MediaInputs::default())
-        .expect("unsupported chart text edit returns a failed report");
-    assert_eq!(rejected_report.status, PatchStatus::Failed);
-    assert_eq!(
-        rejected_report.operation_reports[0]
-            .error
-            .as_ref()
-            .expect("failed operation has error")
-            .code,
-        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit
-    );
-    let rejected_written = rejected
+        .expect("simple chart title text edit applies");
+    assert_eq!(chart_report.status, PatchStatus::Applied);
+    assert_eq!(chart_report.changed_parts, vec!["ppt/charts/chart1.xml"]);
+    let chart_written = chart_document
         .write_vec_with_options(WriteOptions {
             mode: WriteMode::Preserve,
             ..WriteOptions::default()
         })
-        .expect("failed edit deck writes");
-    assert_eq!(rejected_written, bytes);
+        .expect("edited chart deck writes");
+    let chart_entries = from_bytes(&chart_written).expect("chart edit entries read");
+    assert_exact_part_deltas(
+        "replace simple chart title text",
+        &original_entries,
+        &chart_entries,
+        &["ppt/charts/chart1.xml"],
+        &[],
+    );
+    assert!(entry_text(&chart_entries, "ppt/charts/chart1.xml").contains("Sales "));
+    assert!(entry_text(&chart_entries, "ppt/charts/chart1.xml").contains("North Category"));
 
-    let original_entries = from_bytes(&bytes).expect("original entries read");
     let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
     let patch = patch_with_operations(
         &bytes,
@@ -2078,6 +2087,54 @@ fn chart_text_is_honest_unsupported_while_diagram_text_remains_editable() {
     assert!(!entry_text(&written_entries, "ppt/charts/chart1.xml").contains("Revenue Updated"));
     assert!(entry_text(&written_entries, "ppt/diagrams/data1.xml").contains("SmartArt Updated"));
     assert!(entry_text(&written_entries, "ppt/diagrams/drawing1.xml").contains("SmartArt Updated"));
+}
+
+#[test]
+fn workbook_backed_chart_labels_without_rich_text_are_not_patch_ready() {
+    let bytes = graphic_frame_deck_with_chart_part(&workbook_backed_chart_labels_part());
+    let view = PresentationDocument::from_bytes(&bytes)
+        .expect("fixture opens")
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide detail builds");
+    let chart = view["slides"][0]["elements"]
+        .as_array()
+        .expect("slide_detail exposes elements")
+        .iter()
+        .find(|element| element["id"] == "slide-1:graphic-7")
+        .expect("chart element projected");
+
+    assert_eq!(chart.get("text"), None);
+    assert_eq!(chart["editable"]["text"]["supported"], false);
+    assert_eq!(
+        chart["editable"]["text"]["reason"],
+        "chart_cache_workbook_sync_unsupported"
+    );
+    assert_eq!(
+        chart["text_coverage_warnings"][0]["reason"],
+        "chart_cache_workbook_sync_unsupported"
+    );
+
+    let matches = PresentationDocument::from_bytes(&bytes)
+        .expect("fixture opens")
+        .find_text(FindTextRequest {
+            query: "Workbook Only Label".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds");
+    assert!(
+        matches.matches.is_empty(),
+        "workbook-backed chart labels must not produce patch-ready selectors"
+    );
 }
 
 #[test]
@@ -3344,6 +3401,32 @@ fn graphic_frame_deck_with_clean_extras() -> Vec<u8> {
     )
 }
 
+fn graphic_frame_deck_with_chart_part(chart_xml: &str) -> Vec<u8> {
+    zip_entries(
+        [
+            ("[Content_Types].xml", content_types().as_bytes()),
+            ("_rels/.rels", root_rels().as_bytes()),
+            ("ppt/presentation.xml", presentation().as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", graphic_frame_slide().as_bytes()),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                graphic_frame_slide_rels().as_bytes(),
+            ),
+            ("ppt/charts/chart1.xml", chart_xml.as_bytes()),
+            ("ppt/diagrams/data1.xml", diagram_data_part().as_bytes()),
+            (
+                "ppt/diagrams/drawing1.xml",
+                diagram_drawing_part().as_bytes(),
+            ),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
 fn graphic_frame_deck_with_diagram_parts(diagram_data: &str, diagram_drawing: &str) -> Vec<u8> {
     zip_entries(
         [
@@ -3818,6 +3901,27 @@ fn chart_part() -> String {
           <c:dLbls>
             <c:dLbl><c:tx><c:strRef><c:f>Sheet1!$C$2</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Workbook Label</c:v></c:pt></c:strCache></c:strRef></c:tx></c:dLbl>
           </c:dLbls>
+        </c:ser>
+      </c:barChart>
+    </c:plotArea>
+  </c:chart>
+</c:chartSpace>"#
+        .to_owned()
+}
+
+fn workbook_backed_chart_labels_part() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">
+  <c:chart>
+    <c:plotArea>
+      <c:barChart>
+        <c:ser>
+          <c:tx>
+            <c:strRef>
+              <c:f>Sheet1!$B$1</c:f>
+              <c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>Workbook Only Label</c:v></c:pt></c:strCache>
+            </c:strRef>
+          </c:tx>
         </c:ser>
       </c:barChart>
     </c:plotArea>

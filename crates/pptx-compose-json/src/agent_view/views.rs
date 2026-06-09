@@ -1022,6 +1022,7 @@ fn project_element(
         TextProjection {
             text: table_text,
             support: None,
+            uneditable_related_text_reason: None,
         }
     } else {
         projected_element_text(element, core_kind, slide_rels, package)?
@@ -1083,6 +1084,11 @@ fn project_element(
         core_kind,
         shape.bounds.as_ref(),
     );
+    if let Some(reason) = text_projection.uneditable_related_text_reason.as_deref() {
+        text_coverage_warnings.push(chart_text_coverage_warning(
+            slide_id, &id, kind, &part, reason,
+        ));
+    }
     if text_projection
         .support
         .as_ref()
@@ -1153,17 +1159,6 @@ fn text_coverage_warnings_for_element(
     core_kind: CoreElementKind,
     bounds: Option<&pptx_compose_core::pptx::shape::Bounds>,
 ) -> Vec<TextCoverageWarning> {
-    if core_kind == CoreElementKind::GraphicFrameChart {
-        return vec![TextCoverageWarning {
-            code: "chart_text_unsupported".to_owned(),
-            slide_id: slide_id.to_owned(),
-            element_id: element_id.to_owned(),
-            kind,
-            part: part.to_owned(),
-            reason: "chart_cache_workbook_sync_unsupported".to_owned(),
-            detail: "V1 does not edit visible chart text unless chart XML caches and backing workbook label cells can be kept consistent. This chart is preserved but chart title, axis, legend, data label, series, and category text are not find-text or replace_text targets.".to_owned(),
-        }];
-    }
     if core_kind != CoreElementKind::Picture
         || !bounds.is_some_and(|bounds| bounds.cx > 0 && bounds.cy > 0)
     {
@@ -1179,6 +1174,24 @@ fn text_coverage_warnings_for_element(
         reason: "image_text_not_extractable".to_owned(),
         detail: "This picture may contain visible text baked into image pixels or vector artwork. V1 does not OCR or edit that text, so find-text only searches accessibility metadata and XML text, not the image content.".to_owned(),
     }]
+}
+
+fn chart_text_coverage_warning(
+    slide_id: &str,
+    element_id: &str,
+    kind: ElementKind,
+    part: &str,
+    reason: &str,
+) -> TextCoverageWarning {
+    TextCoverageWarning {
+        code: "chart_text_unsupported".to_owned(),
+        slide_id: slide_id.to_owned(),
+        element_id: element_id.to_owned(),
+        kind,
+        part: part.to_owned(),
+        reason: reason.to_owned(),
+        detail: "Some visible chart text is backed by chart XML string caches or workbook formulas. V1 exposes editable DrawingML rich text such as simple titles, but preserves cache/workbook-backed labels unless all companion state can be kept consistent.".to_owned(),
+    }
 }
 
 fn project_placeholder(element: &XmlElement, layout_part: Option<&str>) -> Option<PlaceholderView> {
@@ -1415,6 +1428,7 @@ fn attr_present(element: &XmlElement, local_name: &str) -> bool {
 struct TextProjection {
     text: Option<TextView>,
     support: Option<EditableSupport>,
+    uneditable_related_text_reason: Option<String>,
 }
 
 fn projected_element_text(
@@ -1427,18 +1441,24 @@ fn projected_element_text(
         return Ok(TextProjection {
             text: None,
             support: None,
+            uneditable_related_text_reason: None,
         });
     }
     if let Some(tx_body) = child_element(element, "txBody") {
         return Ok(TextProjection {
             text: Some(project_text(tx_body)),
             support: None,
+            uneditable_related_text_reason: None,
         });
+    }
+    if core_kind == CoreElementKind::GraphicFrameChart {
+        return projected_chart_text(element, slide_rels, package);
     }
     if core_kind != CoreElementKind::GraphicFrameDiagram {
         return Ok(TextProjection {
             text: None,
             support: None,
+            uneditable_related_text_reason: None,
         });
     }
     if let Some(projection) = projected_diagram_text(element, slide_rels, package)? {
@@ -1461,13 +1481,58 @@ fn projected_element_text(
         Ok(TextProjection {
             text: None,
             support: None,
+            uneditable_related_text_reason: None,
         })
     } else {
         Ok(TextProjection {
             text: Some(project_text_body(merge_text_bodies(bodies))),
             support: None,
+            uneditable_related_text_reason: None,
         })
     }
+}
+
+fn projected_chart_text(
+    element: &XmlElement,
+    slide_rels: &RelationshipSet,
+    package: &Package,
+) -> Result<TextProjection, JsonError> {
+    let related_parts = related_graphic_text_parts(element, slide_rels, package)?;
+    let mut bodies = Vec::new();
+    let mut has_uneditable_cache_text = false;
+    for part_name in related_parts {
+        let Some(part) = package.parts().get(&part_name) else {
+            continue;
+        };
+        let document = parse_document(part.bytes()).map_err(core_error)?;
+        let Some(root) = document.root_element() else {
+            continue;
+        };
+        has_uneditable_cache_text |= chart_has_uneditable_cache_text(root);
+        let body = read_related_text_body(root);
+        if !body.normalized.is_empty() {
+            bodies.push(body);
+        }
+    }
+
+    if bodies.is_empty() {
+        return Ok(TextProjection {
+            text: None,
+            support: has_uneditable_cache_text.then(|| EditableSupport {
+                supported: false,
+                reason: Some("chart_cache_workbook_sync_unsupported".to_owned()),
+            }),
+            uneditable_related_text_reason: has_uneditable_cache_text
+                .then(|| "chart_cache_workbook_sync_unsupported".to_owned()),
+        });
+    }
+
+    Ok(TextProjection {
+        text: Some(project_text_body(merge_text_bodies(bodies))),
+        support: None,
+        uneditable_related_text_reason: has_uneditable_cache_text
+            .then(|| "chart_cache_workbook_sync_unsupported".to_owned()),
+    })
 }
 
 fn projected_diagram_text(
@@ -1493,6 +1558,7 @@ fn projected_diagram_text(
         return Ok(Some(TextProjection {
             text: None,
             support: None,
+            uneditable_related_text_reason: None,
         }));
     }
     let data_body = related_text_body_from_infos(&data_paragraphs);
@@ -1500,12 +1566,14 @@ fn projected_diagram_text(
         return Ok(Some(TextProjection {
             text: Some(project_text_body(data_body)),
             support: None,
+            uneditable_related_text_reason: None,
         }));
     };
     let Some(drawing_part) = package.parts().get(&drawing_part_name) else {
         return Ok(Some(TextProjection {
             text: Some(project_text_body(data_body)),
             support: None,
+            uneditable_related_text_reason: None,
         }));
     };
     let drawing_document = parse_document(drawing_part.bytes()).map_err(core_error)?;
@@ -1513,6 +1581,7 @@ fn projected_diagram_text(
         return Ok(Some(TextProjection {
             text: Some(project_text_body(data_body)),
             support: None,
+            uneditable_related_text_reason: None,
         }));
     };
     let drawing_paragraphs = related_text_paragraph_infos(drawing_root);
@@ -1520,6 +1589,7 @@ fn projected_diagram_text(
         return Ok(Some(TextProjection {
             text: Some(project_text_body(data_body)),
             support: None,
+            uneditable_related_text_reason: None,
         }));
     }
     if diagram_cache_mapping_is_unsupported(&data_paragraphs, &drawing_paragraphs) {
@@ -1531,11 +1601,13 @@ fn projected_diagram_text(
                 supported: false,
                 reason: Some("diagram_drawing_cache_mapping_unsupported".to_owned()),
             }),
+            uneditable_related_text_reason: None,
         }));
     }
     Ok(Some(TextProjection {
         text: Some(project_text_body(data_body)),
         support: None,
+        uneditable_related_text_reason: None,
     }))
 }
 
@@ -1724,6 +1796,15 @@ fn diagram_cache_mapping_is_unsupported(
 fn all_unique(values: &[&str]) -> bool {
     let mut seen = BTreeSet::new();
     values.iter().all(|value| seen.insert(*value))
+}
+
+fn chart_has_uneditable_cache_text(element: &XmlElement) -> bool {
+    matches!(element.name.local_name.as_str(), "strCache" | "strRef")
+        || element
+            .children
+            .iter()
+            .filter_map(XmlNode::as_element)
+            .any(chart_has_uneditable_cache_text)
 }
 
 fn collect_related_paragraphs(
@@ -2061,11 +2142,6 @@ fn editable(
     let (bounds_supported, bounds_reason) = bounds_edit_support(core_kind);
     let text = if text_support.is_some() {
         text_support
-    } else if core_kind == CoreElementKind::GraphicFrameChart {
-        Some(EditableSupport {
-            supported: false,
-            reason: Some("chart_cache_workbook_sync_unsupported".to_owned()),
-        })
     } else if has_text && core_kind.supports_replace_text() {
         Some(EditableSupport {
             supported: true,
