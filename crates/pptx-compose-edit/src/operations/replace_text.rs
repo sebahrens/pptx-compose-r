@@ -33,6 +33,9 @@ use crate::{
     selectors::RunSelector,
 };
 
+const DIAGRAM_DRAWING_REL_TYPE: &str =
+    "http://schemas.microsoft.com/office/2007/relationships/diagramDrawing";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplaceText {
     pub operation_id: String,
@@ -398,6 +401,7 @@ impl ReplaceText {
             .with_location(self.location(Some(target))));
         }
         let (part_name, _) = related_text_part(package, target, self)?;
+        let drawing_part_name = diagram_drawing_mirror_part(package, target, &part_name);
         let part = package.parts_mut().get_mut(&part_name).ok_or_else(|| {
             Error::new(
                 ErrorCode::SelectorNotFound,
@@ -429,15 +433,34 @@ impl ReplaceText {
         )?;
         package.mark_dirty(part_name.clone());
 
+        let mut changed_parts = vec![part_name.zip_entry_name().to_owned()];
+        let mut warnings = Vec::new();
+        if target.kind == ElementKind::GraphicFrameDiagram {
+            match drawing_part_name {
+                Some(drawing_part_name) => {
+                    if replace_diagram_drawing_mirror(package, &drawing_part_name, self, target)? {
+                        changed_parts.push(drawing_part_name.zip_entry_name().to_owned());
+                    } else {
+                        warnings.push(diagram_drawing_mirror_stale_warning(
+                            drawing_part_name.zip_entry_name(),
+                        ));
+                    }
+                }
+                None => warnings.push(diagram_drawing_mirror_stale_warning(
+                    "unresolved diagram drawing mirror",
+                )),
+            }
+        }
+
         Ok(PatchEffects {
-            changed_parts: vec![part_name.zip_entry_name().to_owned()],
+            changed_parts,
             target: Some(OperationTarget {
                 slide_id: target.slide_id.clone(),
                 element_id: target.element_id.clone(),
                 part: part_name.zip_entry_name().to_owned(),
             }),
             created_element_ids: Vec::new(),
-            warnings: Vec::new(),
+            warnings,
         })
     }
 }
@@ -649,6 +672,89 @@ fn internal_related_part(slide_rels: &RelationshipSet, rel_id: &str) -> Option<P
         return None;
     }
     relationship.resolved_target.clone()
+}
+
+fn diagram_drawing_mirror_part(
+    package: &Package,
+    target: &ResolvedElement,
+    data_part_name: &PartName,
+) -> Option<PartName> {
+    if target.kind != ElementKind::GraphicFrameDiagram {
+        return None;
+    }
+    let slide_rels = package.relationships().set_for(&target.part)?;
+    let data_stem = diagram_part_stem(data_part_name)?;
+    let candidates = slide_rels
+        .rels
+        .iter()
+        .filter_map(|relationship| {
+            if relationship.target_mode != TargetMode::Internal
+                || relationship.rel_type != DIAGRAM_DRAWING_REL_TYPE
+            {
+                return None;
+            }
+            relationship.resolved_target.clone()
+        })
+        .collect::<Vec<_>>();
+    candidates
+        .iter()
+        .find(|part_name| diagram_part_stem(part_name).as_deref() == Some(data_stem.as_str()))
+        .cloned()
+}
+
+fn diagram_part_stem(part_name: &PartName) -> Option<String> {
+    let file_name = part_name.zip_entry_name().rsplit('/').next()?;
+    let stem = file_name.strip_suffix(".xml")?;
+    stem.strip_prefix("data")
+        .or_else(|| stem.strip_prefix("drawing"))
+        .map(str::to_owned)
+}
+
+fn replace_diagram_drawing_mirror(
+    package: &mut Package,
+    drawing_part_name: &PartName,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+) -> Result<bool> {
+    let Some(part) = package.parts_mut().get_mut(drawing_part_name) else {
+        return Ok(false);
+    };
+    let mut document = parse_document(part.bytes()).map_err(|source| {
+        Error::with_source(
+            source.code(),
+            format!("Could not parse diagram drawing part {drawing_part_name}."),
+            source,
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let Some(root) = root_element_mut(&mut document) else {
+        return Ok(false);
+    };
+    let tx_body = match related_text_body(root, operation, target) {
+        Ok(tx_body) => tx_body,
+        Err(error) if error.code() == ErrorCode::UnsupportedEdit => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    if validate_run_scoped_text_body(operation, target, &tx_body).is_err() {
+        return Ok(false);
+    }
+    replace_related_run_scoped_text(root, operation, target)?;
+    *part.bytes_mut() = write_document(
+        &document,
+        &WriteOptions {
+            mode: WriteMode::Preserve,
+        },
+    )?;
+    package.mark_dirty(drawing_part_name.clone());
+    Ok(true)
+}
+
+fn diagram_drawing_mirror_stale_warning(part: &str) -> serde_json::Value {
+    json!({
+        "code": "diagram_drawing_mirror_stale",
+        "part": part,
+        "message": "SmartArt diagram data text was edited, but the cached drawing mirror could not be synchronized."
+    })
 }
 
 fn collect_relationship_ids(element: &XmlElement, output: &mut Vec<String>) {

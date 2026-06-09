@@ -1978,7 +1978,11 @@ fn chart_and_diagram_related_text_is_inspectable_findable_and_run_editable() {
     assert_eq!(report.status, PatchStatus::Applied);
     assert_eq!(
         report.changed_parts,
-        vec!["ppt/charts/chart1.xml", "ppt/diagrams/data1.xml"]
+        vec![
+            "ppt/charts/chart1.xml",
+            "ppt/diagrams/data1.xml",
+            "ppt/diagrams/drawing1.xml"
+        ]
     );
 
     let written = document
@@ -1992,11 +1996,16 @@ fn chart_and_diagram_related_text_is_inspectable_findable_and_run_editable() {
         "replace related graphic text",
         &original_entries,
         &written_entries,
-        &["ppt/charts/chart1.xml", "ppt/diagrams/data1.xml"],
+        &[
+            "ppt/charts/chart1.xml",
+            "ppt/diagrams/data1.xml",
+            "ppt/diagrams/drawing1.xml",
+        ],
         &[],
     );
     assert!(entry_text(&written_entries, "ppt/charts/chart1.xml").contains("Revenue Updated"));
     assert!(entry_text(&written_entries, "ppt/diagrams/data1.xml").contains("SmartArt Updated"));
+    assert!(entry_text(&written_entries, "ppt/diagrams/drawing1.xml").contains("SmartArt Updated"));
 }
 
 #[test]
@@ -2878,6 +2887,10 @@ fn graphic_frame_deck_with_slide(slide_xml: &str) -> Vec<u8> {
             ),
             ("ppt/charts/chart1.xml", chart_part().as_bytes()),
             ("ppt/diagrams/data1.xml", diagram_data_part().as_bytes()),
+            (
+                "ppt/diagrams/drawing1.xml",
+                diagram_drawing_part().as_bytes(),
+            ),
         ],
         CompressionMethod::Stored,
     )
@@ -2903,6 +2916,10 @@ fn graphic_frame_deck_with_clean_extras() -> Vec<u8> {
             ),
             ("ppt/charts/chart1.xml", chart_part().as_bytes()),
             ("ppt/diagrams/data1.xml", diagram_data_part().as_bytes()),
+            (
+                "ppt/diagrams/drawing1.xml",
+                diagram_drawing_part().as_bytes(),
+            ),
             ("ppt/media/image1.png", &tiny_png()),
             ("custom/unknown.bin", b"unknown payload"),
         ],
@@ -3333,6 +3350,7 @@ fn graphic_frame_slide_rels() -> String {
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rIdChart" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>
   <Relationship Id="rIdDiagramData" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="../diagrams/data1.xml"/>
+  <Relationship Id="rIdDiagramDrawing" Type="http://schemas.microsoft.com/office/2007/relationships/diagramDrawing" Target="../diagrams/drawing1.xml"/>
 </Relationships>"#
         .to_owned()
 }
@@ -3354,6 +3372,16 @@ fn diagram_data_part() -> String {
     <dgm:pt modelId="1"><dgm:t><a:p><a:r><a:t>SmartArt Node</a:t></a:r></a:p></dgm:t></dgm:pt>
   </dgm:ptLst>
 </dgm:dataModel>"#
+        .to_owned()
+}
+
+fn diagram_drawing_part() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <dsp:spTree>
+    <dsp:sp><dsp:txBody><a:p><a:r><a:t>SmartArt Node</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+  </dsp:spTree>
+</dsp:drawing>"#
         .to_owned()
 }
 
