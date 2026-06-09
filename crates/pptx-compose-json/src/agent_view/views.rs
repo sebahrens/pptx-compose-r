@@ -73,6 +73,8 @@ const ALL_OP_NAMES: [&str; 7] = [
     "add_image",
     "replace_image",
 ];
+const DIAGRAM_DRAWING_REL_TYPE: &str =
+    "http://schemas.microsoft.com/office/2007/relationships/diagramDrawing";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -547,7 +549,13 @@ fn collect_element_text_matches(
         }
         return Ok(());
     }
-    if let Some(text) = &element.text {
+    if let Some(text) = &element.text
+        && element
+            .editable
+            .text
+            .as_ref()
+            .is_none_or(|support| support.supported)
+    {
         collect_text_view_matches(
             element, slide, text, None, query, start, stop_after, seen, matches,
         )?;
@@ -1010,11 +1018,15 @@ fn project_element(
     } else {
         (None, None)
     };
-    let text = if table_text.is_some() {
-        table_text
+    let text_projection = if table_text.is_some() {
+        TextProjection {
+            text: table_text,
+            support: None,
+        }
     } else {
         projected_element_text(element, core_kind, slide_rels, package)?
     };
+    let text = text_projection.text;
     let text_hash = text.as_ref().map(|text| text.text_hash.clone());
     let mut image_support = ImageEditSupport::UnresolvedPicture;
     let image = if core_kind == CoreElementKind::Picture {
@@ -1063,7 +1075,7 @@ fn project_element(
     let id = agent_element_id(slide_id, core_kind, shape.cnvpr_id, &path);
     let kind = json_element_kind(core_kind);
     let part = trim_part(slide_part.as_str());
-    let text_coverage_warnings = text_coverage_warnings_for_element(
+    let mut text_coverage_warnings = text_coverage_warnings_for_element(
         slide_id,
         &id,
         kind,
@@ -1071,6 +1083,21 @@ fn project_element(
         core_kind,
         shape.bounds.as_ref(),
     );
+    if text_projection
+        .support
+        .as_ref()
+        .is_some_and(|support| !support.supported)
+    {
+        text_coverage_warnings.push(TextCoverageWarning {
+            code: "diagram_text_unsupported".to_owned(),
+            slide_id: slide_id.to_owned(),
+            element_id: id.clone(),
+            kind,
+            part: part.clone(),
+            reason: "diagram_drawing_cache_mapping_unsupported".to_owned(),
+            detail: "V1 does not edit SmartArt text when rendered drawing-cache paragraphs differ from diagram data and no modelId mapping proves which data node owns each visible paragraph.".to_owned(),
+        });
+    }
 
     Ok(ElementView {
         id,
@@ -1098,6 +1125,7 @@ fn project_element(
             text.is_some(),
             shape.cnvpr_id.is_some(),
             image_support,
+            text_projection.support,
         ),
         fingerprint: fingerprint(&FingerprintInput {
             kind: core_kind,
@@ -1384,20 +1412,37 @@ fn attr_present(element: &XmlElement, local_name: &str) -> bool {
     optional_attr(element, local_name).is_some()
 }
 
+struct TextProjection {
+    text: Option<TextView>,
+    support: Option<EditableSupport>,
+}
+
 fn projected_element_text(
     element: &XmlElement,
     core_kind: CoreElementKind,
     slide_rels: &RelationshipSet,
     package: &Package,
-) -> Result<Option<TextView>, JsonError> {
+) -> Result<TextProjection, JsonError> {
     if core_kind == CoreElementKind::GraphicFrameTable {
-        return Ok(None);
+        return Ok(TextProjection {
+            text: None,
+            support: None,
+        });
     }
     if let Some(tx_body) = child_element(element, "txBody") {
-        return Ok(Some(project_text(tx_body)));
+        return Ok(TextProjection {
+            text: Some(project_text(tx_body)),
+            support: None,
+        });
     }
     if core_kind != CoreElementKind::GraphicFrameDiagram {
-        return Ok(None);
+        return Ok(TextProjection {
+            text: None,
+            support: None,
+        });
+    }
+    if let Some(projection) = projected_diagram_text(element, slide_rels, package)? {
+        return Ok(projection);
     }
     let related_parts = related_graphic_text_parts(element, slide_rels, package)?;
     let bodies = related_parts
@@ -1413,10 +1458,85 @@ fn projected_element_text(
         .collect::<Result<Vec<_>, JsonError>>()?;
     let bodies = bodies.into_iter().flatten().collect::<Vec<_>>();
     if bodies.is_empty() {
-        Ok(None)
+        Ok(TextProjection {
+            text: None,
+            support: None,
+        })
     } else {
-        Ok(Some(project_text_body(merge_text_bodies(bodies))))
+        Ok(TextProjection {
+            text: Some(project_text_body(merge_text_bodies(bodies))),
+            support: None,
+        })
     }
+}
+
+fn projected_diagram_text(
+    element: &XmlElement,
+    slide_rels: &RelationshipSet,
+    package: &Package,
+) -> Result<Option<TextProjection>, JsonError> {
+    let Some(data_part_name) = related_graphic_text_parts(element, slide_rels, package)?
+        .into_iter()
+        .find(|part_name| diagram_part_stem(part_name).is_some())
+    else {
+        return Ok(None);
+    };
+    let Some(data_part) = package.parts().get(&data_part_name) else {
+        return Ok(None);
+    };
+    let data_document = parse_document(data_part.bytes()).map_err(core_error)?;
+    let Some(data_root) = data_document.root_element() else {
+        return Ok(None);
+    };
+    let data_paragraphs = related_text_paragraph_infos(data_root);
+    if data_paragraphs.is_empty() {
+        return Ok(Some(TextProjection {
+            text: None,
+            support: None,
+        }));
+    }
+    let data_body = related_text_body_from_infos(&data_paragraphs);
+    let Some(drawing_part_name) = diagram_drawing_mirror_part(slide_rels, &data_part_name) else {
+        return Ok(Some(TextProjection {
+            text: Some(project_text_body(data_body)),
+            support: None,
+        }));
+    };
+    let Some(drawing_part) = package.parts().get(&drawing_part_name) else {
+        return Ok(Some(TextProjection {
+            text: Some(project_text_body(data_body)),
+            support: None,
+        }));
+    };
+    let drawing_document = parse_document(drawing_part.bytes()).map_err(core_error)?;
+    let Some(drawing_root) = drawing_document.root_element() else {
+        return Ok(Some(TextProjection {
+            text: Some(project_text_body(data_body)),
+            support: None,
+        }));
+    };
+    let drawing_paragraphs = related_text_paragraph_infos(drawing_root);
+    if drawing_paragraphs.is_empty() {
+        return Ok(Some(TextProjection {
+            text: Some(project_text_body(data_body)),
+            support: None,
+        }));
+    }
+    if diagram_cache_mapping_is_unsupported(&data_paragraphs, &drawing_paragraphs) {
+        return Ok(Some(TextProjection {
+            text: Some(project_text_body(related_text_body_from_infos(
+                &drawing_paragraphs,
+            ))),
+            support: Some(EditableSupport {
+                supported: false,
+                reason: Some("diagram_drawing_cache_mapping_unsupported".to_owned()),
+            }),
+        }));
+    }
+    Ok(Some(TextProjection {
+        text: Some(project_text_body(data_body)),
+        support: None,
+    }))
 }
 
 fn related_graphic_text_parts(
@@ -1445,6 +1565,33 @@ fn related_graphic_text_parts(
         }
     }
     Ok(parts)
+}
+
+fn diagram_drawing_mirror_part(
+    slide_rels: &RelationshipSet,
+    data_part_name: &PartName,
+) -> Option<PartName> {
+    let data_stem = diagram_part_stem(data_part_name)?;
+    slide_rels
+        .rels
+        .iter()
+        .filter_map(|relationship| {
+            if relationship.target_mode != TargetMode::Internal
+                || relationship.rel_type != DIAGRAM_DRAWING_REL_TYPE
+            {
+                return None;
+            }
+            relationship.resolved_target.clone()
+        })
+        .find(|part_name| diagram_part_stem(part_name).as_deref() == Some(data_stem.as_str()))
+}
+
+fn diagram_part_stem(part_name: &PartName) -> Option<String> {
+    let file_name = part_name.zip_entry_name().rsplit('/').next()?;
+    let stem = file_name.strip_suffix(".xml")?;
+    stem.strip_prefix("data")
+        .or_else(|| stem.strip_prefix("drawing"))
+        .map(str::to_owned)
 }
 
 fn collect_relationship_ids(element: &XmlElement, output: &mut Vec<String>) {
@@ -1476,6 +1623,103 @@ fn read_related_text_body(root: &XmlElement) -> pptx_compose_core::pptx::text::T
         plain,
         normalized,
     }
+}
+
+#[derive(Clone)]
+struct RelatedParagraphInfo {
+    model_id: Option<String>,
+    paragraph: pptx_compose_core::pptx::text::Paragraph,
+}
+
+fn related_text_paragraph_infos(root: &XmlElement) -> Vec<RelatedParagraphInfo> {
+    let mut paragraphs = Vec::new();
+    collect_related_paragraph_infos(root, &mut paragraphs, None);
+    paragraphs
+}
+
+fn collect_related_paragraph_infos(
+    element: &XmlElement,
+    paragraphs: &mut Vec<RelatedParagraphInfo>,
+    current_model_id: Option<&str>,
+) {
+    let model_id = optional_attr(element, "modelId").or(current_model_id);
+    if element.name.local_name == "p" {
+        let text_body = read_text_body(&XmlElement {
+            name: element.name.clone(),
+            attributes: Vec::new(),
+            namespaces: element.namespaces.clone(),
+            children: vec![XmlNode::Element(element.clone())],
+        });
+        paragraphs.extend(
+            text_body
+                .paragraphs
+                .into_iter()
+                .filter(|paragraph| !paragraph.normalized.is_empty())
+                .map(|paragraph| RelatedParagraphInfo {
+                    model_id: model_id.map(str::to_owned),
+                    paragraph,
+                }),
+        );
+        return;
+    }
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_related_paragraph_infos(child, paragraphs, model_id);
+    }
+}
+
+fn related_text_body_from_infos(
+    infos: &[RelatedParagraphInfo],
+) -> pptx_compose_core::pptx::text::TextBody {
+    let paragraphs = infos
+        .iter()
+        .map(|info| info.paragraph.clone())
+        .collect::<Vec<_>>();
+    let plain = paragraphs
+        .iter()
+        .map(|paragraph| paragraph.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let normalized = merged_paragraphs_normalized(&paragraphs);
+    pptx_compose_core::pptx::text::TextBody {
+        paragraphs,
+        plain,
+        normalized,
+    }
+}
+
+fn diagram_cache_mapping_is_unsupported(
+    data: &[RelatedParagraphInfo],
+    drawing: &[RelatedParagraphInfo],
+) -> bool {
+    let data_text = data
+        .iter()
+        .map(|paragraph| paragraph.paragraph.normalized.as_str())
+        .collect::<Vec<_>>();
+    let drawing_text = drawing
+        .iter()
+        .map(|paragraph| paragraph.paragraph.normalized.as_str())
+        .collect::<Vec<_>>();
+    if data_text == drawing_text {
+        return false;
+    }
+    let data_model_ids = data
+        .iter()
+        .map(|paragraph| paragraph.model_id.as_deref())
+        .collect::<Vec<_>>();
+    let drawing_model_ids = drawing
+        .iter()
+        .map(|paragraph| paragraph.model_id.as_deref())
+        .collect::<Vec<_>>();
+    if data_model_ids.iter().any(|model_id| model_id.is_none())
+        || drawing_model_ids.iter().any(|model_id| model_id.is_none())
+    {
+        return true;
+    }
+    let mut sorted_data = data_model_ids;
+    let mut sorted_drawing = drawing_model_ids;
+    sorted_data.sort_unstable();
+    sorted_drawing.sort_unstable();
+    sorted_data != sorted_drawing
 }
 
 fn collect_related_paragraphs(
@@ -1800,6 +2044,7 @@ fn editable(
     has_text: bool,
     has_cnvpr: bool,
     image_support: ImageEditSupport,
+    text_support: Option<EditableSupport>,
 ) -> Editable {
     let (image_supported, image_reason) = match image_support {
         ImageEditSupport::Embedded => (true, None),
@@ -1810,7 +2055,9 @@ fn editable(
         }
     };
     let (bounds_supported, bounds_reason) = bounds_edit_support(core_kind);
-    let text = if core_kind == CoreElementKind::GraphicFrameChart {
+    let text = if text_support.is_some() {
+        text_support
+    } else if core_kind == CoreElementKind::GraphicFrameChart {
         Some(EditableSupport {
             supported: false,
             reason: Some("chart_cache_workbook_sync_unsupported".to_owned()),

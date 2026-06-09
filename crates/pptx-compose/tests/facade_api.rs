@@ -2156,6 +2156,90 @@ fn diagram_drawing_mirror_syncs_multirun_paragraph_by_model_id() {
 }
 
 #[test]
+fn divergent_diagram_cache_without_model_id_mapping_is_not_patch_ready() {
+    let bytes = graphic_frame_deck_with_diagram_parts(
+        &multirun_diagram_data_part(),
+        &reordered_mismatched_model_id_diagram_drawing_part(),
+    );
+    let view = PresentationDocument::from_bytes(&bytes)
+        .expect("fixture opens")
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide detail builds");
+    let diagram = view["slides"][0]["elements"]
+        .as_array()
+        .expect("slide_detail exposes elements")
+        .iter()
+        .find(|element| element["id"] == "slide-1:graphic-9")
+        .expect("diagram element projected");
+    assert_eq!(diagram["text"]["paragraphs"][1]["text"], "System selection");
+    assert_eq!(diagram["editable"]["text"]["supported"], false);
+    assert_eq!(
+        diagram["editable"]["text"]["reason"],
+        "diagram_drawing_cache_mapping_unsupported"
+    );
+    assert_eq!(
+        diagram["text_coverage_warnings"][0]["reason"],
+        "diagram_drawing_cache_mapping_unsupported"
+    );
+
+    let matches = PresentationDocument::from_bytes(&bytes)
+        .expect("fixture opens")
+        .find_text(FindTextRequest {
+            query: "System selection".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds");
+    assert!(
+        matches.matches.is_empty(),
+        "unsupported divergent SmartArt text must not produce patch-ready selectors"
+    );
+
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-divergent-diagram-node",
+        vec![serde_json::json!({
+            "operation_id": "replace-system",
+            "op": "replace_text",
+            "element_id": "slide-1:graphic-9",
+            "mode": "run_scoped",
+            "run": { "paragraph_index": 1, "run_index": 0 },
+            "text": "Systemauswahl",
+            "match": "System selection"
+        })],
+    );
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("unsupported diagram text edit returns a failed report");
+    assert_eq!(report.status, PatchStatus::Failed);
+    assert_eq!(
+        report.operation_reports[0]
+            .error
+            .as_ref()
+            .expect("failed operation has error")
+            .code,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit
+    );
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("failed edit deck writes");
+    assert_eq!(written, bytes);
+}
+
+#[test]
 fn replace_table_cell_text_edits_non_merged_cell_preserving_run_formatting() {
     let bytes = graphic_frame_deck_with_clean_extras();
     let original_entries = from_bytes(&bytes).expect("original entries read");
@@ -3595,6 +3679,18 @@ fn reordered_multirun_diagram_drawing_part() -> String {
     <dsp:sp modelId="{NODE-A}"><dsp:txBody><a:p><a:r><a:t>First node</a:t></a:r></a:p></dsp:txBody></dsp:sp>
     <dsp:sp modelId="{NODE-SYSTEM}"><dsp:txBody><a:p><a:r><a:t>System selection</a:t></a:r></a:p></dsp:txBody></dsp:sp>
     <dsp:sp modelId="{NODE-RISK}"><dsp:txBody><a:p><a:r><a:t>IT risk</a:t></a:r><a:br/><a:r><a:t>and</a:t></a:r><a:br/><a:r><a:t>security</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+  </dsp:spTree>
+</dsp:drawing>"#
+        .to_owned()
+}
+
+fn reordered_mismatched_model_id_diagram_drawing_part() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <dsp:spTree>
+    <dsp:sp modelId="{DRAWING-A}"><dsp:txBody><a:p><a:r><a:t>First node</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+    <dsp:sp modelId="{DRAWING-SYSTEM}"><dsp:txBody><a:p><a:r><a:t>System selection</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+    <dsp:sp modelId="{DRAWING-RISK}"><dsp:txBody><a:p><a:r><a:t>IT risk</a:t></a:r><a:br/><a:r><a:t>and</a:t></a:r><a:br/><a:r><a:t>security</a:t></a:r></a:p></dsp:txBody></dsp:sp>
   </dsp:spTree>
 </dsp:drawing>"#
         .to_owned()

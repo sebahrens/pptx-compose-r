@@ -663,6 +663,7 @@ fn related_text_part(
         };
         let paragraph_count = count_related_paragraphs(root);
         if paragraph_count > 0 {
+            reject_unsupported_diagram_cache_mapping(package, target, &part_name, operation, root)?;
             return Ok((part_name, paragraph_count));
         }
     }
@@ -707,6 +708,43 @@ fn diagram_drawing_mirror_part(
         .iter()
         .find(|part_name| diagram_part_stem(part_name).as_deref() == Some(data_stem.as_str()))
         .cloned()
+}
+
+fn reject_unsupported_diagram_cache_mapping(
+    package: &Package,
+    target: &ResolvedElement,
+    data_part_name: &PartName,
+    operation: &ReplaceText,
+    data_root: &XmlElement,
+) -> Result<()> {
+    let Some(drawing_part_name) = diagram_drawing_mirror_part(package, target, data_part_name)
+    else {
+        return Ok(());
+    };
+    let Some(drawing_part) = package.parts().get(&drawing_part_name) else {
+        return Ok(());
+    };
+    let drawing_document = parse_document(drawing_part.bytes()).map_err(|source| {
+        Error::with_source(
+            source.code(),
+            format!("Could not parse diagram drawing part {drawing_part_name}."),
+            source,
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    let Some(drawing_root) = drawing_document.root_element() else {
+        return Ok(());
+    };
+    let data_paragraphs = related_paragraph_infos(data_root);
+    let drawing_paragraphs = related_paragraph_infos(drawing_root);
+    if diagram_cache_mapping_is_unsupported(&data_paragraphs, &drawing_paragraphs) {
+        return Err(Error::new(
+            ErrorCode::UnsupportedEdit,
+            "SmartArt drawing cache order differs from diagram data and cannot be safely mapped by modelId.",
+        )
+        .with_location(operation.location(Some(target))));
+    }
+    Ok(())
 }
 
 fn diagram_part_stem(part_name: &PartName) -> Option<String> {
@@ -852,6 +890,79 @@ fn guarded_diagram_mirror_run(
         matched_run = Some(candidate_run);
     }
     Ok(matched_run)
+}
+
+struct RelatedParagraphInfo {
+    model_id: Option<String>,
+    normalized: String,
+}
+
+fn related_paragraph_infos(root: &XmlElement) -> Vec<RelatedParagraphInfo> {
+    let mut paragraphs = Vec::new();
+    collect_related_paragraph_infos(root, &mut paragraphs, None);
+    paragraphs
+}
+
+fn collect_related_paragraph_infos(
+    element: &XmlElement,
+    paragraphs: &mut Vec<RelatedParagraphInfo>,
+    current_model_id: Option<&str>,
+) {
+    let model_id = attr(element, "modelId").or(current_model_id);
+    if element.name.local_name == "p" {
+        let tx_body = XmlElement {
+            name: element.name.clone(),
+            attributes: Vec::new(),
+            namespaces: element.namespaces.clone(),
+            children: vec![XmlNode::Element(element.clone())],
+        };
+        let body = read_text_body(&tx_body);
+        if !body.normalized.is_empty() {
+            paragraphs.push(RelatedParagraphInfo {
+                model_id: model_id.map(str::to_owned),
+                normalized: body.normalized,
+            });
+        }
+        return;
+    }
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        collect_related_paragraph_infos(child, paragraphs, model_id);
+    }
+}
+
+fn diagram_cache_mapping_is_unsupported(
+    data: &[RelatedParagraphInfo],
+    drawing: &[RelatedParagraphInfo],
+) -> bool {
+    let data_text = data
+        .iter()
+        .map(|paragraph| paragraph.normalized.as_str())
+        .collect::<Vec<_>>();
+    let drawing_text = drawing
+        .iter()
+        .map(|paragraph| paragraph.normalized.as_str())
+        .collect::<Vec<_>>();
+    if data_text == drawing_text {
+        return false;
+    }
+    let data_model_ids = data
+        .iter()
+        .map(|paragraph| paragraph.model_id.as_deref())
+        .collect::<Vec<_>>();
+    let drawing_model_ids = drawing
+        .iter()
+        .map(|paragraph| paragraph.model_id.as_deref())
+        .collect::<Vec<_>>();
+    if data_model_ids.iter().any(|model_id| model_id.is_none())
+        || drawing_model_ids.iter().any(|model_id| model_id.is_none())
+    {
+        return true;
+    }
+    let mut sorted_data = data_model_ids;
+    let mut sorted_drawing = drawing_model_ids;
+    sorted_data.sort_unstable();
+    sorted_drawing.sort_unstable();
+    sorted_data != sorted_drawing
 }
 
 fn related_paragraph_model_id(root: &XmlElement, target_index: u32) -> Option<String> {
