@@ -32,7 +32,10 @@ corpus must read the manifest instead of globbing arbitrary `.pptx` files.
 The real-world corpus contains public consulting/economic decks plus localized
 derived variants. Those localized variants are intentionally useful for text
 rewrite and translation-fidelity stress tests, but manifest entries must not
-reference files that are absent from a clean checkout.
+reference files that are absent from a clean checkout. Localized decks that were
+generated before selector-ready guarded edits covered every V1-supported visible
+text class must carry the `localized-stale-evidence` feature and must not be
+used as complete translation-coverage evidence.
 
 ## Package and Round-Trip Tests
 
@@ -105,7 +108,8 @@ remaining untranslated text classes such as chart/SmartArt/table content and
 line-break fidelity. It should be used when regenerating localized fixtures and
 when validating the V1 requirement that existing visible chart/SmartArt text is
 inspectable and editable while chart data authoring and SmartArt structure
-authoring remain unsupported.
+authoring remain unsupported. Reports must separate supported-but-untranslated
+failures from unsupported authoring/preserve-only text classes.
 
 Generated Ralph directories (`.ralph-roundtrip-e2e/`, `.ralph-edit-e2e/`) are
 scratch outputs and should remain ignored.

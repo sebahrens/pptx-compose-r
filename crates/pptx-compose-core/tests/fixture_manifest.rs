@@ -158,6 +158,7 @@ mod corpus {
             "malformed",
             "real-world",
             "localized",
+            "localized-stale-evidence",
         ] {
             assert!(
                 manifest.has_feature(required_feature),
@@ -219,6 +220,30 @@ mod corpus {
                 .is_empty(),
             "fixture manifest must record entries consumed by persistence tests"
         );
+    }
+
+    #[test]
+    fn localized_real_world_fixtures_are_marked_as_stale_translation_evidence() {
+        let manifest = load_manifest();
+        let localized = manifest.entries_with_feature("localized");
+
+        assert!(
+            !localized.is_empty(),
+            "fixture manifest must include localized real-world fixtures"
+        );
+
+        for entry in localized {
+            assert!(
+                entry.has_feature("localized-stale-evidence"),
+                "{}: localized fixtures must be relabeled until regenerated with guarded selectors across every V1-supported visible text class",
+                entry.path
+            );
+            assert!(
+                !entry.has_feature("localized-complete-evidence"),
+                "{}: stale localized fixtures must not advertise complete V1 translation coverage",
+                entry.path
+            );
+        }
     }
 
     #[test]
