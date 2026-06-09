@@ -2045,6 +2045,81 @@ fn chart_and_diagram_related_text_is_inspectable_findable_and_run_editable() {
 }
 
 #[test]
+fn diagram_drawing_mirror_syncs_multirun_paragraph_by_model_id() {
+    let bytes = graphic_frame_deck_with_diagram_parts(
+        &multirun_diagram_data_part(),
+        &reordered_multirun_diagram_drawing_part(),
+    );
+    let original_entries = from_bytes(&bytes).expect("original entries read");
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-multirun-diagram-node",
+        vec![
+            serde_json::json!({
+                "operation_id": "replace-it-risk",
+                "op": "replace_text",
+                "element_id": "slide-1:graphic-9",
+                "mode": "run_scoped",
+                "run": { "paragraph_index": 1, "run_index": 0 },
+                "text": "IT-Risiko",
+                "match": "IT risk"
+            }),
+            serde_json::json!({
+                "operation_id": "replace-and",
+                "op": "replace_text",
+                "element_id": "slide-1:graphic-9",
+                "mode": "run_scoped",
+                "run": { "paragraph_index": 1, "run_index": 1 },
+                "text": "und",
+                "match": "and"
+            }),
+            serde_json::json!({
+                "operation_id": "replace-security",
+                "op": "replace_text",
+                "element_id": "slide-1:graphic-9",
+                "mode": "run_scoped",
+                "run": { "paragraph_index": 1, "run_index": 2 },
+                "text": "Sicherheit",
+                "match": "security"
+            }),
+        ],
+    );
+
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("related diagram text patch applies");
+    assert_eq!(report.status, PatchStatus::Applied);
+    assert_eq!(
+        report.changed_parts,
+        vec!["ppt/diagrams/data1.xml", "ppt/diagrams/drawing1.xml"]
+    );
+
+    let written = document
+        .write_vec_with_options(WriteOptions {
+            mode: WriteMode::Preserve,
+            ..WriteOptions::default()
+        })
+        .expect("edited deck writes");
+    let written_entries = from_bytes(&written).expect("written entries read");
+    assert_exact_part_deltas(
+        "replace multirun diagram text",
+        &original_entries,
+        &written_entries,
+        &["ppt/diagrams/data1.xml", "ppt/diagrams/drawing1.xml"],
+        &[],
+    );
+    let drawing = entry_text(&written_entries, "ppt/diagrams/drawing1.xml");
+    assert!(drawing.contains("System selection"));
+    assert!(drawing.contains("IT-Risiko"));
+    assert!(drawing.contains("und"));
+    assert!(drawing.contains("Sicherheit"));
+    assert!(!drawing.contains("IT risk"));
+    assert!(!drawing.contains(">and<"));
+    assert!(!drawing.contains("security"));
+}
+
+#[test]
 fn replace_table_cell_text_edits_non_merged_cell_preserving_run_formatting() {
     let bytes = graphic_frame_deck_with_clean_extras();
     let original_entries = from_bytes(&bytes).expect("original entries read");
@@ -2963,6 +3038,29 @@ fn graphic_frame_deck_with_clean_extras() -> Vec<u8> {
     )
 }
 
+fn graphic_frame_deck_with_diagram_parts(diagram_data: &str, diagram_drawing: &str) -> Vec<u8> {
+    zip_entries(
+        [
+            ("[Content_Types].xml", content_types().as_bytes()),
+            ("_rels/.rels", root_rels().as_bytes()),
+            ("ppt/presentation.xml", presentation().as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                presentation_rels().as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", graphic_frame_slide().as_bytes()),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                graphic_frame_slide_rels().as_bytes(),
+            ),
+            ("ppt/charts/chart1.xml", chart_part().as_bytes()),
+            ("ppt/diagrams/data1.xml", diagram_data.as_bytes()),
+            ("ppt/diagrams/drawing1.xml", diagram_drawing.as_bytes()),
+        ],
+        CompressionMethod::Stored,
+    )
+}
+
 fn notes_deck_with_clean_extras() -> Vec<u8> {
     zip_entries(
         [
@@ -3416,6 +3514,30 @@ fn diagram_drawing_part() -> String {
 <dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <dsp:spTree>
     <dsp:sp><dsp:txBody><a:p><a:r><a:t>SmartArt Node</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+  </dsp:spTree>
+</dsp:drawing>"#
+        .to_owned()
+}
+
+fn multirun_diagram_data_part() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <dgm:ptLst>
+    <dgm:pt modelId="{NODE-A}"><dgm:t><a:p><a:r><a:t>First node</a:t></a:r></a:p></dgm:t></dgm:pt>
+    <dgm:pt modelId="{NODE-RISK}"><dgm:t><a:p><a:r><a:t>IT risk</a:t></a:r><a:br/><a:r><a:t>and</a:t></a:r><a:br/><a:r><a:t>security</a:t></a:r></a:p></dgm:t></dgm:pt>
+    <dgm:pt modelId="{NODE-SYSTEM}"><dgm:t><a:p><a:r><a:t>System selection</a:t></a:r></a:p></dgm:t></dgm:pt>
+  </dgm:ptLst>
+</dgm:dataModel>"#
+        .to_owned()
+}
+
+fn reordered_multirun_diagram_drawing_part() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <dsp:spTree>
+    <dsp:sp modelId="{NODE-A}"><dsp:txBody><a:p><a:r><a:t>First node</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+    <dsp:sp modelId="{NODE-SYSTEM}"><dsp:txBody><a:p><a:r><a:t>System selection</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+    <dsp:sp modelId="{NODE-RISK}"><dsp:txBody><a:p><a:r><a:t>IT risk</a:t></a:r><a:br/><a:r><a:t>and</a:t></a:r><a:br/><a:r><a:t>security</a:t></a:r></a:p></dsp:txBody></dsp:sp>
   </dsp:spTree>
 </dsp:drawing>"#
         .to_owned()

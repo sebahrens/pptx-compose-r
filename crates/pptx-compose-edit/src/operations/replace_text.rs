@@ -423,6 +423,10 @@ impl ReplaceText {
         })?;
         let tx_body = related_text_body(root, self, target)?;
         validate_run_scoped_text_body(self, target, &tx_body)?;
+        let diagram_model_id = (target.kind == ElementKind::GraphicFrameDiagram)
+            .then(|| diagram_model_id_for_operation(root, self, target))
+            .transpose()?
+            .flatten();
         replace_related_run_scoped_text(root, self, target)?;
 
         *part.bytes_mut() = write_document(
@@ -438,7 +442,13 @@ impl ReplaceText {
         if target.kind == ElementKind::GraphicFrameDiagram {
             match drawing_part_name {
                 Some(drawing_part_name) => {
-                    if replace_diagram_drawing_mirror(package, &drawing_part_name, self, target)? {
+                    if replace_diagram_drawing_mirror(
+                        package,
+                        &drawing_part_name,
+                        self,
+                        target,
+                        diagram_model_id.as_deref(),
+                    )? {
                         changed_parts.push(drawing_part_name.zip_entry_name().to_owned());
                     } else {
                         warnings.push(diagram_drawing_mirror_stale_warning(
@@ -715,6 +725,7 @@ fn replace_diagram_drawing_mirror(
     drawing_part_name: &PartName,
     operation: &ReplaceText,
     target: &ResolvedElement,
+    diagram_model_id: Option<&str>,
 ) -> Result<bool> {
     let Some(part) = package.parts_mut().get_mut(drawing_part_name) else {
         return Ok(false);
@@ -730,15 +741,16 @@ fn replace_diagram_drawing_mirror(
     let Some(root) = root_element_mut(&mut document) else {
         return Ok(false);
     };
-    let tx_body = match related_text_body(root, operation, target) {
+    let mirror_operation = diagram_mirror_operation(root, operation, target, diagram_model_id)?;
+    let tx_body = match related_text_body(root, &mirror_operation, target) {
         Ok(tx_body) => tx_body,
         Err(error) if error.code() == ErrorCode::UnsupportedEdit => return Ok(false),
         Err(error) => return Err(error),
     };
-    if validate_run_scoped_text_body(operation, target, &tx_body).is_err() {
+    if validate_run_scoped_text_body(&mirror_operation, target, &tx_body).is_err() {
         return Ok(false);
     }
-    replace_related_run_scoped_text(root, operation, target)?;
+    replace_related_run_scoped_text(root, &mirror_operation, target)?;
     *part.bytes_mut() = write_document(
         &document,
         &WriteOptions {
@@ -747,6 +759,172 @@ fn replace_diagram_drawing_mirror(
     )?;
     package.mark_dirty(drawing_part_name.clone());
     Ok(true)
+}
+
+fn diagram_model_id_for_operation(
+    root: &XmlElement,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+) -> Result<Option<String>> {
+    let run = operation.run.as_ref().ok_or_else(|| {
+        Error::new(
+            ErrorCode::InvalidInput,
+            "run_scoped replace_text requires selector.run.",
+        )
+        .with_location(operation.location(Some(target)))
+    })?;
+    Ok(related_paragraph_model_id(root, run.paragraph_index))
+}
+
+fn diagram_mirror_operation(
+    root: &XmlElement,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+    diagram_model_id: Option<&str>,
+) -> Result<ReplaceText> {
+    let Some(run) = operation.run.as_ref() else {
+        return Ok(operation.clone());
+    };
+    if let Some(model_id) = diagram_model_id
+        && let Some(paragraph_index) = related_paragraph_index_for_model_id(root, model_id)
+    {
+        let mut mapped_run = run.clone();
+        mapped_run.paragraph_index = paragraph_index;
+        return Ok(ReplaceText {
+            run: Some(mapped_run),
+            ..operation.clone()
+        });
+    }
+    if let Some(mapped_run) = guarded_diagram_mirror_run(root, operation, target, run)? {
+        return Ok(ReplaceText {
+            run: Some(mapped_run),
+            ..operation.clone()
+        });
+    }
+    Ok(operation.clone())
+}
+
+fn guarded_diagram_mirror_run(
+    root: &XmlElement,
+    operation: &ReplaceText,
+    target: &ResolvedElement,
+    run: &RunSelector,
+) -> Result<Option<RunSelector>> {
+    if operation.current_text_match.is_none() && run.text_hash.is_none() {
+        return Ok(None);
+    }
+    let tx_body = related_text_body(root, operation, target)?;
+    let paragraph_count = tx_body
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .filter(|element| element.name.local_name == "p")
+        .count();
+    let mut matched_run = None;
+    for paragraph_index in 0..paragraph_count {
+        let paragraph_index = u32::try_from(paragraph_index).map_err(|_| {
+            Error::new(
+                ErrorCode::InvalidInput,
+                "Diagram drawing mirror paragraph index is too large for this platform.",
+            )
+            .with_location(operation.location(Some(target)))
+        })?;
+        let mut candidate_run = run.clone();
+        candidate_run.paragraph_index = paragraph_index;
+        let candidate_operation = ReplaceText {
+            run: Some(candidate_run.clone()),
+            ..operation.clone()
+        };
+        let Ok(current) = selected_run_text(&tx_body, &candidate_run, &candidate_operation, target)
+        else {
+            continue;
+        };
+        if let Some(expected) = operation.current_text_match.as_deref()
+            && current != expected
+        {
+            continue;
+        }
+        if let Some(expected_hash) = &run.text_hash
+            && text_hash::text_hash(&current) != *expected_hash
+        {
+            continue;
+        }
+        if matched_run.is_some() {
+            return Ok(None);
+        }
+        matched_run = Some(candidate_run);
+    }
+    Ok(matched_run)
+}
+
+fn related_paragraph_model_id(root: &XmlElement, target_index: u32) -> Option<String> {
+    let mut current_index = 0_u32;
+    related_paragraph_model_id_impl(root, target_index, &mut current_index, None)
+}
+
+fn related_paragraph_model_id_impl(
+    element: &XmlElement,
+    target_index: u32,
+    current_index: &mut u32,
+    current_model_id: Option<&str>,
+) -> Option<String> {
+    let model_id = attr(element, "modelId").or(current_model_id);
+    if element.name.local_name == "p" && related_paragraph_has_text(element) {
+        if *current_index == target_index {
+            return model_id.map(str::to_owned);
+        }
+        *current_index = current_index.saturating_add(1);
+        return None;
+    }
+    element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .find_map(|child| {
+            related_paragraph_model_id_impl(child, target_index, current_index, model_id)
+        })
+}
+
+fn related_paragraph_index_for_model_id(root: &XmlElement, target_model_id: &str) -> Option<u32> {
+    let mut current_index = 0_u32;
+    related_paragraph_index_for_model_id_impl(root, target_model_id, &mut current_index, None)
+}
+
+fn related_paragraph_index_for_model_id_impl(
+    element: &XmlElement,
+    target_model_id: &str,
+    current_index: &mut u32,
+    current_model_id: Option<&str>,
+) -> Option<u32> {
+    let model_id = attr(element, "modelId").or(current_model_id);
+    if element.name.local_name == "p" && related_paragraph_has_text(element) {
+        let paragraph_index = *current_index;
+        *current_index = current_index.saturating_add(1);
+        if model_id == Some(target_model_id) {
+            return Some(paragraph_index);
+        }
+        return None;
+    }
+    element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .find_map(|child| {
+            related_paragraph_index_for_model_id_impl(
+                child,
+                target_model_id,
+                current_index,
+                model_id,
+            )
+        })
+}
+
+fn attr<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a str> {
+    element
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.local_name == local_name)
+        .map(|attribute| attribute.value.as_str())
 }
 
 fn diagram_drawing_mirror_stale_warning(part: &str) -> serde_json::Value {
