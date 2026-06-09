@@ -75,6 +75,12 @@ def sample_view() -> dict:
                         },
                         "text": {
                             "plain": "Hello world\r\n",
+                            "paragraphs": [
+                                {
+                                    "text": "Hello world\r\n",
+                                    "runs": [{"text": "Hello world\r\n"}],
+                                }
+                            ],
                             "text_hash": "sha256:th",
                         },
                     },
@@ -120,7 +126,9 @@ class PatchBuildingTest(unittest.TestCase):
         self.assertEqual(len(plan.operations), 1)
         op = plan.operations[0]
         self.assertEqual(op["op"], "replace_text")
+        self.assertEqual(op["mode"], "run_scoped")
         self.assertIn(self.m.TEXT_MARKER, op["text"])
+        self.assertEqual(op["selector"]["run"], {"paragraph_index": 0, "run_index": 0})
         self.assertEqual(op["selector"]["guards"]["text_hash"], "sha256:th")
         self.assertNotIn("element_id", op)
         self.assertIn("ppt/slides/slide1.xml", plan.expected_changed_parts)

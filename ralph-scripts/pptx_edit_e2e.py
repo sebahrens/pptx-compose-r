@@ -407,23 +407,32 @@ def check_validation(report: dict) -> "rt.ComparisonResult":
 
 
 def build_replace_text(view: dict, ctx: dict) -> ScenarioPlan:
-    targets = editable_text_elements(view)
+    targets = [
+        (el, paragraph_index, run_index)
+        for el in editable_text_elements(view)
+        for paragraph_index, paragraph in enumerate((el.get("text") or {}).get("paragraphs") or [])
+        for run_index, run in enumerate(paragraph.get("runs") or [])
+        if run.get("text")
+    ]
     if not targets:
-        return ScenarioPlan([], skip_reason="no editable text element on slide")
-    el = targets[0]
+        return ScenarioPlan([], skip_reason="no editable text run on slide")
+    el, paragraph_index, run_index = targets[0]
     op = {
         "op": "replace_text",
         "operation_id": "op-replace-text",
-        "element_id": el["id"],
+        "mode": "run_scoped",
         "text": f"{TEXT_MARKER} replaced text",
+        "selector": {
+            "type": "element_id",
+            "id": el["id"],
+            "run": {"paragraph_index": paragraph_index, "run_index": run_index},
+        },
     }
     # Carry guards when present so the edit is matched, not blind.
     guard_hash = (el.get("text") or {}).get("text_hash")
     if guard_hash:
-        op["selector"] = {"type": "element_id", "id": el["id"],
-                          "guards": {"text_hash": guard_hash,
-                                     "fingerprint": el.get("fingerprint")}}
-        del op["element_id"]
+        op["selector"]["guards"] = {"text_hash": guard_hash,
+                                    "fingerprint": el.get("fingerprint")}
     return ScenarioPlan(
         operations=[op],
         expected_changed_parts={el["part"]},
