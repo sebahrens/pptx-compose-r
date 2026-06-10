@@ -21,6 +21,7 @@ pub enum ValidationMode {
 #[serde(rename_all = "snake_case")]
 pub enum ValidationStatus {
     Valid,
+    ValidWithErrors,
     Invalid,
 }
 
@@ -96,6 +97,8 @@ pub fn validate_package(pkg: &Package, mode: ValidationMode) -> ValidationOutcom
     let summary = summarize(&findings);
     let status = if findings.iter().any(|finding| finding.blocking) {
         ValidationStatus::Invalid
+    } else if summary.errors > 0 {
+        ValidationStatus::ValidWithErrors
     } else {
         ValidationStatus::Valid
     };

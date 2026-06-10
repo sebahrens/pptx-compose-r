@@ -191,6 +191,11 @@ pptx-compose validate INPUT.pptx --report - --json-errors
 ```
 
 Validation emits a [validation report](044-results-validation-errors.md#validation-report).
+If the report summary contains any `fatal` or `error` findings, `validate`
+returns `validation_failed` / exit `30` after emitting the report. Non-blocking
+no-edit error findings are reported with status `valid_with_errors`; this
+preserves the distinction between raw-copy write safety and a deck that has no
+validation errors.
 
 ### `apply --dry-run`
 

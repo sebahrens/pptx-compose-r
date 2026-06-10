@@ -331,7 +331,7 @@ fn no_edit_validation_reports_existing_errors_without_blocking() {
 
     assert_eq!(
         no_edit.status,
-        pptx_compose::json::schemas::ValidationStatus::Valid
+        pptx_compose::json::schemas::ValidationStatus::ValidWithErrors
     );
     assert_eq!(no_edit.summary.errors, 1);
     assert!(no_edit.findings.iter().all(|finding| !finding.blocking));

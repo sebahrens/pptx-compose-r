@@ -287,23 +287,37 @@ fn validate_malformed_clean_slide_xml_emits_non_blocking_report() {
 }
 
 #[test]
-fn validate_reports_no_edit_errors_without_failing() {
+fn validate_reports_no_edit_errors_and_fails() {
     let root = unique_dir();
     let deck = root.join("duplicate-slide-id.pptx");
     fs::write(&deck, duplicate_slide_id_deck()).expect("deck fixture writes");
 
-    let output = run_cli_owned(vec![
+    let output = run_cli_raw_owned(vec![
+        "--json-errors".to_owned(),
         "validate".to_owned(),
         deck.to_string_lossy().into_owned(),
         "--report".to_owned(),
         "-".to_owned(),
     ]);
 
+    assert_eq!(
+        output.status.code(),
+        Some(30),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     let report = parse_stdout(&output);
-    assert_eq!(report["status"], "valid");
+    assert_eq!(report["status"], "valid_with_errors");
     assert_eq!(report["summary"]["errors"], 1);
     assert_eq!(report["findings"][0]["severity"], "error");
     assert_eq!(report["findings"][0]["blocking"], false);
+    let stderr_text = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    let envelope: serde_json::Value =
+        serde_json::from_str(&stderr_text).expect("stderr is one JSON document");
+    assert_eq!(envelope["schema"], "pptx-compose.error.v1");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "validation_failed");
 
     fs::remove_dir_all(root).expect("test dir removes");
 }

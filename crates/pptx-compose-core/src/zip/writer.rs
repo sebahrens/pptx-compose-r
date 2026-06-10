@@ -8,7 +8,7 @@ use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 use crate::{
     error::{Error, ErrorCode, Result},
     opc::{package::Package, part_name::PartName},
-    validation::{ValidationMode, ValidationStatus, validate_package},
+    validation::{ValidationMode, validate_package},
     zip::{ZipEntryMetadata, reader::RawEntry},
 };
 
@@ -299,7 +299,7 @@ fn validate_write(package: &Package) -> Result<()> {
         ValidationMode::Edited
     };
     let outcome = validate_package(package, mode);
-    if outcome.status == ValidationStatus::Valid {
+    if !outcome.findings.iter().any(|finding| finding.blocking) {
         return Ok(());
     }
 

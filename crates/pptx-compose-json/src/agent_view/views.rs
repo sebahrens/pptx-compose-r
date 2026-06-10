@@ -1679,6 +1679,9 @@ fn project_validation(package: &Package, document_id: &str, revision: u32) -> Va
         revision,
         status: match outcome.status {
             pptx_compose_core::validation::ValidationStatus::Valid => ValidationStatus::Valid,
+            pptx_compose_core::validation::ValidationStatus::ValidWithErrors => {
+                ValidationStatus::ValidWithErrors
+            }
             pptx_compose_core::validation::ValidationStatus::Invalid => ValidationStatus::Invalid,
         },
         summary: Summary {

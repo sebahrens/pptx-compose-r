@@ -114,6 +114,14 @@ Validation reports must include stable finding codes and machine-readable locati
 }
 ```
 
+Validation report statuses are:
+
+- `valid`: no `error` or `fatal` findings were emitted.
+- `valid_with_errors`: `error` findings were emitted, but none are blocking in
+  the selected validation mode. This status exists for no-edit preservation
+  workflows where a deck can be raw-copied without declaring it fully valid.
+- `invalid`: at least one blocking finding was emitted.
+
 Severity levels: `info`, `warning`, `error`, `fatal`.
 
 Edited documents with any `error` or `fatal` finding must not be written by default. No-edit documents may write with existing warnings unless structurally unsafe. "Structurally unsafe" means any `fatal` finding: a `fatal` finding blocks writing even for a no-edit round trip.

@@ -124,6 +124,7 @@ pub struct ValidationReport {
 #[serde(rename_all = "snake_case")]
 pub enum ValidationStatus {
     Valid,
+    ValidWithErrors,
     Invalid,
 }
 

@@ -61,6 +61,7 @@ fn finding_view(finding: core_validation::Finding) -> FindingView {
 const fn validation_status(status: core_validation::ValidationStatus) -> ValidationStatus {
     match status {
         core_validation::ValidationStatus::Valid => ValidationStatus::Valid,
+        core_validation::ValidationStatus::ValidWithErrors => ValidationStatus::ValidWithErrors,
         core_validation::ValidationStatus::Invalid => ValidationStatus::Invalid,
     }
 }

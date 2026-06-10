@@ -246,7 +246,7 @@ fn validate(
         .validate_with_mode(ValidationMode::NoEdit)
         .map_err(CliError::from_error)?;
     sink.emit_json_overwrite(&report, OutputDest::from(report_output), args.overwrite)?;
-    if validation_report_has_blocking_findings(&report) {
+    if validation_report_has_error_findings(&report) {
         return Err(CliError::new(
             ErrorCode::ValidationFailed,
             "Package failed validation.",
@@ -255,8 +255,8 @@ fn validate(
     Ok(())
 }
 
-fn validation_report_has_blocking_findings(report: &ValidationReport) -> bool {
-    report.findings.iter().any(|finding| finding.blocking)
+fn validation_report_has_error_findings(report: &ValidationReport) -> bool {
+    report.summary.fatal > 0 || report.summary.errors > 0
 }
 
 fn media_list(
