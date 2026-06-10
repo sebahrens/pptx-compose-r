@@ -43,6 +43,16 @@ decks — are retained as stale real-world translation evidence. They are wired 
 and still round-trip byte-exact clean (same `expected_warnings` as their source),
 but they must not be treated as complete V1 translation-fidelity proof.
 
+The localized decks were last reconciled from the `.regen/` provenance artifacts
+on 2026-06-10. Six regenerated files changed bytes
+(`worldbank-macro-economic-update-{de,fr}.pptx`,
+`oecd-economic-outlook-2017-{de,fr}.pptx`, and
+`rsm-technology-strategy-{de,fr}.pptx`); the CPF and Smart Rwanda variants
+remained byte-identical to the previous recorded hashes. The
+`localized-stale-evidence` feature remains intentional because the companion
+fidelity reports still record supported-but-untranslated findings and collapsed
+line breaks.
+
 What the current files prove: older V1 run-scoped `replace_text` generations can
 survive clean no-edit persistence on large real-world decks. They do not prove that
 the full V1-supported visible text surface is translated.
@@ -80,11 +90,11 @@ and other preserve-only package content are not translation targets.
 
 | Files | Lang | replace_text ops |
 |-------|------|-----------------:|
-| `worldbank-cpf-concept-note-{de,fr}.pptx` | DE / FR | 266 / 266 |
-| `worldbank-macro-economic-update-{de,fr}.pptx` | DE / FR | 97 / 99 |
-| `worldbank-smart-rwanda-roadshow-{de,fr}.pptx` | DE / FR | 370 / 392 |
-| `oecd-economic-outlook-2017-{de,fr}.pptx` | DE / FR | 282 / 283 |
-| `rsm-technology-strategy-{de,fr}.pptx` | DE / FR | 72 / 75 |
+| `worldbank-cpf-concept-note-{de,fr}.pptx` | DE / FR | 153 / 149 |
+| `worldbank-macro-economic-update-{de,fr}.pptx` | DE / FR | 56 / 56 |
+| `worldbank-smart-rwanda-roadshow-{de,fr}.pptx` | DE / FR | 198 / 196 |
+| `oecd-economic-outlook-2017-{de,fr}.pptx` | DE / FR | 82 / 75 |
+| `rsm-technology-strategy-{de,fr}.pptx` | DE / FR | 33 / 34 |
 
 ## Provenance & licensing
 
@@ -115,12 +125,12 @@ Localized variants (derived; regenerate if the translation pipeline changes):
 ```
 c62f0050271f8a70d8718760ad4a47c9822565afe4320e3a6edadecab42b17cb  worldbank-cpf-concept-note-de.pptx
 078fa1505284af000fe83dccd3f99024d4a74e436afb1f66ad29ffad5c5c5c51  worldbank-cpf-concept-note-fr.pptx
-a6306faf6d848e26f51536ef1c4a1ef5468533f2a7fbd5ffd2868b85777b37b2  worldbank-macro-economic-update-de.pptx
-0dc341102ff04992359ec2c18cfa17566540f94ffa4d054faabd7740df9666e3  worldbank-macro-economic-update-fr.pptx
+1e01becb91731e83f91b8b34a2e244a73ba2e080e710fbe6267fb966b466c1ca  worldbank-macro-economic-update-de.pptx
+840baa5f5fc4c4cf51353d1baf95de74835f572872c267852e01f003eb9b769f  worldbank-macro-economic-update-fr.pptx
 7dbf35914ab9072a9ef63c5a07ece6f227f5ce6def31401ae91335149526d7c0  worldbank-smart-rwanda-roadshow-de.pptx
 7d749310c7d21f6b111fc10361ead9cda071658391736c402cc5dc2587b75db4  worldbank-smart-rwanda-roadshow-fr.pptx
-96fe96a188fa39539023212a6d2ca48fc5810f95eba2f3ff602de982e6c31bcc  oecd-economic-outlook-2017-de.pptx
-184435daff6e9809c298ccbfc7aeb8af7b0f3ea8770bdef3906626748b03ad60  oecd-economic-outlook-2017-fr.pptx
-0e2669fbf92ddcfef46012ff701e544ac9e3c5dfa73fddde4ed3f1c90a7c394a  rsm-technology-strategy-de.pptx
-a727b11e6116cd514b0a14c351af9c0c6263d713661eef031513c783cad3e74e  rsm-technology-strategy-fr.pptx
+114c79049db2e1b9929f94d7764762053e9ff31c340b5f49880c300463fad068  oecd-economic-outlook-2017-de.pptx
+386d5b6c93d1b30863d12b8e8e608389806786294e01b47f0f2e145e492db2d9  oecd-economic-outlook-2017-fr.pptx
+1762eba0386674e2361d0f6fab88566a3f672562137b866474e59f89315a24bb  rsm-technology-strategy-de.pptx
+d3ba71a2f1f80e46214c3852599aaca15f59193e226b37979600a00d2eefa830  rsm-technology-strategy-fr.pptx
 ```
