@@ -551,6 +551,43 @@ mod construction_golden {
     }
 
     #[test]
+    fn replace_text_run_scoped_rejects_invalid_font_size_points() -> Result<()> {
+        let package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated".to_owned(),
+            current_text_match: Some("First".to_owned()),
+            mode: ReplaceTextMode::RunScoped,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            allow_formatting_simplification: false,
+            run: Some(RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: None,
+                text_hash: None,
+            }),
+            run_style: Some(TextRunStyle {
+                font_size_pt: Some(4_000_000_000),
+                bold: None,
+                italic: None,
+                font_family: None,
+                color_hex: None,
+                align: None,
+            }),
+            fit_policy: None,
+        };
+
+        let error = operation
+            .validate(&package, &target)
+            .expect_err("font size outside DrawingML ST_TextFontSize is invalid");
+
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+        Ok(())
+    }
+
+    #[test]
     fn replace_notes_text_rewrites_only_notes_body_run() -> Result<()> {
         let slide_part = slide_part()?;
         let notes_part = notes_part()?;

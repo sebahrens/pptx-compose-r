@@ -23,7 +23,8 @@ use serde_json::json;
 
 use crate::{
     operations::{
-        ResolvedElement, ResolvedNotesSlide, ResolvedTableCell, add_text_box::validate_run_style,
+        ResolvedElement, ResolvedNotesSlide, ResolvedTableCell,
+        add_text_box::{font_size_hundredths, validate_run_style},
         is_real_shape_tree_child,
     },
     patch::{
@@ -2064,7 +2065,7 @@ fn apply_run_style(run: &mut XmlElement, style: Option<&TextRunStyle>) {
     };
     let r_pr = ensure_child_element_at_front(run, "rPr", "a:rPr");
     if let Some(font_size) = style.font_size_pt {
-        set_attribute(r_pr, "sz", &(font_size * 100).to_string());
+        set_attribute(r_pr, "sz", &font_size_hundredths(font_size));
     }
     if let Some(bold) = style.bold {
         set_attribute(r_pr, "b", bool_value(bold));

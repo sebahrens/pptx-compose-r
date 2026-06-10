@@ -145,6 +145,15 @@ pub(crate) fn validate_run_style(label: &str, style: Option<&TextRunStyle>) -> R
         return Ok(());
     };
 
+    if let Some(font_size_pt) = style.font_size_pt
+        && !(1..=4_000).contains(&font_size_pt)
+    {
+        return Err(Error::new(
+            ErrorCode::InvalidInput,
+            format!("{label}.font_size_pt must be between 1 and 4000."),
+        ));
+    }
+
     if let Some(color) = &style.color_hex {
         let valid = color.len() == 6 && color.bytes().all(|byte| byte.is_ascii_hexdigit());
         if !valid {
@@ -156,6 +165,10 @@ pub(crate) fn validate_run_style(label: &str, style: Option<&TextRunStyle>) -> R
     }
 
     Ok(())
+}
+
+pub(crate) fn font_size_hundredths(font_size_pt: u32) -> String {
+    (u64::from(font_size_pt) * 100).to_string()
 }
 
 fn insert_text_box(document: &mut XmlDocument, operation: &AddTextBox) -> Result<String> {
@@ -343,7 +356,7 @@ fn run_properties(style: Option<&TextBoxStyle>) -> XmlElement {
     ];
     if let Some(style) = style {
         if let Some(font_size) = style.font_size_pt {
-            attrs.push(("sz".to_owned(), (font_size * 100).to_string()));
+            attrs.push(("sz".to_owned(), font_size_hundredths(font_size)));
         }
         if let Some(bold) = style.bold {
             attrs.push(("b".to_owned(), bool_value(bold).to_owned()));
@@ -627,6 +640,48 @@ fn builds_template() {
         .validate()
         .expect_err("zero width is invalid");
     assert_eq!(error.code(), ErrorCode::InvalidBounds);
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_invalid_font_size_points() {
+    let operation = AddTextBox {
+        operation_id: "op-1".to_owned(),
+        slide_id: "slide-1".to_owned(),
+        text: "Hello".to_owned(),
+        bounds: Bounds {
+            x: 1,
+            y: 2,
+            cx: 3,
+            cy: 4,
+        },
+        name: None,
+        alt_text: None,
+        style: Some(TextBoxStyle {
+            font_size_pt: Some(18),
+            bold: None,
+            italic: None,
+            font_family: None,
+            color_hex: None,
+            align: None,
+            autofit: None,
+            vertical_anchor: None,
+            inset_l: None,
+            inset_r: None,
+            inset_t: None,
+            inset_b: None,
+        }),
+        insert: None,
+    };
+
+    for font_size_pt in [0, 4_001, 4_000_000_000] {
+        let mut invalid = operation.clone();
+        invalid.style.as_mut().expect("style exists").font_size_pt = Some(font_size_pt);
+        let error = invalid
+            .validate()
+            .expect_err("font size outside DrawingML ST_TextFontSize is invalid");
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+    }
 }
 
 #[cfg(test)]
