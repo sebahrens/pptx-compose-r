@@ -90,6 +90,46 @@ fn inspect_stdout_view_allows_report_file() {
 }
 
 #[test]
+fn apply_rejects_default_report_and_stdout_diff() {
+    let root = unique_dir();
+    let input = root.join("minimal.pptx");
+    let patch = root.join("bad-selector.patch.json");
+    let output = root.join("output.pptx");
+    fs::create_dir_all(&root).expect("test dir creates");
+    fs::write(
+        &input,
+        fs::read(repo_root().join("fixtures/minimal.pptx")).expect("fixture reads"),
+    )
+    .expect("input fixture writes");
+    fs::write(&patch, invalid_selector_patch()).expect("patch fixture writes");
+
+    let apply = run_cli_raw_owned(vec![
+        "--json-errors".to_owned(),
+        "apply".to_owned(),
+        input.to_string_lossy().into_owned(),
+        patch.to_string_lossy().into_owned(),
+        "--output".to_owned(),
+        output.to_string_lossy().into_owned(),
+        "--diff".to_owned(),
+        "-".to_owned(),
+    ]);
+
+    let envelope = assert_error(&apply, 1, "invalid_input");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .expect("error message is a string")
+            .contains("omitted --report and --diff - resolve to stdout")
+    );
+    assert!(
+        !output.exists(),
+        "rejected apply must not write the PPTX output"
+    );
+
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
 fn json_errors_parse_failures_emit_one_error_envelope() {
     let output = run_cli_raw(["--json-errors", "--not-a-real-flag"]);
 
@@ -777,6 +817,22 @@ fn valid_noop_patch() -> &'static [u8] {
         "base_revision": 1,
         "client_request_id": "read-surface-noop",
         "operations": []
+    }"#
+}
+
+fn invalid_selector_patch() -> &'static [u8] {
+    br#"{
+        "schema": "pptx-compose.patch.v1",
+        "version": 1,
+        "document_id": "sha256:5aec353488af9781b58006c600039722d5f3a6bb1f0c4d8667f8f98a03e33e2e",
+        "base_revision": 1,
+        "client_request_id": "read-surface-invalid-selector",
+        "operations": [{
+            "operation_id": "bad-selector",
+            "op": "replace_text",
+            "element_id": "slide-1:missing-shape",
+            "text": "Updated"
+        }]
     }"#
 }
 

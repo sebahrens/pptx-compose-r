@@ -165,14 +165,13 @@ fn enforce_apply_flag_combinations(args: &ApplyArgs) -> Result<(), CliError> {
 fn enforce_single_apply_stdout_json(args: &ApplyArgs) -> Result<(), CliError> {
     let mut stdout_outputs = Vec::new();
 
-    if args.dry_run {
-        match &args.report {
-            Some(report) if report == Path::new("-") => stdout_outputs.push("--report -"),
-            None => stdout_outputs.push("omitted --report"),
-            Some(_) => {}
+    match &args.report {
+        Some(report) if report == Path::new("-") => stdout_outputs.push("--report -"),
+        None if args.dry_run => stdout_outputs.push("omitted --report"),
+        None if !args.dry_run && args.diff.as_deref() == Some(Path::new("-")) => {
+            stdout_outputs.push("omitted --report")
         }
-    } else if args.report.as_deref() == Some(Path::new("-")) {
-        stdout_outputs.push("--report -");
+        None | Some(_) => {}
     }
 
     if args.diff.as_deref() == Some(Path::new("-")) {
@@ -704,6 +703,12 @@ fn apply_rejects_stdout_report_and_stdout_diff() {
 
 #[cfg(test)]
 #[test]
+fn apply_rejects_default_report_and_stdout_diff() {
+    test_support::apply_rejects_default_report_and_stdout_diff();
+}
+
+#[cfg(test)]
+#[test]
 fn dry_run_writes_report_for_all_failed_operations() {
     test_support::dry_run_writes_report_for_all_failed_operations();
 }
@@ -1225,6 +1230,27 @@ mod test_support {
             err.details()
                 .message
                 .contains("--report - and --diff - resolve to stdout")
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn apply_rejects_default_report_and_stdout_diff() {
+        let root = unique_dir();
+        let input = root.join("missing.pptx");
+        let patch = root.join("missing-patch.json");
+        let output = root.join("output.pptx");
+
+        let mut args = args(&input, &patch, &output, false);
+        args.diff = Some(Path::new("-").to_path_buf());
+
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("default report and stdout diff must be rejected");
+        assert_eq!(err.code(), ErrorCode::InvalidInput);
+        assert!(
+            err.details()
+                .message
+                .contains("omitted --report and --diff - resolve to stdout")
         );
 
         fs::remove_dir_all(root).expect("test dir removes");
