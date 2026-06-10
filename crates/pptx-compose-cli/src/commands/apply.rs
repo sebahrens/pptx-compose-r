@@ -120,7 +120,7 @@ pub(crate) fn apply(
     };
     if let Err(error) = document.write_path_with_options(&output, write_options) {
         if let Some(backup) = &backup {
-            restore_in_place_backup(backup, &output)?;
+            restore_in_place_backup(backup, &output).map_err(CliError::with_state_changed)?;
         }
         return Err(CliError::from_error(error));
     }
@@ -678,6 +678,13 @@ fn in_place_apply_restores_from_backup_on_write_failure() {
     test_support::in_place_apply_restores_from_backup_on_write_failure();
 }
 
+#[cfg(test)]
+#[test]
+fn failed_in_place_restore_marks_state_changed() {
+    test_support::failed_in_place_restore_marks_state_changed();
+}
+
+#[cfg(test)]
 #[test]
 fn apply_uses_configured_temp_dir_for_atomic_write() {
     test_support::apply_uses_configured_temp_dir_for_atomic_write();
@@ -785,8 +792,10 @@ mod test_support {
     };
     use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
-    use super::{apply, write_options_from_args};
-    use crate::{cli::ApplyArgs, exit, exit::exit_code_for, permissions::PermissionContext};
+    use super::{apply, create_in_place_backup, restore_in_place_backup, write_options_from_args};
+    use crate::{
+        CliError, cli::ApplyArgs, exit, exit::exit_code_for, permissions::PermissionContext,
+    };
 
     pub(super) fn refuses_existing_output_without_overwrite() {
         let root = unique_dir();
@@ -1103,6 +1112,34 @@ mod test_support {
         assert_eq!(
             fs::read(root.join("input.pptx.bak")).expect("backup reads"),
             input_bytes
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn failed_in_place_restore_marks_state_changed() {
+        let root = unique_dir();
+        let input = root.join("input.pptx");
+        let backup = root.join("input.pptx.bak");
+        fs::create_dir_all(&root).expect("test dir creates");
+        let input_bytes = text_deck();
+        fs::write(&input, &input_bytes).expect("input fixture writes");
+        create_in_place_backup(&input, &backup).expect("backup creates before restore failure");
+        fs::remove_file(&input).expect("input removed to make restore target a directory");
+        fs::create_dir(&input).expect("directory at input path blocks backup restore");
+
+        let err = restore_in_place_backup(&backup, &input)
+            .map_err(CliError::with_state_changed)
+            .expect_err("failed in-place restore must surface an error");
+
+        assert_eq!(err.code(), ErrorCode::WriteFailed);
+        assert!(
+            err.details().state_changed,
+            "backup creation and failed restore are externally visible side effects"
+        );
+        assert!(
+            root.join("input.pptx.bak").exists(),
+            "failed restore leaves the backup for manual recovery"
         );
 
         fs::remove_dir_all(root).expect("test dir removes");

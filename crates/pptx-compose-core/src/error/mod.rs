@@ -203,6 +203,12 @@ impl Error {
         self.details.suggestions.push(suggestion.into());
         self
     }
+
+    #[must_use]
+    pub const fn with_state_changed(mut self, state_changed: bool) -> Self {
+        self.details.state_changed = state_changed;
+        self
+    }
 }
 
 impl fmt::Display for Error {

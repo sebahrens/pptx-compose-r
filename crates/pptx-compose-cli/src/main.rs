@@ -690,6 +690,11 @@ impl CliError {
         self.error
     }
 
+    fn with_state_changed(mut self) -> Self {
+        self.error = self.error.with_state_changed(true);
+        self
+    }
+
     fn write_with_source(
         message: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,

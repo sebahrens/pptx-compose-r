@@ -238,6 +238,25 @@ fn success_envelope(result: Value) -> ResultEnvelope {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use pptx_compose::core::error::{Error as CoreError, ErrorCode};
+
+    #[test]
+    fn mcp_error_envelope_preserves_state_changed_marker() {
+        let error = CoreError::new(
+            ErrorCode::WriteFailed,
+            "Export failed after writing the output file.",
+        )
+        .with_state_changed(true);
+
+        let envelope = super::error_envelope(&error);
+
+        assert!(envelope.error.state_changed);
+        assert_eq!(envelope.error.code, ErrorCode::WriteFailed.as_str());
+    }
+}
+
 fn result_or_error_schema(generator: &mut SchemaGenerator) -> Schema {
     json!({
         "type": "object",

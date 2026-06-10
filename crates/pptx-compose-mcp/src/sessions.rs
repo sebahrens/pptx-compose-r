@@ -537,12 +537,17 @@ impl SessionStore {
                 ..WriteOptions::default()
             },
         )?;
-        u64::try_from(session.package.write_vec()?.len()).map_err(|source| {
+        let bytes = session
+            .package
+            .write_vec()
+            .map_err(|error| error.with_state_changed(true))?;
+        u64::try_from(bytes.len()).map_err(|source| {
             Error::with_source(
                 ErrorCode::InternalError,
                 "Exported PPTX length exceeds reportable range.",
                 source,
             )
+            .with_state_changed(true)
         })
     }
 
