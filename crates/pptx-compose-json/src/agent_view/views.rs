@@ -336,9 +336,10 @@ pub fn find_text_with_revision(
         collection: Some(&cursor_collection),
     };
     let start = cursor_offset(req.cursor.as_deref(), scope)?;
-    let matches = collect_text_matches(&context, &req.query, &req.scope, start, limit)?;
+    let (matches, total_matches) =
+        collect_text_matches(&context, &req.query, &req.scope, start, limit)?;
     let warnings = collect_text_coverage_warnings(&context, &req.scope)?;
-    let (page, meta, omitted_count) = match_page(matches, limit, start, scope)?;
+    let (page, meta, omitted_count) = match_page(matches, total_matches, limit, start, scope)?;
 
     Ok(FindTextResult {
         schema: FIND_TEXT_SCHEMA.to_owned(),
@@ -460,10 +461,10 @@ fn collect_text_matches(
     scope: &FindTextScope,
     start: u32,
     limit: u32,
-) -> Result<Vec<TextMatch>, JsonError> {
+) -> Result<(Vec<TextMatch>, u32), JsonError> {
     let mut matches = Vec::new();
     let mut seen = 0_u32;
-    let stop_after = start.saturating_add(limit).saturating_add(1);
+    let page_end = start.saturating_add(limit);
     for slide_ref in context.pkg.slides() {
         let mut media = BTreeMap::<String, ImageView>::new();
         let slide = project_slide(context.pkg, slide_ref, &mut media)?;
@@ -478,13 +479,10 @@ fn collect_text_matches(
                 &slide,
                 query,
                 start,
-                stop_after,
+                page_end,
                 &mut seen,
                 &mut matches,
             )?;
-            if seen >= stop_after {
-                return Ok(matches);
-            }
         }
     }
 
@@ -497,7 +495,7 @@ fn collect_text_matches(
         });
     }
 
-    Ok(matches)
+    Ok((matches, seen))
 }
 
 fn collect_text_coverage_warnings(
@@ -539,7 +537,7 @@ fn collect_element_text_matches(
     slide: &SlideProjection,
     query: &str,
     start: u32,
-    stop_after: u32,
+    page_end: u32,
     seen: &mut u32,
     matches: &mut Vec<TextMatch>,
 ) -> Result<(), JsonError> {
@@ -567,13 +565,10 @@ fn collect_element_text_matches(
                     }),
                     query,
                     start,
-                    stop_after,
+                    page_end,
                     seen,
                     matches,
                 )?;
-                if *seen >= stop_after {
-                    return Ok(());
-                }
             }
         }
         return Ok(());
@@ -586,7 +581,7 @@ fn collect_element_text_matches(
             .is_none_or(|support| support.supported)
     {
         collect_text_view_matches(
-            element, slide, text, None, query, start, stop_after, seen, matches,
+            element, slide, text, None, query, start, page_end, seen, matches,
         )?;
     }
     Ok(())
@@ -600,7 +595,7 @@ fn collect_text_view_matches(
     cell: Option<TableCellRef>,
     query: &str,
     start: u32,
-    stop_after: u32,
+    page_end: u32,
     seen: &mut u32,
     matches: &mut Vec<TextMatch>,
 ) -> Result<(), JsonError> {
@@ -613,45 +608,40 @@ fn collect_text_view_matches(
         if related_text_requires_run_selector(element.kind) && run.is_none() {
             continue;
         }
-        if *seen < start {
-            *seen = seen.saturating_add(1);
-            continue;
+        if *seen >= start && *seen < page_end {
+            matches.push(TextMatch {
+                slide_id: slide.detail.id.clone(),
+                slide_index: slide.detail.index,
+                element_id: element.id.clone(),
+                kind: element.kind,
+                part: element.part.clone(),
+                fingerprint: element.fingerprint.clone(),
+                text_hash: text.text_hash.clone(),
+                span,
+                matched_text: substring_by_char_span(search_plain_text(text), span),
+                selector: ElementSelector {
+                    selector_type: if is_notes_element(element) {
+                        "slide_id".to_owned()
+                    } else {
+                        "element_id".to_owned()
+                    },
+                    id: if is_notes_element(element) {
+                        slide.detail.id.clone()
+                    } else {
+                        element.id.clone()
+                    },
+                    guards: SelectorGuards {
+                        slide_id: slide.detail.id.clone(),
+                        kind: element.kind,
+                        part: element.part.clone(),
+                        text_hash: guard_text_hash.clone(),
+                        fingerprint: element.fingerprint.clone(),
+                    },
+                    run,
+                },
+                cell,
+            });
         }
-        if *seen >= stop_after {
-            return Ok(());
-        }
-        matches.push(TextMatch {
-            slide_id: slide.detail.id.clone(),
-            slide_index: slide.detail.index,
-            element_id: element.id.clone(),
-            kind: element.kind,
-            part: element.part.clone(),
-            fingerprint: element.fingerprint.clone(),
-            text_hash: text.text_hash.clone(),
-            span,
-            matched_text: substring_by_char_span(search_plain_text(text), span),
-            selector: ElementSelector {
-                selector_type: if is_notes_element(element) {
-                    "slide_id".to_owned()
-                } else {
-                    "element_id".to_owned()
-                },
-                id: if is_notes_element(element) {
-                    slide.detail.id.clone()
-                } else {
-                    element.id.clone()
-                },
-                guards: SelectorGuards {
-                    slide_id: slide.detail.id.clone(),
-                    kind: element.kind,
-                    part: element.part.clone(),
-                    text_hash: guard_text_hash.clone(),
-                    fingerprint: element.fingerprint.clone(),
-                },
-                run,
-            },
-            cell,
-        });
         *seen = seen.saturating_add(1);
     }
     Ok(())
@@ -666,22 +656,17 @@ fn related_text_requires_run_selector(kind: ElementKind) -> bool {
 }
 
 fn match_page(
-    mut matches: Vec<TextMatch>,
+    matches: Vec<TextMatch>,
+    total_matches: u32,
     limit: u32,
     start: u32,
     scope: CursorScope<'_>,
 ) -> Result<(Vec<TextMatch>, ViewMeta, u32), JsonError> {
-    let limit_usize =
-        usize::try_from(limit).map_err(|err| JsonError::InvalidCursor(err.to_string()))?;
-    let truncated = matches.len() > limit_usize;
-    if truncated {
-        matches.truncate(limit_usize);
-    }
+    let end = start.saturating_add(limit);
+    let remaining = total_matches.saturating_sub(end);
+    let truncated = remaining > 0;
     let next_cursor = if truncated {
-        Some(super::pagination::Cursor::encode(
-            start.saturating_add(limit),
-            scope,
-        )?)
+        Some(super::pagination::Cursor::encode(end, scope)?)
     } else {
         None
     };
@@ -693,7 +678,7 @@ fn match_page(
             next_cursor,
             truncated,
         },
-        u32::from(truncated),
+        remaining,
     ))
 }
 

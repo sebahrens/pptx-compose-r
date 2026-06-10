@@ -957,7 +957,7 @@ fn find_text_pages_many_matches_without_unbounded_page() {
 
     assert_eq!(first.matches.len(), 100);
     assert!(first.view.truncated);
-    assert_eq!(first.omitted_count, 1);
+    assert_eq!(first.omitted_count, 50);
     assert_eq!(first.matches[0].span.start, 0);
     assert_eq!(first.matches[99].span.start, 99);
 
