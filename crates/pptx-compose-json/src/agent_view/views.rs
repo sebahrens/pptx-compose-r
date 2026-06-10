@@ -757,51 +757,15 @@ fn project_media_page(
     cursor: Option<&str>,
     scope: CursorScope<'_>,
 ) -> Result<(Vec<ImageView>, ViewMeta, u32), JsonError> {
-    let start = cursor_offset(cursor, scope)?;
-    let stop_after = start.saturating_add(limit).saturating_add(1);
     let mut media = BTreeMap::<String, ImageView>::new();
 
     for slide in context.pkg.slides() {
-        if u32::try_from(media.len()).unwrap_or(u32::MAX) >= stop_after {
-            break;
-        }
         project_slide(context.pkg, slide, &mut media)?;
     }
 
-    let mut media = media.into_values().collect::<Vec<_>>();
-    let start_usize =
-        usize::try_from(start).map_err(|err| JsonError::InvalidCursor(err.to_string()))?;
-    if start_usize > media.len() {
-        return Err(JsonError::InvalidCursor(
-            "Cursor offset is outside the requested collection.".to_owned(),
-        ));
-    }
-    let limit_usize =
-        usize::try_from(limit).map_err(|err| JsonError::InvalidCursor(err.to_string()))?;
-    let truncated = media.len().saturating_sub(start_usize) > limit_usize;
-    if truncated {
-        media.truncate(start_usize.saturating_add(limit_usize));
-    }
-    let page = media[start_usize..].to_vec();
-    let next_cursor = if truncated {
-        Some(super::pagination::Cursor::encode(
-            start.saturating_add(limit),
-            scope,
-        )?)
-    } else {
-        None
-    };
-
-    Ok((
-        page,
-        ViewMeta {
-            mode: scope.mode.to_owned(),
-            limit,
-            next_cursor,
-            truncated,
-        },
-        u32::from(truncated),
-    ))
+    let media = media.into_values().collect::<Vec<_>>();
+    let (page, meta, omitted_count) = paginate(&media, limit, cursor, scope)?;
+    Ok((page.into_iter().cloned().collect(), meta, omitted_count))
 }
 
 fn cap_embedded_slide_elements(
@@ -2482,6 +2446,78 @@ fn all_modes() {
             ..
         }
     ));
+}
+
+#[cfg(test)]
+#[test]
+fn media_metadata_cursor_walk_matches_full_inventory_without_duplicates() {
+    let pkg = package_from_pptx_bytes(include_bytes!(
+        "../../../../fixtures/real-world/worldbank-macro-economic-update.pptx"
+    ))
+    .expect("fixture package parses");
+    let full = build_view(
+        &pkg,
+        ViewRequest {
+            mode: ViewMode::MediaMetadata,
+            include_elements: false,
+            slide_id: None,
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: Some(100),
+        },
+    )
+    .expect("full media metadata builds");
+    let expected = full["media"]
+        .as_array()
+        .expect("full media array")
+        .iter()
+        .map(|media| {
+            media["media_part"]
+                .as_str()
+                .expect("media_part is a string")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+
+    let mut actual = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = build_view(
+            &pkg,
+            ViewRequest {
+                mode: ViewMode::MediaMetadata,
+                include_elements: false,
+                slide_id: None,
+                slide_ids: Vec::new(),
+                element_id: None,
+                cursor,
+                limit: Some(2),
+            },
+        )
+        .expect("paged media metadata builds");
+        actual.extend(
+            page["media"]
+                .as_array()
+                .expect("paged media array")
+                .iter()
+                .map(|media| {
+                    media["media_part"]
+                        .as_str()
+                        .expect("media_part is a string")
+                        .to_owned()
+                }),
+        );
+        cursor = page["view"]["next_cursor"].as_str().map(str::to_owned);
+        if cursor.is_none() {
+            assert_eq!(page["view"]["truncated"], false);
+            break;
+        }
+    }
+
+    let unique = actual.iter().collect::<BTreeSet<_>>();
+    assert_eq!(actual.len(), unique.len());
+    assert_eq!(actual, expected);
 }
 
 #[cfg(test)]
