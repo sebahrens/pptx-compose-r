@@ -54,6 +54,7 @@ pub struct ElementTextProjection {
     pub text: Option<TextBody>,
     pub has_uneditable_chart_cache_text: bool,
     pub diagram_cache_mapping_unsupported: bool,
+    pub diagram_drawing_cache_text_absent: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -181,6 +182,7 @@ fn project_chart_text(
         text: (!bodies.is_empty()).then(|| merge_text_bodies(bodies)),
         has_uneditable_chart_cache_text,
         diagram_cache_mapping_unsupported: false,
+        diagram_drawing_cache_text_absent: false,
     })
 }
 
@@ -230,7 +232,9 @@ fn project_diagram_text(
     if drawing_paragraphs.is_empty() {
         return Ok(ElementTextProjection {
             text: Some(data_body),
-            ..ElementTextProjection::default()
+            has_uneditable_chart_cache_text: false,
+            diagram_cache_mapping_unsupported: false,
+            diagram_drawing_cache_text_absent: true,
         });
     }
     if diagram_cache_mapping_is_unsupported(&data_paragraphs, &drawing_paragraphs) {
@@ -238,6 +242,7 @@ fn project_diagram_text(
             text: Some(related_text_body_from_infos(&drawing_paragraphs)),
             has_uneditable_chart_cache_text: false,
             diagram_cache_mapping_unsupported: true,
+            diagram_drawing_cache_text_absent: false,
         });
     }
     Ok(ElementTextProjection {

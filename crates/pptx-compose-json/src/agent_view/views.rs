@@ -1068,10 +1068,11 @@ fn project_element(
             slide_id, &id, kind, &part, reason,
         ));
     }
-    if text_projection
+    if let Some(reason) = text_projection
         .support
         .as_ref()
-        .is_some_and(|support| !support.supported)
+        .filter(|support| !support.supported)
+        .and_then(|support| support.reason.as_deref())
     {
         text_coverage_warnings.push(TextCoverageWarning {
             code: "diagram_text_unsupported".to_owned(),
@@ -1079,8 +1080,8 @@ fn project_element(
             element_id: id.clone(),
             kind,
             part: part.clone(),
-            reason: "diagram_drawing_cache_mapping_unsupported".to_owned(),
-            detail: "V1 does not edit SmartArt text when rendered drawing-cache paragraphs differ from diagram data and no modelId mapping proves which data node owns each visible paragraph.".to_owned(),
+            reason: reason.to_owned(),
+            detail: diagram_text_coverage_warning_detail(reason).to_owned(),
         });
     }
 
@@ -1170,6 +1171,14 @@ fn chart_text_coverage_warning(
         part: part.to_owned(),
         reason: reason.to_owned(),
         detail: "Some visible chart text is backed by chart XML string caches or workbook formulas. V1 exposes editable DrawingML rich text such as simple titles, but preserves cache/workbook-backed labels unless all companion state can be kept consistent.".to_owned(),
+    }
+}
+
+fn diagram_text_coverage_warning_detail(reason: &str) -> &'static str {
+    if reason == "diagram_drawing_cache_text_absent" {
+        "V1 does not edit SmartArt text when the related drawing cache contains no DrawingML text paragraphs to keep synchronized with diagram data."
+    } else {
+        "V1 does not edit SmartArt text when rendered drawing-cache paragraphs differ from diagram data and no modelId mapping proves which data node owns each visible paragraph."
     }
 }
 
@@ -1423,6 +1432,11 @@ fn projected_element_text(
         Some(EditableSupport {
             supported: false,
             reason: Some("diagram_drawing_cache_mapping_unsupported".to_owned()),
+        })
+    } else if projection.diagram_drawing_cache_text_absent {
+        Some(EditableSupport {
+            supported: false,
+            reason: Some("diagram_drawing_cache_text_absent".to_owned()),
         })
     } else if projection.text.is_none() && projection.has_uneditable_chart_cache_text {
         Some(EditableSupport {

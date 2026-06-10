@@ -2249,6 +2249,153 @@ fn workbook_backed_chart_labels_without_rich_text_are_not_patch_ready() {
 }
 
 #[test]
+fn diagram_data_text_with_empty_drawing_cache_is_not_patch_ready() {
+    let bytes = graphic_frame_deck_with_diagram_parts(
+        &diagram_data_part(),
+        &empty_text_diagram_drawing_part(),
+    );
+    let view = PresentationDocument::from_bytes(&bytes)
+        .expect("fixture opens")
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide detail builds");
+    let diagram = view["slides"][0]["elements"]
+        .as_array()
+        .expect("slide_detail exposes elements")
+        .iter()
+        .find(|element| element["id"] == "slide-1:graphic-9")
+        .expect("diagram element projected");
+
+    assert_eq!(diagram["text"]["plain"], "SmartArt Node");
+    assert_eq!(diagram["editable"]["text"]["supported"], false);
+    assert_eq!(
+        diagram["editable"]["text"]["reason"],
+        "diagram_drawing_cache_text_absent"
+    );
+    assert_eq!(
+        diagram["text_coverage_warnings"][0]["reason"],
+        "diagram_drawing_cache_text_absent"
+    );
+
+    let matches = PresentationDocument::from_bytes(&bytes)
+        .expect("fixture opens")
+        .find_text(FindTextRequest {
+            query: "SmartArt Node".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        })
+        .expect("find_text succeeds");
+    assert!(
+        matches.matches.is_empty(),
+        "SmartArt data text without drawing-cache text must not produce patch-ready selectors"
+    );
+
+    let mut document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+    let patch = patch_with_operations(
+        &bytes,
+        "replace-empty-diagram-drawing-cache",
+        vec![serde_json::json!({
+            "operation_id": "replace-diagram-node",
+            "op": "replace_text",
+            "element_id": "slide-1:graphic-9",
+            "mode": "run_scoped",
+            "run": { "paragraph_index": 0, "run_index": 0 },
+            "text": "SmartArt Updated",
+            "match": "SmartArt Node"
+        })],
+    );
+    let report = document
+        .apply_patch(patch, MediaInputs::default())
+        .expect("unsupported diagram edit returns a failed report");
+    assert_eq!(report.status, PatchStatus::Failed);
+    assert_eq!(
+        report.operation_reports[0]
+            .error
+            .as_ref()
+            .expect("failed operation has error")
+            .code,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit
+    );
+}
+
+#[test]
+fn oecd_smartart_without_drawing_cache_text_is_not_patch_ready() {
+    let bytes = include_bytes!("../../../fixtures/real-world/oecd-economic-outlook-2017.pptx");
+    let view = PresentationDocument::from_bytes(bytes)
+        .expect("fixture opens")
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlidePage,
+            include_elements: true,
+            slide_id: None,
+            slide_ids: vec!["slide-20".to_owned(), "slide-23".to_owned()],
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("slide page builds");
+
+    for (slide_id, element_id, query) in [
+        (
+            "slide-20",
+            "slide-20:graphic-16",
+            "Combat corruption, illicit trade and counterfeiting",
+        ),
+        (
+            "slide-23",
+            "slide-23:graphic-5",
+            "Targeted policies to help people seize new opportunities",
+        ),
+    ] {
+        let slide = view["slides"]
+            .as_array()
+            .expect("slide_page exposes slides")
+            .iter()
+            .find(|slide| slide["id"] == slide_id)
+            .expect("target slide projected");
+        let diagram = slide["elements"]
+            .as_array()
+            .expect("slide_page exposes elements")
+            .iter()
+            .find(|element| element["id"] == element_id)
+            .expect("target diagram projected");
+
+        assert_eq!(diagram["editable"]["text"]["supported"], false);
+        assert_eq!(
+            diagram["editable"]["text"]["reason"],
+            "diagram_drawing_cache_text_absent"
+        );
+        assert_eq!(
+            diagram["text_coverage_warnings"][0]["reason"],
+            "diagram_drawing_cache_text_absent"
+        );
+
+        let matches = PresentationDocument::from_bytes(bytes)
+            .expect("fixture opens")
+            .find_text(FindTextRequest {
+                query: query.to_owned(),
+                scope: FindTextScope::Slide {
+                    slide_id: slide_id.to_owned(),
+                },
+                cursor: None,
+                limit: None,
+            })
+            .expect("find_text succeeds");
+        assert!(
+            matches.matches.is_empty(),
+            "{element_id} must not produce patch-ready selectors"
+        );
+    }
+}
+
+#[test]
 fn diagram_drawing_mirror_syncs_multirun_paragraph_by_model_id() {
     let bytes = graphic_frame_deck_with_diagram_parts(
         &multirun_diagram_data_part(),
@@ -4071,6 +4218,16 @@ fn diagram_drawing_part() -> String {
 <dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
   <dsp:spTree>
     <dsp:sp><dsp:txBody><a:p><a:r><a:t>SmartArt Node</a:t></a:r></a:p></dsp:txBody></dsp:sp>
+  </dsp:spTree>
+</dsp:drawing>"#
+        .to_owned()
+}
+
+fn empty_text_diagram_drawing_part() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <dsp:spTree>
+    <dsp:sp><dsp:txBody><a:p><a:endParaRPr/></a:p></dsp:txBody></dsp:sp>
   </dsp:spTree>
 </dsp:drawing>"#
         .to_owned()
