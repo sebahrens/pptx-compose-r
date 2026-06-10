@@ -1,6 +1,17 @@
 # V1 Bead Epic Scaffold
 
-Decomposition of the V1 spec suite into epics and atomic tasks, aligned to the crate/module boundaries in [060](../060-rust-architecture.md). This is the import plan for `bd create --graph`; the machine-readable graph is in [`v1-epics.graph.json`](v1-epics.graph.json).
+> **Historical reference only. Do not execute.**
+>
+> This document preserves the original V1 decomposition for design archaeology,
+> but it is not current Beads workflow guidance. Do not create `tier:epic`
+> Beads, do not use `bd update --parent`, and do not recreate parent-child
+> edges from this file or from [`v1-epics.graph.json`](v1-epics.graph.json).
+> On the Beads version used by this repository, parent-child edges block leaf
+> tasks and have already caused tracker deadlocks. Current work should be filed
+> as standalone atomic tasks, with any epic context kept in descriptions or
+> labels only.
+
+Decomposition of the V1 spec suite into epics and atomic tasks, aligned to the crate/module boundaries in [060](../060-rust-architecture.md). The adjacent machine-readable file is retained as non-executable historical data only.
 
 ## Status gate (read first)
 
@@ -9,7 +20,9 @@ The adversarial spec review verdict is **ready-with-fixes after Phase A + Phase 
 - **Phase A (8 blockers): DONE** — provenance/hashing (046), DrawingML construction (047), dirty-tracking (020), write modes (070/020), content-type resolution + rId allocation (012), case carve-out (010), encryption sniff + resource limits (011).
 - **Phase B (registries): NOT DONE** — validation finding-code table (044), error-code reconciliation across 044/060/071, CLI exit-code/command-surface dedup (070/071). **Epics E7, E9, and the CLI/MCP error surfaces (E10/E11) must not start until Phase B lands**, or their acceptance criteria are unstable. They are included here so the DAG is complete, but marked `blocked:phase-b`.
 
-Do **not** run `bd create --graph` with `--dry-run` (it persists). Validate the JSON, then run once for real. Only `parent-child` edges apply via the graph; add blocking edges afterward with the `bd dep add` script at the bottom.
+Current tracker rule: do not recreate these epic nodes, do not recreate
+parent-child edges, and do not convert the historical graph back into an import
+file.
 
 ## Epics (→ crate)
 
@@ -143,19 +156,9 @@ Do **not** run `bd create --graph` with `--dry-run` (it persists). Validate the 
 - `pc-e12-t4` Negative-case suite (stale revision, bad element id, missing/mismatched media, encrypted, zip-bomb, unsafe path, r:link image). *(080, 011)*
 - `pc-e12-t5` Agent runtime evals (CLI + MCP transcripts proving the contract). *(081)*
 
-## Blocking-edge install script (run after the graph creates nodes)
+## Historical Blocking Order
 
-`bd create --graph` only wires parent-child. Apply blocking order with `bd dep add <dependent> <blocker>` (verify direction on one edge first):
-
-```bash
-# epic-level blocking order
-for pair in \
-  "pc-e2 pc-e1" "pc-e3 pc-e1" "pc-e8 pc-e1" "pc-e8 pc-e2" \
-  "pc-e5 pc-e1" "pc-e5 pc-e2" "pc-e5 pc-e3" \
-  "pc-e4 pc-e3" "pc-e4 pc-e5" \
-  "pc-e9 pc-e1" "pc-e6 pc-e4" "pc-e6 pc-e5" "pc-e6 pc-e9" \
-  "pc-e7 pc-e6" "pc-e7 pc-e8" "pc-e7 pc-e9" \
-  "pc-e10 pc-e7" "pc-e10 pc-e9" "pc-e11 pc-e7" "pc-e11 pc-e9"; do
-  set -- $pair; bd dep add "$1" "$2"
-done
-```
+The original import plan also included epic-level blocking relationships. Those
+commands were intentionally removed because they were copy-pastable and could
+recreate the old tracker deadlock. Treat the dependency DAG above as historical
+planning context only; create current Beads as standalone atomic tasks.

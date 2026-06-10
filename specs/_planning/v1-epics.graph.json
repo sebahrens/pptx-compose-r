@@ -1,5 +1,7 @@
 {
-  "nodes": [
+  "historical_notice": "Historical reference only. Do not pass this file to bd create --graph; do not recreate tier:epic Beads, parent-child edges, or dependency edges from this artifact on the current tracker.",
+  "non_executable": true,
+  "historical_nodes": [
     {
       "key": "pc-e1",
       "type": "epic",
@@ -1046,7 +1048,7 @@
       "description": "Agent runtime evals (CLI + MCP transcripts). Specs: 081. Parent pc-e12."
     }
   ],
-  "edges": [
+  "historical_edges": [
     {
       "from_key": "pc-e1-t1",
       "to_key": "pc-e1",
