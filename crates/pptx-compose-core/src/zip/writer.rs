@@ -66,7 +66,8 @@ where
     let dirty_metas = dirty_metadata_for_package(package);
     let entries = write_entries_for_package(package, &dirty_metas);
     let mut writer = PackageZipWriter::new(output, options);
-    for entry in entries {
+    let ordered_entries = ordered_entries(&entries, options.mode);
+    for entry in ordered_entries {
         let WriteEntry::Dirty(entry) = entry else {
             continue;
         };
@@ -481,6 +482,50 @@ fn deterministic_mode_is_byte_stable_across_runs() {
         assert_eq!(written.last_modified(), Some(deterministic_timestamp()));
         assert_eq!(compressed_bytes(&first, index), original.3.as_slice());
     }
+}
+
+#[cfg(test)]
+#[test]
+fn package_write_deterministic_mode_uses_control_part_order() {
+    use std::io::Cursor;
+    use zip::ZipArchive;
+
+    use crate::{
+        opc::package::Package,
+        zip::{limits::OpenOptions, reader::from_bytes},
+    };
+
+    let package_bytes = include_bytes!("../../../../fixtures/minimal.pptx");
+    let entries = from_bytes(package_bytes).expect("minimal fixture reads");
+    let package =
+        Package::from_zip_entries(&entries, &OpenOptions::default()).expect("package loads");
+    let options = WriteOptions {
+        mode: WriteMode::Deterministic,
+        ..WriteOptions::default()
+    };
+
+    let written = write_package_vec(&package, &options).expect("package writes");
+    let mut archive = ZipArchive::new(Cursor::new(&written)).expect("written opens");
+    let names = (0..archive.len())
+        .map(|index| {
+            archive
+                .by_index(index)
+                .expect("entry exists")
+                .name()
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        names,
+        [
+            "[Content_Types].xml",
+            "_rels/.rels",
+            "ppt/_rels/presentation.xml.rels",
+            "ppt/presentation.xml",
+            "ppt/slides/slide1.xml",
+        ]
+    );
 }
 
 #[cfg(test)]
