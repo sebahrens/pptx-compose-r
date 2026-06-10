@@ -62,6 +62,28 @@ def make_pptx(path, entries):
             zf.writestr(name, data)
 
 
+def write_manifest(path, translated_features):
+    source_features = ['real-world', 'text']
+    manifest = f"""
+[[entries]]
+path = "real-world/source.pptx"
+source_app = "powerpoint"
+features = {source_features!r}
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+
+[[entries]]
+path = "real-world/source-de.pptx"
+source_app = "powerpoint"
+features = {translated_features!r}
+expected_warnings = []
+invariants = ["contains-presentation-part", "roundtrip"]
+consuming_test = "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries"
+"""
+    path.write_text(manifest, encoding="utf-8")
+
+
 class TranslationFidelityTest(unittest.TestCase):
     def setUp(self):
         self.m = load_module()
@@ -161,6 +183,64 @@ class TranslationFidelityTest(unittest.TestCase):
             self.assertEqual(slide["diagrams"]["stale_mirror_source"], 0)
             self.assertNotIn("SUPPORTED_DIAGRAM_TEXT_UNTRANSLATED", "\n".join(slide["problems"]))
             self.assertNotIn("STALE_SMARTART_DRAWING_MIRROR", "\n".join(slide["problems"]))
+
+    def test_gate_fails_unexpected_stale_source_language_visible_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            fixtures = root / "real-world"
+            fixtures.mkdir()
+            make_pptx(fixtures / "source.pptx", {"ppt/slides/slide1.xml": text_xml("Original title")})
+            make_pptx(fixtures / "source-de.pptx", {"ppt/slides/slide1.xml": text_xml("Original title")})
+            manifest = root / "manifest.toml"
+            write_manifest(manifest, ["real-world", "text", "localized", "localized-complete-evidence"])
+
+            report = self.m.gate_report(manifest)
+
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["failure_count"], 1)
+            self.assertIn("SLIDE_FULLY_UNTRANSLATED", report["cases"][0]["failures"][0]["problem"])
+
+    def test_gate_allows_documented_localized_stale_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            fixtures = root / "real-world"
+            fixtures.mkdir()
+            make_pptx(fixtures / "source.pptx", {"ppt/slides/slide1.xml": text_xml("Original title")})
+            make_pptx(fixtures / "source-de.pptx", {"ppt/slides/slide1.xml": text_xml("Original title")})
+            manifest = root / "manifest.toml"
+            write_manifest(manifest, ["real-world", "text", "localized", "localized-stale-evidence"])
+
+            report = self.m.gate_report(manifest)
+
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["failure_count"], 0)
+            self.assertEqual(len(report["cases"][0]["allowed_stale_findings"]), 1)
+
+    def test_gate_allows_unsupported_chart_authoring_text_for_complete_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            fixtures = root / "real-world"
+            fixtures.mkdir()
+            rels = rels_xml(
+                ("rId1", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart", "../charts/chart1.xml")
+            )
+            make_pptx(fixtures / "source.pptx", {
+                "ppt/slides/slide1.xml": text_xml("Slide title"),
+                "ppt/slides/_rels/slide1.xml.rels": rels,
+                "ppt/charts/chart1.xml": chart_xml("Revenue outlook", "Workbook Label"),
+            })
+            make_pptx(fixtures / "source-de.pptx", {
+                "ppt/slides/slide1.xml": text_xml("Titel"),
+                "ppt/slides/_rels/slide1.xml.rels": rels,
+                "ppt/charts/chart1.xml": chart_xml("Translated title", "Workbook Label"),
+            })
+            manifest = root / "manifest.toml"
+            write_manifest(manifest, ["real-world", "text", "localized", "localized-complete-evidence"])
+
+            report = self.m.gate_report(manifest)
+
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["failure_count"], 0)
 
 
 if __name__ == "__main__":

@@ -15,9 +15,14 @@ Detects problem classes without python-pptx (pure zipfile + ElementTree):
 
 Output: JSON to stdout, plus a human summary to stderr.
 """
+import argparse
 import sys, os, re, json, zipfile
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 is not supported in CI.
+    tomllib = None
 
 A = "http://schemas.openxmlformats.org/drawingml/2006/main"
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -282,16 +287,135 @@ def analyze(orig_path, trans_path):
         })
     return report
 
+GATE_FAIL_PREFIXES = (
+    "LOST_RUNS",
+    "LOST_LINEBREAKS",
+    "LOST_PARAGRAPHS",
+    "SLIDE_FULLY_UNTRANSLATED",
+    "UNTRANSLATED_RUNS",
+    "SUPPORTED_CHART_TEXT_UNTRANSLATED",
+    "SUPPORTED_DIAGRAM_TEXT_UNTRANSLATED",
+    "STALE_SMARTART_DRAWING_MIRROR",
+)
+
+LOCALE_RE = re.compile(r"^(?P<stem>.+)-(?P<locale>de|fr)\.pptx$")
+
+def load_manifest(manifest_path):
+    if tomllib is None:
+        raise RuntimeError("translation fidelity gate requires Python 3.11+ tomllib")
+    with open(manifest_path, "rb") as fh:
+        return tomllib.load(fh)
+
+def localized_pairs(manifest_path):
+    manifest_dir = os.path.dirname(os.path.abspath(manifest_path))
+    fixtures_dir = manifest_dir
+    entries = load_manifest(manifest_path).get("entries", [])
+    by_path = {entry["path"]: entry for entry in entries}
+    pairs = []
+    for entry in entries:
+        features = set(entry.get("features", []))
+        if "localized" not in features:
+            continue
+        dirname = os.path.dirname(entry["path"])
+        basename = os.path.basename(entry["path"])
+        match = LOCALE_RE.fullmatch(basename)
+        if not match:
+            raise ValueError(f"{entry['path']}: localized fixture must end in -de.pptx or -fr.pptx")
+        source_rel = os.path.join(dirname, f"{match.group('stem')}.pptx").replace("\\", "/")
+        source = by_path.get(source_rel)
+        if source is None:
+            raise ValueError(f"{entry['path']}: source fixture is not listed in manifest: {source_rel}")
+        pairs.append({
+            "source": os.path.join(fixtures_dir, source_rel),
+            "translated": os.path.join(fixtures_dir, entry["path"]),
+            "source_manifest_path": source_rel,
+            "translated_manifest_path": entry["path"],
+            "locale": match.group("locale"),
+            "features": sorted(features),
+        })
+    return pairs
+
+def is_gate_failure_problem(problem):
+    return any(problem.startswith(prefix) for prefix in GATE_FAIL_PREFIXES)
+
+def gate_report(manifest_path):
+    cases = []
+    failures = []
+    for pair in localized_pairs(manifest_path):
+        slides = analyze(pair["source"], pair["translated"])
+        stale_evidence = "localized-stale-evidence" in pair["features"]
+        case_failures = []
+        allowed_stale = []
+        for slide in slides:
+            for problem in slide["problems"]:
+                if not is_gate_failure_problem(problem):
+                    continue
+                item = {"slide": slide["slide"], "problem": problem}
+                if stale_evidence:
+                    allowed_stale.append(item)
+                else:
+                    case_failures.append(item)
+        case = {
+            "source": pair["source_manifest_path"],
+            "translated": pair["translated_manifest_path"],
+            "locale": pair["locale"],
+            "stale_evidence": stale_evidence,
+            "slide_count": len(slides),
+            "allowed_stale_findings": allowed_stale,
+            "failures": case_failures,
+        }
+        cases.append(case)
+        if case_failures:
+            failures.append(case)
+    return {
+        "manifest": manifest_path,
+        "policy": {
+            "failing_problem_prefixes": list(GATE_FAIL_PREFIXES),
+            "always_allowed_problem_prefixes": ["UNSUPPORTED_CHART_TEXT_PRESENT"],
+            "localized_stale_evidence_feature": "localized-stale-evidence",
+        },
+        "cases": cases,
+        "failure_count": sum(len(case["failures"]) for case in failures),
+        "status": "failed" if failures else "passed",
+    }
+
+def run_gate(manifest_path):
+    report = gate_report(manifest_path)
+    print(json.dumps(report, ensure_ascii=False, indent=1))
+    for case in report["cases"]:
+        if case["failures"]:
+            print(
+                f"{case['translated']}: {len(case['failures'])} unexpected stale visible-text findings",
+                file=sys.stderr,
+            )
+        elif case["allowed_stale_findings"]:
+            print(
+                f"{case['translated']}: allowed {len(case['allowed_stale_findings'])} documented stale-evidence findings",
+                file=sys.stderr,
+            )
+    return 1 if report["status"] == "failed" else 0
+
 def main():
-    orig, trans = sys.argv[1], sys.argv[2]
-    rep = analyze(orig, trans)
-    print(json.dumps({"orig": orig, "trans": trans, "slides": rep}, ensure_ascii=False, indent=1))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("orig", nargs="?", help="English source PPTX")
+    parser.add_argument("trans", nargs="?", help="translated PPTX")
+    parser.add_argument("--gate", metavar="MANIFEST", help="run the manifest-backed CI gate")
+    args = parser.parse_args()
+
+    if args.gate:
+        return run_gate(args.gate)
+    if not args.orig or not args.trans:
+        parser.error("orig and trans are required unless --gate is used")
+
+    rep = analyze(args.orig, args.trans)
+    print(json.dumps({"orig": args.orig, "trans": args.trans, "slides": rep}, ensure_ascii=False, indent=1))
     # stderr summary
-    name = os.path.basename(trans)
+    name = os.path.basename(args.trans)
     flagged = [r for r in rep if r["problems"]]
     print(f"\n### {name}: {len(flagged)}/{len(rep)} slides flagged", file=sys.stderr)
     for r in flagged:
         print(f"  slide {r['slide']:>3}: " + " | ".join(r["problems"]), file=sys.stderr)
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

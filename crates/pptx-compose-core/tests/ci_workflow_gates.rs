@@ -7,7 +7,7 @@ const WORKFLOWS: [&str; 2] = [
     ".github/workflows/release.yml",
 ];
 
-const REQUIRED_COMMANDS: [&str; 13] = [
+const REQUIRED_COMMANDS: [&str; 15] = [
     "cargo fmt --all --check",
     "cargo build --workspace",
     "cargo test --workspace",
@@ -17,6 +17,8 @@ const REQUIRED_COMMANDS: [&str; 13] = [
     "cargo test -p pptx-compose-core --test roundtrip",
     "cargo test -p pptx-compose --test roundtrip_golden",
     "cargo test -p pptx-compose-edit --test construction_golden",
+    "python3 -m unittest ralph-scripts/tests/test_translation_fidelity.py",
+    "python3 ralph-scripts/translation_fidelity.py --gate fixtures/manifest.toml",
     "cargo test -p pptx-compose-cli --test eval_transcripts",
     "cargo test -p pptx-compose-mcp --test resources_prompts",
     "cargo test -p pptx-compose-mcp --test stdio_binary",

@@ -72,6 +72,19 @@ jobs:
             fi
           done
 
+      - name: Test localized translation fidelity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          commands=(
+            'python3 -m unittest ralph-scripts/tests/test_translation_fidelity.py'
+            'python3 ralph-scripts/translation_fidelity.py --gate fixtures/manifest.toml'
+          )
+          for cmd in "${commands[@]}"; do
+            echo "$cmd"
+            $cmd
+          done
+
       - name: Test CLI eval transcripts
         shell: bash
         run: |
