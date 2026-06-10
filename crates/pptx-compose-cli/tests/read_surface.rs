@@ -147,6 +147,41 @@ fn json_errors_parse_failures_emit_one_error_envelope() {
 }
 
 #[test]
+fn json_errors_panics_emit_internal_error_envelope() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
+        .env("PPTX_COMPOSE_TEST_PANIC", "1")
+        .args(["--json-errors", "capabilities"])
+        .output()
+        .expect("CLI process should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(50),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+
+    let stderr_text = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert_eq!(stderr_text.lines().count(), 1);
+    assert!(!stderr_text.contains("panicked at"));
+    assert!(!stderr_text.contains("stack backtrace"));
+
+    let envelope: serde_json::Value =
+        serde_json::from_str(&stderr_text).expect("stderr is one JSON document");
+    assert_eq!(envelope["schema"], "pptx-compose.error.v1");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "internal_error");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .expect("error message is a string")
+            .contains("Command panicked")
+    );
+}
+
+#[test]
 fn cli_boundary_attribution_uses_contract_exit_buckets() {
     let root = unique_dir();
     let deck = root.join("three-slides.pptx");

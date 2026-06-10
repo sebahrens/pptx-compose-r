@@ -33,7 +33,7 @@ use pptx_compose::{
 };
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{ffi::OsString, path::PathBuf};
+use std::{ffi::OsString, panic::AssertUnwindSafe, path::PathBuf};
 
 fn main() {
     let cli = match Cli::try_parse() {
@@ -62,8 +62,14 @@ fn main() {
         }
     };
 
+    let json_errors = cli.global.json_errors;
     let sink = OutputSink::from_global_args(&cli.global);
-    if let Err(error) = run(cli) {
+    let result = if json_errors {
+        run_with_json_panic_boundary(cli)
+    } else {
+        run(cli)
+    };
+    if let Err(error) = result {
         if let Err(emit_error) = sink.emit_error(&error) {
             eprintln!("{emit_error}");
             std::process::exit(exit::WRITE_FAILURE);
@@ -73,7 +79,31 @@ fn main() {
     std::process::exit(exit::SUCCESS);
 }
 
+fn run_with_json_panic_boundary(cli: Cli) -> Result<(), CliError> {
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| run(cli)));
+    std::panic::set_hook(previous_hook);
+
+    match result {
+        Ok(result) => result,
+        Err(payload) => Err(panic_error(payload)),
+    }
+}
+
+fn panic_error(payload: Box<dyn std::any::Any + Send>) -> CliError {
+    let message = if let Some(message) = payload.downcast_ref::<&str>() {
+        format!("Command panicked: {message}")
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        format!("Command panicked: {message}")
+    } else {
+        "Command panicked.".to_owned()
+    };
+    CliError::from_error(Error::new(ErrorCode::InternalError, message))
+}
+
 fn run(cli: Cli) -> Result<(), CliError> {
+    maybe_trigger_test_panic();
     let permissions = PermissionContext::from_global_args(&cli.global)?;
     let sink = OutputSink::from_global_args(&cli.global)
         .with_atomic_temp_dir(permissions.temp_dir.clone(), false);
@@ -89,6 +119,16 @@ fn run(cli: Cli) -> Result<(), CliError> {
         Commands::Schema(args) => schema(args, sink),
     }
 }
+
+#[cfg(debug_assertions)]
+fn maybe_trigger_test_panic() {
+    if std::env::var_os("PPTX_COMPOSE_TEST_PANIC").is_some() {
+        panic!("intentional test panic");
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn maybe_trigger_test_panic() {}
 
 fn capabilities(sink: OutputSink) -> Result<(), CliError> {
     let document = pptx_compose::capabilities::capabilities(
