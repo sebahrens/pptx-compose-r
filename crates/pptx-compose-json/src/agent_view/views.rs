@@ -1011,7 +1011,7 @@ fn project_element(
     let mut image_support = ImageEditSupport::UnresolvedPicture;
     let image = if core_kind == CoreElementKind::Picture {
         match read_picture(element, path.clone(), slide_rels, package) {
-            Ok(picture) if !picture.external => {
+            Ok(picture) if !picture.external && picture.link_rel_id.is_none() => {
                 image_support = ImageEditSupport::Embedded;
                 let Some(media_part) = picture.media_part else {
                     return Err(JsonError::Projection(
@@ -2221,7 +2221,7 @@ fn image_editability_matches_embedded_and_external_picture_support() {
         .as_array()
         .expect("elements array");
 
-    assert_eq!(elements.len(), 2);
+    assert_eq!(elements.len(), 3);
     assert!(elements.iter().all(|element| {
         let tag = &element["xml_location"]["element_tag"];
         tag != "p:nvGrpSpPr" && tag != "p:grpSpPr"
@@ -2244,6 +2244,15 @@ fn image_editability_matches_embedded_and_external_picture_support() {
     assert_eq!(linked["editable"]["image"]["reason"], "external_link");
     assert_eq!(linked["editable"].get("text"), None);
     assert_eq!(linked.get("image"), None);
+
+    let dual = elements
+        .iter()
+        .find(|element| element["xml_location"]["cnvpr_name"] == "Dual Embed Link Picture")
+        .expect("dual embed/link picture is projected");
+    assert_eq!(dual["editable"]["image"]["supported"], false);
+    assert_eq!(dual["editable"]["image"]["reason"], "external_link");
+    assert_eq!(dual["editable"].get("text"), None);
+    assert_eq!(dual.get("image"), None);
 
     assert_eq!(
         pkg.package()
@@ -2836,7 +2845,7 @@ fn content_types_xml() -> &'static [u8] {
 
 #[cfg(test)]
 fn picture_slide_xml() -> &'static [u8] {
-    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:pic><p:nvPicPr><p:cNvPr id="5" name="Embedded Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rEmbed"/></p:blipFill><p:spPr/></p:pic><p:pic><p:nvPicPr><p:cNvPr id="6" name="Linked Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:link="rLink"/></p:blipFill><p:spPr/></p:pic></p:spTree></p:cSld></p:sld>"#
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:pic><p:nvPicPr><p:cNvPr id="5" name="Embedded Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rEmbed"/></p:blipFill><p:spPr/></p:pic><p:pic><p:nvPicPr><p:cNvPr id="6" name="Linked Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:link="rLink"/></p:blipFill><p:spPr/></p:pic><p:pic><p:nvPicPr><p:cNvPr id="7" name="Dual Embed Link Picture"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rEmbed" r:link="rLink"/></p:blipFill><p:spPr/></p:pic></p:spTree></p:cSld></p:sld>"#
 }
 
 #[cfg(test)]

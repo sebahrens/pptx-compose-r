@@ -23,6 +23,7 @@ pub struct Picture {
     pub alt_text: Option<String>,
     pub bounds: Option<Bounds>,
     pub embed_rel_id: String,
+    pub link_rel_id: Option<String>,
     pub media_part: Option<PartName>,
     pub content_type: String,
     pub byte_length: u64,
@@ -43,6 +44,7 @@ pub fn read_picture(
     let shape = read_shape(element, path);
 
     if let Some(embed_rel_id) = attr(blip, "embed") {
+        let link_rel_id = attr(blip, "link").map(str::to_owned);
         let media = resolve_embedded_media(embed_rel_id, slide_rels, package)?;
         let intrinsic_size_px = package
             .parts()
@@ -56,6 +58,7 @@ pub fn read_picture(
             alt_text: shape.alt_text,
             bounds: shape.bounds,
             embed_rel_id: embed_rel_id.to_owned(),
+            link_rel_id,
             media_part: Some(media.part_name),
             content_type: media.content_type,
             byte_length: media.byte_length,
@@ -73,6 +76,7 @@ pub fn read_picture(
             alt_text: shape.alt_text,
             bounds: shape.bounds,
             embed_rel_id: link_rel_id.to_owned(),
+            link_rel_id: Some(link_rel_id.to_owned()),
             media_part: None,
             content_type: String::new(),
             byte_length: 0,
@@ -252,6 +256,7 @@ fn reads_embedded_image() {
         })
     );
     assert_eq!(picture.embed_rel_id, "rId2");
+    assert_eq!(picture.link_rel_id, None);
     assert_eq!(picture.media_part, Some(media_part));
     assert_eq!(picture.content_type, "image/png");
     assert_eq!(picture.byte_length, one_by_one_png().len() as u64);
@@ -293,11 +298,61 @@ fn reads_external_image_without_synthetic_media_part() {
 
     assert!(picture.external);
     assert_eq!(picture.embed_rel_id, "rIdExternal");
+    assert_eq!(picture.link_rel_id.as_deref(), Some("rIdExternal"));
     assert_eq!(picture.media_part, None);
     assert_eq!(picture.content_type, "");
     assert_eq!(picture.byte_length, 0);
     assert_eq!(picture.shared_media_ref_count, 0);
     assert_eq!(picture.intrinsic_size_px, None);
+}
+
+#[cfg(test)]
+#[test]
+fn reads_dual_embed_and_link_image_as_embedded_with_link_state() {
+    use crate::{
+        opc::{
+            package::Package,
+            relationships::{Relationship, RelationshipSet, RelationshipSource},
+        },
+        pptx::{ids::SpTreePath, media::IMAGE_REL_TYPE},
+        xml::parser::parse_document,
+    };
+
+    let mut package = Package::new();
+    let media_part = test_part("ppt/media/image1.png");
+    package
+        .content_types_mut()
+        .insert_default("png", "image/png");
+    package
+        .insert_zip_entry("ppt/media/image1.png", one_by_one_png())
+        .expect("media part inserts");
+
+    let slide_part = test_part("ppt/slides/slide1.xml");
+    let slide_rels = RelationshipSet {
+        source: slide_part.clone(),
+        rels: vec![Relationship::internal(
+            RelationshipSource::Part(slide_part),
+            "rId2",
+            IMAGE_REL_TYPE,
+            "../media/image1.png",
+        )],
+    };
+    package.push_relationship(slide_rels.rels[0].clone());
+
+    let document = parse_document(dual_embed_link_picture_xml()).expect("picture fixture parses");
+    let element = document.root_element().expect("picture fixture has root");
+    let path = SpTreePath {
+        sp_tree_path: vec![2],
+        group_path: Vec::new(),
+    };
+
+    let picture =
+        read_picture(element, path, &slide_rels, &package).expect("dual blip picture reads");
+
+    assert!(!picture.external);
+    assert_eq!(picture.embed_rel_id, "rId2");
+    assert_eq!(picture.link_rel_id.as_deref(), Some("rIdExternal"));
+    assert_eq!(picture.media_part, Some(media_part));
 }
 
 #[cfg(test)]
@@ -343,6 +398,26 @@ fn external_picture_xml() -> &'static [u8] {
   </p:nvPicPr>
   <p:blipFill>
     <a:blip r:link="rIdExternal"/>
+    <a:stretch><a:fillRect/></a:stretch>
+  </p:blipFill>
+  <p:spPr/>
+</p:pic>
+"#
+}
+
+#[cfg(test)]
+fn dual_embed_link_picture_xml() -> &'static [u8] {
+    br#"
+<p:pic xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+       xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+       xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:nvPicPr>
+    <p:cNvPr id="7" name="Picture 1" descr="dual image"/>
+    <p:cNvPicPr/>
+    <p:nvPr/>
+  </p:nvPicPr>
+  <p:blipFill>
+    <a:blip r:embed="rId2" r:link="rIdExternal"/>
     <a:stretch><a:fillRect/></a:stretch>
   </p:blipFill>
   <p:spPr/>
