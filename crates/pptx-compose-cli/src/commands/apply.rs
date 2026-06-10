@@ -29,6 +29,7 @@ pub(crate) fn apply(
     permissions: &PermissionContext,
     open_options: OpenOptions,
 ) -> Result<(), CliError> {
+    enforce_apply_flag_combinations(&args)?;
     enforce_single_apply_stdout_json(&args)?;
 
     let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
@@ -125,6 +126,38 @@ pub(crate) fn apply(
     }
     sink.emit_optional_patch_report(&apply_output.report, report, args.overwrite)?;
     sink.emit_diff(&apply_output.diff, diff, args.overwrite)?;
+
+    Ok(())
+}
+
+fn enforce_apply_flag_combinations(args: &ApplyArgs) -> Result<(), CliError> {
+    if args.dry_run {
+        if args.output.is_some() {
+            return Err(CliError::invalid_input(
+                InvalidInputCause::CliArgument,
+                "--dry-run cannot be combined with --output because dry-run never writes PPTX output.",
+            ));
+        }
+        if args.in_place {
+            return Err(CliError::invalid_input(
+                InvalidInputCause::CliArgument,
+                "--dry-run cannot be combined with --in-place because dry-run never writes PPTX output.",
+            ));
+        }
+        if args.no_backup {
+            return Err(CliError::invalid_input(
+                InvalidInputCause::CliArgument,
+                "--no-backup is valid only with --in-place.",
+            ));
+        }
+    }
+
+    if args.no_backup && !args.in_place {
+        return Err(CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            "--no-backup is valid only with --in-place.",
+        ));
+    }
 
     Ok(())
 }
@@ -624,6 +657,24 @@ fn in_place_no_backup_suppresses_backup() {
 
 #[cfg(test)]
 #[test]
+fn no_backup_requires_in_place() {
+    test_support::no_backup_requires_in_place();
+}
+
+#[cfg(test)]
+#[test]
+fn dry_run_rejects_output_path() {
+    test_support::dry_run_rejects_output_path();
+}
+
+#[cfg(test)]
+#[test]
+fn dry_run_rejects_in_place() {
+    test_support::dry_run_rejects_in_place();
+}
+
+#[cfg(test)]
+#[test]
 fn in_place_apply_restores_from_backup_on_write_failure() {
     test_support::in_place_apply_restores_from_backup_on_write_failure();
 }
@@ -949,6 +1000,75 @@ mod test_support {
             fs::read(&input).expect("input reads after apply"),
             input_bytes,
             "input is replaced in-place"
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn no_backup_requires_in_place() {
+        let root = unique_dir();
+        let input = root.join("missing.pptx");
+        let patch = root.join("missing-patch.json");
+        let output = root.join("output.pptx");
+        fs::create_dir_all(&root).expect("test dir creates");
+
+        let mut args = args(&input, &patch, &output, false);
+        args.no_backup = true;
+
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("--no-backup without --in-place must be rejected");
+        assert_eq!(err.code(), ErrorCode::InvalidInput);
+        assert!(
+            err.details()
+                .message
+                .contains("--no-backup is valid only with --in-place")
+        );
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn dry_run_rejects_output_path() {
+        let root = unique_dir();
+        let input = root.join("missing.pptx");
+        let patch = root.join("missing-patch.json");
+        let output = root.join("output.pptx");
+        fs::create_dir_all(&root).expect("test dir creates");
+
+        let mut args = args(&input, &patch, &output, false);
+        args.dry_run = true;
+
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("--dry-run with --output must be rejected");
+        assert_eq!(err.code(), ErrorCode::InvalidInput);
+        assert!(
+            err.details()
+                .message
+                .contains("--dry-run cannot be combined with --output")
+        );
+        assert!(!output.exists(), "rejected dry-run must not write output");
+
+        fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn dry_run_rejects_in_place() {
+        let root = unique_dir();
+        let input = root.join("missing.pptx");
+        let patch = root.join("missing-patch.json");
+        let output = root.join("output.pptx");
+        fs::create_dir_all(&root).expect("test dir creates");
+
+        let mut args = args(&input, &patch, &output, false);
+        args.dry_run = true;
+        args.in_place = true;
+        args.output = None;
+
+        let err = apply(args, &permissions(&root), OpenOptions::default())
+            .expect_err("--dry-run with --in-place must be rejected");
+        assert_eq!(err.code(), ErrorCode::InvalidInput);
+        assert!(
+            err.details()
+                .message
+                .contains("--dry-run cannot be combined with --in-place")
         );
 
         fs::remove_dir_all(root).expect("test dir removes");

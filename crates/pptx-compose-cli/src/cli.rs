@@ -114,7 +114,7 @@ pub struct ValidateArgs {
 pub struct ApplyArgs {
     pub input: PathBuf,
     pub patch: PathBuf,
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["output", "in_place", "no_backup"])]
     pub dry_run: bool,
     #[arg(long)]
     pub media_manifest: Option<PathBuf>,
@@ -135,7 +135,7 @@ pub struct ApplyArgs {
         help = "Write back to INPUT atomically; creates INPUT.bak unless --no-backup is set"
     )]
     pub in_place: bool,
-    #[arg(long)]
+    #[arg(long, requires = "in_place")]
     pub no_backup: bool,
 }
 
@@ -212,6 +212,57 @@ fn parses_apply_dry_run() {
     assert!(!args.overwrite);
     assert!(!args.in_place);
     assert!(!args.no_backup);
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_apply_no_backup_without_in_place() {
+    use clap::Parser;
+
+    let err = Cli::try_parse_from([
+        "pptx-compose",
+        "apply",
+        "in.pptx",
+        "p.json",
+        "--output",
+        "out.pptx",
+        "--no-backup",
+    ])
+    .expect_err("--no-backup must require --in-place");
+
+    assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_apply_dry_run_with_write_mode_flags() {
+    use clap::Parser;
+
+    let output_err = Cli::try_parse_from([
+        "pptx-compose",
+        "apply",
+        "in.pptx",
+        "p.json",
+        "--dry-run",
+        "--output",
+        "out.pptx",
+    ])
+    .expect_err("--dry-run must reject --output");
+    assert_eq!(output_err.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+    let in_place_err = Cli::try_parse_from([
+        "pptx-compose",
+        "apply",
+        "in.pptx",
+        "p.json",
+        "--dry-run",
+        "--in-place",
+    ])
+    .expect_err("--dry-run must reject --in-place");
+    assert_eq!(
+        in_place_err.kind(),
+        clap::error::ErrorKind::ArgumentConflict
+    );
 }
 
 #[cfg(test)]
