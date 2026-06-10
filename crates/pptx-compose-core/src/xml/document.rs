@@ -186,14 +186,33 @@ fn ensure_well_formed(bytes: &[u8]) -> Result<()> {
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut stack: Vec<Vec<u8>> = Vec::new();
+    let mut roots = Vec::new();
 
     loop {
         match reader.read_event_into(&mut buffer) {
             Ok(Event::Start(event)) => {
                 validate_attributes(&event)?;
+                if stack.is_empty() {
+                    roots.push(XmlNode::Element(XmlElement {
+                        name: QualifiedName::from_raw(String::new()),
+                        attributes: Vec::new(),
+                        namespaces: NamespaceTable::new(),
+                        children: Vec::new(),
+                    }));
+                }
                 stack.push(event.name().as_ref().to_vec());
             }
-            Ok(Event::Empty(event)) => validate_attributes(&event)?,
+            Ok(Event::Empty(event)) => {
+                validate_attributes(&event)?;
+                if stack.is_empty() {
+                    roots.push(XmlNode::Element(XmlElement {
+                        name: QualifiedName::from_raw(String::new()),
+                        attributes: Vec::new(),
+                        namespaces: NamespaceTable::new(),
+                        children: Vec::new(),
+                    }));
+                }
+            }
             Ok(Event::End(event)) => {
                 let Some(start_name) = stack.pop() else {
                     return Err(Error::malformed_xml(
@@ -206,16 +225,37 @@ fn ensure_well_formed(bytes: &[u8]) -> Result<()> {
                     ));
                 }
             }
+            Ok(Event::Text(event)) => {
+                if stack.is_empty() {
+                    roots.push(XmlNode::Text(
+                        event
+                            .decode()
+                            .map_err(|source| {
+                                Error::malformed_xml_with_source(
+                                    "Raw XML replacement has invalid top-level text.",
+                                    source,
+                                )
+                            })?
+                            .into_owned(),
+                    ));
+                }
+            }
+            Ok(Event::CData(event)) => {
+                if stack.is_empty() {
+                    roots.push(XmlNode::CData(
+                        String::from_utf8_lossy(event.as_ref()).into_owned(),
+                    ));
+                }
+            }
+            Ok(Event::GeneralRef(event)) => {
+                if stack.is_empty() {
+                    roots.push(XmlNode::GeneralRef(
+                        String::from_utf8_lossy(event.as_ref()).into_owned(),
+                    ));
+                }
+            }
             Ok(Event::Eof) => break,
-            Ok(
-                Event::Text(_)
-                | Event::CData(_)
-                | Event::Comment(_)
-                | Event::PI(_)
-                | Event::DocType(_)
-                | Event::Decl(_)
-                | Event::GeneralRef(_),
-            ) => {}
+            Ok(Event::Comment(_) | Event::PI(_) | Event::DocType(_) | Event::Decl(_)) => {}
             Err(source) => {
                 return Err(Error::malformed_xml_with_source(
                     "Raw XML replacement is not well-formed.",
@@ -227,7 +267,7 @@ fn ensure_well_formed(bytes: &[u8]) -> Result<()> {
     }
 
     if stack.is_empty() {
-        Ok(())
+        parser::ensure_document_shape(&roots)
     } else {
         Err(Error::malformed_xml(
             "XML document ended before all elements were closed.",
@@ -331,6 +371,29 @@ fn raw_escape_hatch() {
     assert_eq!(part.raw, raw_before_malformed);
     assert_eq!(part.is_dirty(), dirty_before_malformed);
     assert_eq!(part.parsed, parsed_before_malformed);
+}
+
+#[cfg(test)]
+#[test]
+fn raw_escape_hatch_rejects_invalid_document_shape() {
+    use crate::error::ErrorCode;
+
+    let original = br#"<p:sld xmlns:p="urn:p"><p:cSld/></p:sld>"#.to_vec();
+    let mut part = XmlPart::from_raw(original.clone());
+
+    for replacement in [
+        br#"<p:sld xmlns:p="urn:p"/><p:sld xmlns:p="urn:p"/>"#.as_slice(),
+        br#"<p:sld xmlns:p="urn:p"/>junk"#.as_slice(),
+    ] {
+        let error = part
+            .replace_raw(replacement.to_vec())
+            .expect_err("invalid document-shape replacement fails");
+
+        assert_eq!(error.code(), ErrorCode::MalformedXml);
+        assert_eq!(part.raw, original);
+        assert!(!part.is_dirty());
+        assert!(part.parsed.is_none());
+    }
 }
 
 #[cfg(test)]

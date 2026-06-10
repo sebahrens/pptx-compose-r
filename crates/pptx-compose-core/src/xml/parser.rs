@@ -105,11 +105,49 @@ pub fn parse_document_with_limits(raw: &[u8], limits: &ResourceLimits) -> Result
             "XML document ended before all elements were closed.",
         ));
     }
+    ensure_document_shape(&roots)?;
 
     Ok(XmlDocument {
         declaration,
         nodes: roots,
     })
+}
+
+pub(crate) fn ensure_document_shape(nodes: &[XmlNode]) -> Result<()> {
+    let mut root_count = 0_u8;
+    for node in nodes {
+        match node {
+            XmlNode::Element(_) => {
+                root_count = root_count.saturating_add(1);
+                if root_count > 1 {
+                    return Err(Error::malformed_xml(
+                        "XML document contains more than one top-level element.",
+                    ));
+                }
+            }
+            XmlNode::Text(text) | XmlNode::CData(text) => {
+                if !text.chars().all(char::is_whitespace) {
+                    return Err(Error::malformed_xml(
+                        "XML document contains character data outside the root element.",
+                    ));
+                }
+            }
+            XmlNode::GeneralRef(_) => {
+                return Err(Error::malformed_xml(
+                    "XML document contains character data outside the root element.",
+                ));
+            }
+            XmlNode::Comment(_) | XmlNode::ProcessingInstruction(_) | XmlNode::DocType(_) => {}
+        }
+    }
+
+    if root_count == 1 {
+        Ok(())
+    } else {
+        Err(Error::malformed_xml(
+            "XML document does not contain a root element.",
+        ))
+    }
 }
 
 fn count_xml_node(node_count: &mut u64, limits: &ResourceLimits) -> Result<()> {
@@ -257,6 +295,45 @@ fn rejects_truncated_xml_as_malformed_xml() {
 
     assert_eq!(error.code(), ErrorCode::MalformedXml);
     assert!(error.message().contains("before all elements were closed"));
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_xml_with_more_than_one_top_level_element() {
+    use crate::error::ErrorCode;
+
+    let error = parse_document(b"<a/> <b/>").expect_err("multi-root XML must reject");
+
+    assert_eq!(error.code(), ErrorCode::MalformedXml);
+    assert!(error.message().contains("more than one top-level element"));
+}
+
+#[cfg(test)]
+#[test]
+fn rejects_xml_with_top_level_character_data() {
+    use crate::error::ErrorCode;
+
+    let error = parse_document(b"<a/>junk").expect_err("top-level text must reject");
+
+    assert_eq!(error.code(), ErrorCode::MalformedXml);
+    assert!(
+        error
+            .message()
+            .contains("character data outside the root element")
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn accepts_xml_misc_around_single_root_element() {
+    let document = parse_document(b"<?pi ok?><a/><!--tail-->").expect("misc around root parses");
+
+    assert_eq!(
+        document
+            .root_element()
+            .map(|element| element.name.raw.as_str()),
+        Some("a")
+    );
 }
 
 #[cfg(test)]
