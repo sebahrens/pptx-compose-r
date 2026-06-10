@@ -1001,9 +1001,10 @@ impl PptxServer {
             .changed_parts(&input.session_id)
             .map_err(outputs::map_error)?;
         if let Some(output_path) = input.output_path {
+            let allow_overwrite = input.overwrite && self.permission_policy.allow_overwrite;
             let output_path = self
                 .permission_policy
-                .check_write_with_overwrite(&output_path, input.overwrite)
+                .check_write_with_overwrite(&output_path, allow_overwrite)
                 .map_err(|error| outputs::map_error(error.into_core_error()))?;
             let temp_path = pptx_compose::temp_output_path(
                 &output_path,
@@ -1019,7 +1020,7 @@ impl PptxServer {
                     &input.session_id,
                     input.expected_revision,
                     &output_path,
-                    input.overwrite,
+                    allow_overwrite,
                     temp_path,
                 )
                 .map_err(outputs::map_error)?;
@@ -1642,6 +1643,60 @@ mod tests {
         );
         assert_eq!(exported.0.0.result["byte_length"], metadata.len());
         assert_eq!(exported.0.0.result["inline"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn export_overwrite_requires_server_policy_and_client_request() {
+        let root = std::env::temp_dir().join(format!(
+            "pptx-compose-mcp-overwrite-policy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+        let workspace = root.join("workspace");
+        let temp_dir = root.join("tmp");
+        fs::create_dir_all(&workspace).expect("create workspace");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let output_path = workspace.join("existing.pptx");
+        fs::write(&output_path, b"existing output").expect("write existing output");
+
+        let server = PptxServer::with_permissions(permissions::PermissionPolicy::new(
+            workspace.clone(),
+            temp_dir,
+            false,
+        ));
+        let opened = open_fixture_session(&server);
+
+        let result = server
+            .pptx_export(rmcp::handler::server::wrapper::Parameters(ExportInput {
+                session_id: opened.session_id,
+                client_request_id: None,
+                expected_revision: opened.revision,
+                output_path: Some(output_path.to_string_lossy().into_owned()),
+                inline: false,
+                overwrite: true,
+            }))
+            .await;
+
+        let Err(error) = result else {
+            panic!("server policy rejects client overwrite request");
+        };
+        let envelope = error
+            .structured_content
+            .expect("overwrite policy error has structured content");
+        assert_eq!(error.is_error, Some(true));
+        assert_eq!(
+            envelope["error"]["code"],
+            ErrorCode::PermissionDenied.as_str()
+        );
+        assert_eq!(
+            fs::read(&output_path).expect("existing output remains"),
+            b"existing output"
+        );
+
+        fs::remove_dir_all(root).expect("remove overwrite policy fixture");
     }
 
     #[tokio::test]

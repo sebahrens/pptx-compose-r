@@ -209,7 +209,7 @@ impl PermissionError {
                 ..ErrorLocation::default()
             })
             .with_suggestion(
-                "Use a path under the configured workspace or temp directory, and pass overwrite:true when replacing an existing export.",
+                "Use a path under the configured workspace or temp directory; replacing an existing export also requires overwrite:true and server overwrite policy.",
             )
     }
 }
@@ -235,7 +235,7 @@ impl fmt::Display for PermissionError {
                 "write path parent directory does not exist".to_owned()
             }
             PermissionDeniedReason::SilentOverwrite => {
-                "output already exists and overwrite:true was not provided".to_owned()
+                "output already exists and overwriting is not allowed for this request".to_owned()
             }
             PermissionDeniedReason::Io(message) => {
                 format!("path could not be resolved before permission check: {message}")
