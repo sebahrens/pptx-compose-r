@@ -94,7 +94,10 @@ pub fn agent_element_id(
     cnvpr_id: Option<i64>,
     path: &SpTreePath,
 ) -> String {
-    let key = cnvpr_id.map_or_else(|| dotted_path(&path.sp_tree_path), |id| id.to_string());
+    let key = cnvpr_id.map_or_else(
+        || format!("path-{}", dotted_path(&path.sp_tree_path)),
+        |id| id.to_string(),
+    );
     format!("{}:{}-{}", slide_id, kind.agent_prefix(), key)
 }
 
@@ -234,7 +237,7 @@ fn sp_tree_indexing() {
     );
     assert_eq!(
         agent_element_id("slide-1", group.1, None, &group.0),
-        "slide-1:group-3"
+        "slide-1:group-path-3"
     );
 
     let nested_picture = &indexed[3];
@@ -269,4 +272,22 @@ fn agent_id_derivation() {
         .expect("fixture contains second run");
     let run_id = run_agent_id(&paragraph_id, second_run_index);
     assert_eq!(run_id, "slide-2:shape-4:p0:r1");
+}
+
+#[cfg(test)]
+#[test]
+fn fallback_agent_ids_do_not_collide_with_cnvpr_ids() {
+    let path = SpTreePath {
+        sp_tree_path: vec![3],
+        group_path: Vec::new(),
+    };
+
+    assert_eq!(
+        agent_element_id("slide-1", ElementKind::Shape, Some(3), &path),
+        "slide-1:shape-3"
+    );
+    assert_eq!(
+        agent_element_id("slide-1", ElementKind::Shape, None, &path),
+        "slide-1:shape-path-3"
+    );
 }

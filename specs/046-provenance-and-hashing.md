@@ -143,7 +143,7 @@ Agent IDs are stable string identifiers for the exported `(document_id, revision
 - An element's agent ID is `{slide_id}:{kind_prefix}-{key}` where:
   - `slide_id` is the containing slide's agent ID.
   - `kind_prefix` is a fixed token per kind: `shape` (autoshape/text box / placeholder shape), `pic` (picture), `group` (group shape), `graphic` (graphicFrame: chart/table/SmartArt), `cxn` (connector), `oth` (any other/unknown shape kind).
-  - `key` is the element's `p:cNvPr/@id` value when present. For malformed or unknown `p:spTree` child elements that lack `cNvPr`, implementations may fall back to the dotted `sp_tree_path` so the element remains addressable within the exported revision.
+  - `key` is the element's `p:cNvPr/@id` value when present. For malformed or unknown `p:spTree` child elements that lack `cNvPr`, implementations may fall back to `path-` plus the dotted `sp_tree_path` so the element remains addressable within the exported revision without colliding with a numeric `cNvPr/@id`.
 - Rationale: `cNvPr/@id` is the DrawingML non-visual drawing property ID and remains stable under reordering of siblings. After an edit that changes or allocates a drawing ID, a new export produces a new `(document_id, revision)` and IDs are recomputed.
 - The illustrative examples in 040/042 (`slide-1:shape-4`, `slide-1:pic-7`) are pinned to this rule: the numeric suffix is the `cNvPr/@id` value, not the `p:spTree` child index.
 
