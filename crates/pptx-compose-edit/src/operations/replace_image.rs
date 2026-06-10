@@ -483,7 +483,9 @@ fn image_relationship_ref_count(package: &Package, media_part: &PartName) -> usi
 
 fn content_type_default_is_unused(package: &Package, extension: &str) -> bool {
     package.parts().iter().all(|part| {
-        if part_extension(part.name()) != Some(extension) {
+        if !part_extension(part.name())
+            .is_some_and(|part_extension| part_extension.eq_ignore_ascii_case(extension))
+        {
             return true;
         }
         package.content_types().override_for(part.name()).is_some()
@@ -776,6 +778,58 @@ pub mod retargets_not_shared {
             Some("image/jpeg")
         );
         assert_eq!(relationship_target(&package, &slide, "rId5"), new_media);
+    }
+
+    #[test]
+    fn unshared_retarget_preserves_default_used_by_uppercase_extension_part() {
+        let slide = part("ppt/slides/slide1.xml");
+        let old_media = part("ppt/media/image1.jpg");
+        let uppercase_media = part("ppt/media/logo.JPG");
+        let mut package = Package::new();
+        package
+            .insert_zip_entry(slide.zip_entry_name(), slide_xml("rId5").into_bytes())
+            .expect("slide inserted");
+        package
+            .insert_zip_entry(
+                "ppt/slides/_rels/slide1.xml.rels",
+                rels_xml("../media/image1.jpg", "rId5").into_bytes(),
+            )
+            .expect("slide rels inserted");
+        package
+            .insert_zip_entry(old_media.zip_entry_name(), jpeg_bytes())
+            .expect("old media inserted");
+        package
+            .insert_zip_entry(uppercase_media.zip_entry_name(), jpeg_bytes())
+            .expect("uppercase media inserted");
+        package
+            .content_types_mut()
+            .insert_default("jpg", "image/jpeg");
+        package.push_relationship(Relationship::internal(
+            RelationshipSource::Part(slide.clone()),
+            "rId5",
+            IMAGE_REL_TYPE,
+            "../media/image1.jpg",
+        ));
+
+        let operation = ReplaceImage {
+            operation_id: "op-1".to_owned(),
+            element_id: "slide-1:pic-1".to_owned(),
+            media_ref: "replacement".to_owned(),
+            content_type: "image/png".to_owned(),
+        };
+        operation
+            .apply(&mut package, &target(&slide), &media_inputs())
+            .expect("image replacement retargets");
+
+        assert!(package.parts().get(&old_media).is_none());
+        assert_eq!(
+            package.content_types().default_for_ext("jpg"),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            package.content_types().resolve(&uppercase_media),
+            Some("image/jpeg")
+        );
     }
 
     fn relationship_target(package: &Package, source: &PartName, rel_id: &str) -> PartName {
