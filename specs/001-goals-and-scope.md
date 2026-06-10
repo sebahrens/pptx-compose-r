@@ -55,7 +55,10 @@ V1 supports a narrow but reliable set of edits plus the read surface that makes 
   `formatting_simplified`; `run_scoped` replacement edits one inspected run in
   place and preserves sibling formatting/structure.
 - `add_text_box` — append a simple text box to a slide with basic font/fill/alignment style fields.
-- `move_resize_element` — move or resize a `text_box`, `shape`, `picture`, or `graphic_frame`. Graphic-frame geometry edits are faithful because they touch only the frame-level `p:xfrm`, never the chart/SmartArt cache.
+- `move_resize_element` — move or resize a `text_box`, `shape`, `image`,
+  `chart`, `table`, `diagram`, or `ole`. Graphic-frame geometry edits are
+  faithful because they touch only the frame-level `p:xfrm`, never the
+  chart/SmartArt cache.
 - `set_alt_text` — set title/alt-text metadata on any element with a `p:cNvPr`.
 - `set_document_metadata` — set supported core properties in `docProps/core.xml`.
 - `add_image` — add an image to a slide, atomically updating the media part, relationships, and content types.

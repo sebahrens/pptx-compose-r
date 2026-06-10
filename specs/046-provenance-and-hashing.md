@@ -84,7 +84,7 @@ The same normalization defines the value of the `normalized` field in 042, so th
    {
      "kind": <fixed element-kind token>,
      "part": <canonical PartName of the slide part>,
-     "sp_tree_path": <array of integers, the spTree child-index path>,
+     "sp_tree_path": <array of integers, the drawable spTree child-index path>,
      "group_path": <array of integers, empty when top-level>,
      "cnvpr_id": <integer cNvPr id, or null if the element has no cNvPr>,
      "schema": "pptx-compose.fingerprint.v1"
@@ -94,8 +94,17 @@ The same normalization defines the value of the `normalized` field in 042, so th
 
 Notes:
 
-- `kind` is one of the fixed V1 tokens `text_box`, `shape`, `image`, `group`, `graphic_frame`, `connector`, or `other`, derived from the element kind used for agent IDs.
-- `sp_tree_path` / `group_path` use the same indexing as `xml_location` in 042 (positional child indices within `p:spTree`, descending through `p:grpSp`). They locate the element; `cnvpr_id` detects structural substitution at that location.
+- `kind` is the internal element-kind token, not the collapsed agent-view
+  `Element.kind` guard token. It is one of `text_box`, `shape`, `image`,
+  `group`, `chart`, `table`, `diagram`, `ole`, `graphic_frame`, `connector`, or
+  `other`. The first eight correspond to the canonical agent-view vocabulary in
+  040; `graphic_frame`, `connector`, and `other` preserve finer OOXML shape-tree
+  distinctions for fingerprint stability even when selector guards expose them
+  as `shape` or accept legacy guard aliases.
+- `sp_tree_path` / `group_path` use the same indexing as `xml_location` in 042:
+  1-based drawable-child ordinals within `p:spTree`, descending through
+  `p:grpSp`, excluding required shape-tree property elements. They locate the
+  element; `cnvpr_id` detects structural substitution at that location.
 - `cnvpr_id` is included for substitution detection only. It is **not** the agent ID and must never be used to derive one (cNvPr ids are reassignable and may collide across the deck).
 - `text_hash` is deliberately excluded from `fingerprint`. This keeps
   `fingerprint` stable for text-only edits and for multi-operation patches that
