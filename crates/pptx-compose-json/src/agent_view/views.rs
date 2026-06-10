@@ -1312,7 +1312,7 @@ fn text_coverage_warnings_for_element(
         kind,
         part: part.to_owned(),
         reason: "image_text_not_extractable".to_owned(),
-        detail: "This picture may contain visible text baked into image pixels or vector artwork. V1 does not OCR or edit that text, so find-text only searches accessibility metadata and XML text, not the image content.".to_owned(),
+        detail: "This picture may contain visible text baked into image pixels or vector artwork. V1 does not OCR or edit that text, so find-text only searches extracted XML text such as editable element text and table cells, not image content or accessibility metadata.".to_owned(),
     }]
 }
 
@@ -2621,6 +2621,11 @@ fn editable_maps_are_kind_appropriate_for_text_and_picture_elements() {
         image["text_coverage_warnings"][0]["reason"],
         "image_text_not_extractable"
     );
+    let warning_detail = image["text_coverage_warnings"][0]["detail"]
+        .as_str()
+        .expect("warning detail is a string");
+    assert!(warning_detail.contains("editable element text and table cells"));
+    assert!(warning_detail.contains("not image content or accessibility metadata"));
 
     let matches = find_text(
         &pkg,
@@ -2641,6 +2646,7 @@ fn editable_maps_are_kind_appropriate_for_text_and_picture_elements() {
         image["id"].as_str().expect("image id is a string")
     );
     assert_eq!(matches.warnings[0].code, "possible_image_text_uneditable");
+    assert_eq!(matches.warnings[0].detail, warning_detail);
 }
 
 #[cfg(test)]

@@ -58,7 +58,7 @@
         "kind": "image",
         "part": "ppt/slides/slide1.xml",
         "reason": "image_text_not_extractable",
-        "detail": "This picture may contain visible text baked into image pixels or vector artwork. V1 does not OCR or edit that text, so find-text only searches accessibility metadata and XML text, not the image content."
+        "detail": "This picture may contain visible text baked into image pixels or vector artwork. V1 does not OCR or edit that text, so find-text only searches extracted XML text such as editable element text and table cells, not image content or accessibility metadata."
       }
     ]
   },
