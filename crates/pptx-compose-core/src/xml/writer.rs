@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use quick_xml::{
     Writer,
     events::{BytesCData, BytesDecl, BytesEnd, BytesPI, BytesRef, BytesStart, BytesText, Event},
@@ -92,7 +94,8 @@ fn start_event(element: &XmlElement, deterministic: bool) -> Result<BytesStart<'
         validate_xml_chars(value, "XML namespace declaration value").map_err(|error| {
             Error::with_source(ErrorCode::WriteFailed, error.message().to_owned(), error)
         })?;
-        start.push_attribute((name.as_str(), value));
+        let escaped = escape_attribute_value(value);
+        start.push_attribute((name.as_bytes(), escaped.as_ref()));
     }
 
     let mut attributes = element
@@ -109,10 +112,38 @@ fn start_event(element: &XmlElement, deterministic: bool) -> Result<BytesStart<'
         validate_xml_chars(&attribute.value, "XML attribute value").map_err(|error| {
             Error::with_source(ErrorCode::WriteFailed, error.message().to_owned(), error)
         })?;
-        start.push_attribute((attribute.name.raw.as_str(), attribute.value.as_str()));
+        let escaped = escape_attribute_value(&attribute.value);
+        start.push_attribute((attribute.name.raw.as_bytes(), escaped.as_ref()));
     }
 
     Ok(start)
+}
+
+fn escape_attribute_value(value: &str) -> Cow<'_, [u8]> {
+    if !value.bytes().any(|byte| {
+        matches!(
+            byte,
+            b'&' | b'<' | b'>' | b'"' | b'\'' | b'\n' | b'\t' | b'\r'
+        )
+    }) {
+        return Cow::Borrowed(value.as_bytes());
+    }
+
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            '\n' => escaped.push_str("&#10;"),
+            '\t' => escaped.push_str("&#9;"),
+            '\r' => escaped.push_str("&#13;"),
+            _ => escaped.push(character),
+        }
+    }
+    Cow::Owned(escaped.into_bytes())
 }
 
 fn attribute_order(left: &&XmlAttribute, right: &&XmlAttribute) -> std::cmp::Ordering {
@@ -197,6 +228,24 @@ fn preserves_relationship_xml_semantics() {
                     |attribute| attribute.name.raw == "TargetMode" && attribute.value == "External"
                 ))
     );
+}
+
+#[cfg(test)]
+#[test]
+fn escapes_attribute_whitespace_controls() {
+    let raw =
+        br#"<p:sld xmlns:p="urn:p" data-text="line1&#10;line2&#9;tab&#13;cr"><p:cSld/></p:sld>"#;
+    let parsed = parser::parse_document(raw).expect("input parses");
+
+    let written = write_document(&parsed, &WriteOptions::default()).expect("xml writes");
+    let serialized = String::from_utf8(written.clone()).expect("writer emits UTF-8");
+    assert!(serialized.contains(r#"data-text="line1&#10;line2&#9;tab&#13;cr""#));
+    assert!(!serialized.contains("line1\nline2"));
+    assert!(!serialized.contains("line2\ttab"));
+    assert!(!serialized.contains("tab\rcr"));
+
+    let reparsed = parser::parse_document(&written).expect("written XML reparses");
+    assert_eq!(reparsed, parsed);
 }
 
 #[cfg(test)]
