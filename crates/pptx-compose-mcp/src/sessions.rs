@@ -475,6 +475,7 @@ impl SessionStore {
         }
         if report.status == PatchStatus::Applied {
             session.package = package;
+            session.document_id = report.new_document_id.clone();
             session.revision = u64::from(report.new_revision);
             session
                 .changed_parts
@@ -870,6 +871,85 @@ fn concurrent_same_revision_applies_serialize_and_reject_stale_patch() {
             .expect("session remains open")
             .revision,
         2
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn successful_apply_updates_session_document_id_for_next_patch() {
+    let store = SessionStore::default();
+    let fixture = test_text_pptx_bytes();
+    let opened = store
+        .open_package(
+            PresentationDocument::from_bytes(fixture.clone()).expect("fixture pptx opens"),
+            &fixture,
+        )
+        .expect("session opens");
+
+    let first = store
+        .apply_patch(
+            &opened.session_id,
+            replace_text_patch(&opened.document_id, opened.revision, "First edit"),
+            false,
+        )
+        .expect("first patch applies");
+    assert_eq!(first.revision, 2);
+    assert_ne!(first.report.new_document_id, opened.document_id);
+    assert_eq!(first.report.new_revision, 2);
+    assert_eq!(
+        store
+            .get(&opened.session_id)
+            .expect("session remains open")
+            .document_id,
+        first.report.new_document_id
+    );
+
+    let post_apply = store
+        .get(&opened.session_id)
+        .expect("session remains open after first apply");
+    let post_apply_view = post_apply
+        .package
+        .to_agent_json_with_revision(
+            pptx_compose::AgentViewOptions {
+                mode: pptx_compose::json::agent_view::views::ViewMode::SlideDetail,
+                include_elements: true,
+                slide_id: Some("slide-1".to_owned()),
+                slide_ids: Vec::new(),
+                element_id: None,
+                cursor: None,
+                limit: None,
+            },
+            post_apply.revision,
+        )
+        .expect("post-apply view builds");
+    assert_eq!(post_apply_view["document_id"], first.report.new_document_id);
+    assert_eq!(post_apply_view["revision"], first.report.new_revision);
+
+    let second = store
+        .apply_patch(
+            &opened.session_id,
+            replace_text_patch(
+                post_apply_view["document_id"]
+                    .as_str()
+                    .expect("view document_id is a string"),
+                post_apply_view["revision"]
+                    .as_u64()
+                    .expect("view revision is a number"),
+                "Second edit",
+            ),
+            false,
+        )
+        .expect("second patch built from post-apply view applies");
+
+    assert_eq!(second.revision, 3);
+    assert_eq!(second.report.base_revision, 2);
+    assert_ne!(second.report.new_document_id, first.report.new_document_id);
+    assert_eq!(
+        store
+            .get(&opened.session_id)
+            .expect("session remains open")
+            .document_id,
+        second.report.new_document_id
     );
 }
 
