@@ -13,6 +13,9 @@ use crate::{
     },
 };
 
+const OFFICE_DOCUMENT_RELATIONSHIPS_NS: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
 pub(crate) const PRODUCER_CHECK_DANGLING_INTERNAL_RELATIONSHIP: &str =
     "validation::package_graph::check_dangling_internal_relationship";
 pub(crate) const PRODUCER_CHECK_UNREFERENCED_MEDIA: &str =
@@ -310,7 +313,7 @@ fn check_unresolved_relationship_reference(pkg: &Package, findings: &mut Vec<Fin
             continue;
         };
         let mut references = BTreeSet::new();
-        collect_relationship_references(root, &mut references);
+        collect_relationship_references(root, &NamespaceScope::default(), &mut references);
 
         for relationship_id in references {
             let resolved = pkg
@@ -337,23 +340,64 @@ fn check_unresolved_relationship_reference(pkg: &Package, findings: &mut Vec<Fin
     }
 }
 
-fn collect_relationship_references(element: &XmlElement, references: &mut BTreeSet<String>) {
+#[derive(Clone, Default)]
+struct NamespaceScope {
+    prefixed: BTreeMap<String, String>,
+}
+
+impl NamespaceScope {
+    fn with_element_bindings(&self, element: &XmlElement) -> Self {
+        let mut scope = self.clone();
+        for binding in element.namespaces.bindings() {
+            if let Some(prefix) = binding.prefix.as_deref() {
+                scope
+                    .prefixed
+                    .insert(prefix.to_owned(), binding.uri.to_owned());
+            }
+        }
+        scope
+    }
+
+    fn resolve_prefix(&self, prefix: &str) -> Option<&str> {
+        self.prefixed.get(prefix).map(String::as_str)
+    }
+}
+
+fn collect_relationship_references(
+    element: &XmlElement,
+    inherited_scope: &NamespaceScope,
+    references: &mut BTreeSet<String>,
+) {
+    let scope = inherited_scope.with_element_bindings(element);
+
     for attribute in &element.attributes {
         if attribute.namespace_declaration {
             continue;
         }
-        if is_relationship_reference_attribute(element, &attribute.name.raw) {
+        if is_relationship_reference_attribute(&scope, &attribute.name) {
             references.insert(attribute.value.clone());
         }
     }
 
     for child in element.children.iter().filter_map(XmlNode::as_element) {
-        collect_relationship_references(child, references);
+        collect_relationship_references(child, &scope, references);
     }
 }
 
-fn is_relationship_reference_attribute(_element: &XmlElement, raw_name: &str) -> bool {
-    matches!(raw_name, "r:id" | "r:embed" | "r:link" | "rId")
+fn is_relationship_reference_attribute(
+    namespace_scope: &NamespaceScope,
+    name: &crate::xml::document::QualifiedName,
+) -> bool {
+    if name.prefix.is_none() {
+        return name.local_name == "rId";
+    }
+
+    matches!(name.local_name.as_str(), "id" | "embed" | "link")
+        && name
+            .prefix
+            .as_deref()
+            .and_then(|prefix| namespace_scope.resolve_prefix(prefix))
+            == Some(OFFICE_DOCUMENT_RELATIONSHIPS_NS)
 }
 
 fn source_key(part_name: Option<&PartName>) -> String {
@@ -568,7 +612,7 @@ fn detects_unresolved_relationship_reference() {
     package
         .insert_zip_entry(
             "ppt/slides/slide1.xml",
-            br#"<p:sld xmlns:p="p" xmlns:r="r"><p:pic r:embed="rIdMissing"/><p:pic r:embed="rId1"/></p:sld>"#.to_vec(),
+            br#"<p:sld xmlns:p="p" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:pic r:embed="rIdMissing"/><p:pic r:embed="rId1"/></p:sld>"#.to_vec(),
         )
         .expect("slide part inserted");
     package.content_types_mut().insert_override(
@@ -595,6 +639,75 @@ fn detects_unresolved_relationship_reference() {
         .iter()
         .find(|finding| finding.code == FindingCode::UnresolvedRelationshipReference)
         .expect("missing relationship reference is reported");
+    assert_eq!(finding.location["relationship_id"], "rIdMissing");
+}
+
+#[test]
+fn detects_alternate_prefix_relationship_reference() {
+    use crate::{
+        opc::{
+            package::Package,
+            part_name::PartName,
+            relationships::{Relationship, RelationshipSource},
+        },
+        validation::{FindingCode, package_graph::check_package_graph},
+    };
+
+    let slide_part = PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid slide part");
+    let mut package = Package::new();
+    package
+        .insert_zip_entry(
+            "ppt/slides/slide1.xml",
+            br#"<p:sld xmlns:p="p" xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:pic rel:embed="rIdMissing"/><p:pic rId="rId1"/></p:sld>"#.to_vec(),
+        )
+        .expect("slide part inserted");
+    package.content_types_mut().insert_override(
+        slide_part.clone(),
+        "application/vnd.openxmlformats-officedocument.presentationml.slide+xml",
+    );
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(slide_part),
+        "rId1",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+        "../media/image1.png",
+    ));
+
+    let findings = check_package_graph(&package);
+
+    let unresolved = findings
+        .iter()
+        .filter(|finding| finding.code == FindingCode::UnresolvedRelationshipReference)
+        .collect::<Vec<_>>();
+    assert_eq!(unresolved.len(), 1);
+    assert_eq!(unresolved[0].location["relationship_id"], "rIdMissing");
+}
+
+#[test]
+fn detects_inherited_relationship_namespace_reference() {
+    use crate::{
+        opc::{package::Package, part_name::PartName},
+        validation::{FindingCode, package_graph::check_package_graph},
+    };
+
+    let slide_part = PartName::from_zip_entry("ppt/slides/slide1.xml").expect("valid slide part");
+    let mut package = Package::new();
+    package
+        .insert_zip_entry(
+            "ppt/slides/slide1.xml",
+            br#"<p:sld xmlns:p="p" xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:spTree><p:pic rel:link="rIdMissing"/></p:spTree></p:sld>"#.to_vec(),
+        )
+        .expect("slide part inserted");
+    package.content_types_mut().insert_override(
+        slide_part,
+        "application/vnd.openxmlformats-officedocument.presentationml.slide+xml",
+    );
+
+    let findings = check_package_graph(&package);
+
+    let finding = findings
+        .iter()
+        .find(|finding| finding.code == FindingCode::UnresolvedRelationshipReference)
+        .expect("inherited namespace relationship reference is reported");
     assert_eq!(finding.location["relationship_id"], "rIdMissing");
 }
 
