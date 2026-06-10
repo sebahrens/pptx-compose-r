@@ -32,7 +32,6 @@ const DIGITAL_SIGNATURE_XML_CONTENT_TYPE: &str =
 
 pub fn check_invariants(pkg: &Package, findings: &mut Vec<Finding>) {
     check_duplicate_slide_id(pkg, findings);
-    check_xml_well_formed(pkg, findings);
     check_slide_xml_invariants(pkg, findings);
     check_dirty_xml_parts(pkg, findings);
     check_external_relationship_not_checked(pkg, findings);
@@ -110,39 +109,11 @@ fn check_slide_xml_invariants(pkg: &Package, findings: &mut Vec<Finding>) {
     }
 }
 
-fn check_xml_well_formed(pkg: &Package, findings: &mut Vec<Finding>) {
-    for part in pkg.parts().iter() {
-        let part_name = part.name();
-        if !is_xml_part(part_name) || is_opc_control_part(part_name) {
-            continue;
-        }
-
-        if let Err(error) = parse_document(part.bytes()) {
-            findings.push(Finding::new(
-                "",
-                FindingCode::MalformedXml,
-                format!(
-                    "XML part {part_name} is not well-formed: {}",
-                    error.message()
-                ),
-                false,
-                location(&[("part", part_name.zip_entry_name().to_owned())]),
-                Some("Repair the XML part before treating the package as valid.".to_owned()),
-            ));
-        }
-    }
-}
-
 fn is_xml_part(part_name: &PartName) -> bool {
     part_name
         .as_str()
         .rsplit_once('.')
         .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("xml"))
-}
-
-fn is_opc_control_part(part_name: &PartName) -> bool {
-    let path = part_name.as_str();
-    path == "/[Content_Types].xml" || (path.contains("/_rels/") && path.ends_with(".rels"))
 }
 
 fn is_slide_part(pkg: &Package, part_name: &PartName) -> bool {
@@ -563,7 +534,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_malformed_undirtied_xml() {
+    fn ignores_malformed_clean_xml_for_no_edit_validation() {
         let mut package = Package::new();
         package
             .insert_zip_entry(
@@ -577,16 +548,70 @@ mod tests {
 
         let outcome = validate_package(&package, ValidationMode::NoEdit);
 
-        assert_eq!(outcome.status, ValidationStatus::Invalid);
         assert!(package.dirty_parts().is_empty());
+        assert_eq!(outcome.status, ValidationStatus::Valid);
+        assert!(
+            outcome
+                .findings
+                .iter()
+                .all(|finding| finding.code != FindingCode::MalformedXml),
+            "clean XML parts are raw-copied and must not produce malformed_xml"
+        );
+    }
+
+    #[test]
+    fn ignores_malformed_clean_utf16_xml_for_no_edit_validation() {
+        let mut package = Package::new();
+        package
+            .insert_zip_entry(
+                "customXml/item1.xml",
+                b"\xff\xfe<\0r\0o\0o\0t\0/\0>\0".to_vec(),
+            )
+            .expect("custom XML inserted");
+        package
+            .content_types_mut()
+            .insert_default("xml", "application/xml");
+
+        let outcome = validate_package(&package, ValidationMode::NoEdit);
+
+        assert!(package.dirty_parts().is_empty());
+        assert_eq!(outcome.status, ValidationStatus::Valid);
+        assert!(
+            outcome
+                .findings
+                .iter()
+                .all(|finding| finding.code != FindingCode::MalformedXml),
+            "clean UTF-16 XML parts are raw-copied and must not produce malformed_xml"
+        );
+    }
+
+    #[test]
+    fn detects_malformed_utf16_xml_when_dirty() {
+        let item_part =
+            PartName::from_zip_entry("customXml/item1.xml").expect("valid custom XML part");
+        let mut package = Package::new();
+        package
+            .insert_zip_entry(
+                "customXml/item1.xml",
+                b"\xff\xfe<\0r\0o\0o\0t\0/\0>\0".to_vec(),
+            )
+            .expect("custom XML inserted");
+        package
+            .content_types_mut()
+            .insert_default("xml", "application/xml");
+        package.mark_dirty(item_part);
+
+        let outcome = validate_package(&package, ValidationMode::Edited);
+
+        assert_eq!(outcome.status, ValidationStatus::Invalid);
         let malformed_xml = outcome
             .findings
             .iter()
             .find(|finding| finding.code == FindingCode::MalformedXml)
-            .expect("malformed undirtied XML finding");
+            .expect("malformed dirty UTF-16 XML finding");
         assert_eq!(
             malformed_xml.location,
-            serde_json::json!({"part": "ppt/slides/slide1.xml"})
+            serde_json::json!({"part": "customXml/item1.xml"})
         );
         assert_eq!(malformed_xml.severity, crate::validation::Severity::Fatal);
     }

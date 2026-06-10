@@ -117,7 +117,7 @@ mod manifest {
 
 mod corpus {
     use pptx_compose_core::{
-        validation::{FindingCode, Severity, ValidationMode, ValidationStatus, validate_package},
+        validation::{FindingCode, ValidationMode, ValidationStatus, validate_package},
         xml::parser::parse_document,
         zip::reader::from_bytes,
     };
@@ -277,17 +277,14 @@ mod corpus {
 
         let outcome = validate_package(&package, ValidationMode::NoEdit);
 
-        assert_eq!(outcome.status, ValidationStatus::Invalid);
-        let malformed_xml = outcome
-            .findings
-            .iter()
-            .find(|finding| finding.code == FindingCode::MalformedXml)
-            .expect("validate reports malformed_xml for the malformed fixture");
-        assert_eq!(malformed_xml.severity, Severity::Fatal);
         assert!(
-            malformed_xml.blocking,
-            "fatal malformed_xml blocks no-edit validation"
+            outcome
+                .findings
+                .iter()
+                .all(|finding| finding.code != FindingCode::MalformedXml),
+            "clean malformed XML parts are raw-copied and do not block no-edit validation"
         );
+        assert_eq!(outcome.status, ValidationStatus::Valid);
     }
 }
 

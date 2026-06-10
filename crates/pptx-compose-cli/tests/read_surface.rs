@@ -256,29 +256,34 @@ fn inspect_full_malformed_slide_xml_preserves_core_error_code() {
 }
 
 #[test]
-fn validate_malformed_slide_xml_emits_report_and_exits_validation_failure() {
+fn validate_malformed_clean_slide_xml_emits_non_blocking_report() {
     let fixture = repo_root().join("fixtures/malformed/broken-slide-xml.pptx");
     let output = run_cli_raw(["--json-errors", "validate", fixture_str(&fixture)]);
 
     assert_eq!(
         output.status.code(),
-        Some(30),
+        Some(0),
         "stdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 
     let report = parse_stdout(&output);
-    assert_eq!(report["status"], "invalid");
-    assert_eq!(report["summary"]["fatal"], 1);
-    assert_eq!(report["findings"][0]["code"], "malformed_xml");
-    assert_eq!(report["findings"][0]["severity"], "fatal");
-
-    let stderr_text = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-    let envelope: serde_json::Value =
-        serde_json::from_str(&stderr_text).expect("stderr is one JSON document");
-    assert_eq!(envelope["schema"], "pptx-compose.error.v1");
-    assert_eq!(envelope["error"]["code"], "validation_failed");
+    assert_eq!(report["status"], "valid");
+    assert_eq!(report["summary"]["fatal"], 0);
+    assert_eq!(report["summary"]["errors"], 0);
+    assert_eq!(
+        report["findings"]
+            .as_array()
+            .expect("findings is array")
+            .len(),
+        0
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "successful validate must not emit JSON error envelope: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]

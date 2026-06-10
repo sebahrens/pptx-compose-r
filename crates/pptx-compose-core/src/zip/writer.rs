@@ -523,6 +523,31 @@ fn preserve_mode_keeps_unknown_entry_bytes() {
 }
 
 #[cfg(test)]
+#[test]
+fn no_edit_write_preserves_clean_malformed_xml_part() {
+    use crate::{opc::package::Package, zip::reader::from_bytes};
+
+    let malformed_bytes = br#"<root><unclosed></root>"#;
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("customXml/item1.xml", malformed_bytes.to_vec())
+        .expect("custom XML inserted");
+    package
+        .content_types_mut()
+        .insert_default("xml", "application/xml");
+
+    let written = write_package_vec(&package, &WriteOptions::default())
+        .expect("no-edit write raw-copies clean malformed XML");
+    let written_entries = from_bytes(&written).expect("written package reads");
+    let written_part = written_entries
+        .iter()
+        .find(|entry| entry.meta.original_name == "customXml/item1.xml")
+        .expect("custom XML part preserved");
+
+    assert_eq!(written_part.bytes, malformed_bytes);
+}
+
+#[cfg(test)]
 fn compressed_bytes(package: &[u8], index: usize) -> &[u8] {
     use std::io::Cursor;
 
