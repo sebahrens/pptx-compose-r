@@ -1485,6 +1485,97 @@ fn inspect_element_guards_resolve_for_replace_text_dry_run() {
 }
 
 #[test]
+fn inspect_element_guards_resolve_for_graphic_frame_text_dry_run() {
+    for (name, bytes, element_id, mut operation) in [
+        (
+            "chart",
+            graphic_frame_deck_with_clean_extras(),
+            "slide-1:graphic-7",
+            serde_json::json!({
+                "operation_id": "guarded-chart",
+                "op": "replace_text",
+                "mode": "run_scoped",
+                "run": { "paragraph_index": 0, "run_index": 0 },
+                "match": "Revenue ",
+                "text": "Revenue guarded "
+            }),
+        ),
+        (
+            "table",
+            graphic_frame_deck_with_multiparagraph_table(),
+            "slide-1:graphic-8",
+            serde_json::json!({
+                "operation_id": "guarded-table",
+                "op": "replace_text",
+                "cell": { "row": 0, "col": 0 },
+                "match": "North",
+                "text": "North guarded"
+            }),
+        ),
+        (
+            "diagram",
+            graphic_frame_deck_with_clean_extras(),
+            "slide-1:graphic-9",
+            serde_json::json!({
+                "operation_id": "guarded-diagram",
+                "op": "replace_text",
+                "mode": "run_scoped",
+                "run": { "paragraph_index": 0, "run_index": 0 },
+                "match": "SmartArt Node",
+                "text": "SmartArt guarded"
+            }),
+        ),
+    ] {
+        let document = PresentationDocument::from_bytes(&bytes).expect("fixture opens");
+        let view = document
+            .to_agent_json_with_options(AgentViewOptions {
+                mode: ViewMode::SlideDetail,
+                include_elements: false,
+                slide_id: Some("slide-1".to_owned()),
+                slide_ids: Vec::new(),
+                element_id: None,
+                cursor: None,
+                limit: None,
+            })
+            .expect("slide_detail builds");
+        let element = inspect_element(&view, element_id);
+        operation["selector"] = serde_json::json!({
+            "type": "element_id",
+            "id": element["id"],
+            "guards": {
+                "slide_id": element["slide_id"],
+                "kind": element["kind"],
+                "part": element["part"],
+                "text_hash": element["text"]["text_hash"],
+                "fingerprint": element["fingerprint"]
+            }
+        });
+
+        let patch = parse_patch(serde_json::json!({
+            "schema": "pptx-compose.patch.v1",
+            "version": 1,
+            "document_id": document_id(&bytes),
+            "base_revision": 1,
+            "client_request_id": format!("graphic-frame-guard-{name}"),
+            "operations": [operation]
+        }))
+        .expect("guarded patch parses");
+        let mut editable = PresentationDocument::from_bytes(&bytes).expect("fixture reopens");
+        let output = editable
+            .apply_patch_with_diff(
+                patch,
+                MediaInputs::default(),
+                ApplyPatchOptions {
+                    dry_run: true,
+                    validate: true,
+                },
+            )
+            .unwrap_or_else(|error| panic!("{name} guarded selector should resolve: {error}"));
+        assert_eq!(output.report.status, PatchStatus::DryRunSuccess);
+    }
+}
+
+#[test]
 fn add_image_write_reopens_with_content_type_and_relationship() {
     let bytes = text_deck();
     let mut document = PresentationDocument::from_bytes(&bytes).expect("text deck opens");
@@ -3399,6 +3490,14 @@ fn graphic_frame_deck_with_clean_extras() -> Vec<u8> {
         ],
         CompressionMethod::Stored,
     )
+}
+
+fn graphic_frame_deck_with_multiparagraph_table() -> Vec<u8> {
+    let slide = graphic_frame_slide().replace(
+        "<a:p><a:r><a:rPr b=\"1\"/><a:t>North</a:t></a:r></a:p>",
+        "<a:p><a:r><a:rPr b=\"1\"/><a:t>North</a:t></a:r></a:p><a:p><a:r><a:t>Table detail</a:t></a:r></a:p>",
+    );
+    graphic_frame_deck_with_slide(&slide)
 }
 
 fn graphic_frame_deck_with_chart_part(chart_xml: &str) -> Vec<u8> {
