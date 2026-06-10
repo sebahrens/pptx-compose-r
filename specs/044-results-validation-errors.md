@@ -69,7 +69,8 @@ warning is contractual, not cosmetic: it MUST be present whenever the original
 `a:t`. The rewrite collapses multi-run formatting to the first run's `a:rPr`
 when preserving formatting and drops those rich constructs while resynthesizing
 `a:p`/`a:r`/`a:t` from replacement plain text. Whole-element operations MUST
-NOT accept run-property override fields; those belong to `mode: run_scoped`.
+NOT accept run-property override fields; those belong to
+[`mode: run_scoped`](041-agent-edit-operations.md#replace_text-run-scoped-mode).
 
 Because run-scoped replacement is available, `formatting_simplified` is a
 refuse-or-confirm condition for `mode: whole_element`. If the operation would
