@@ -25,7 +25,7 @@ pub mod tools;
 
 use pptx_compose::{
     AgentViewOptions,
-    core::error::Error as CoreError,
+    core::error::{Error as CoreError, ErrorCode as CoreErrorCode},
     edit::patch::Patch,
     json::agent_view::{
         FindTextResult, FindTextScope,
@@ -139,7 +139,30 @@ impl PptxServer {
 }
 
 fn mcp_error(error: CoreError) -> ErrorData {
-    ErrorData::invalid_params(error.to_string(), None)
+    let data = serde_json::to_value(outputs::error_envelope(&error)).ok();
+    match error.code() {
+        CoreErrorCode::ResourceLimitExceeded
+        | CoreErrorCode::UnsupportedPackage
+        | CoreErrorCode::ParseError
+        | CoreErrorCode::MalformedXml
+        | CoreErrorCode::ValidationFailed
+        | CoreErrorCode::WriteFailed => {
+            ErrorData::new(rmcp::model::ErrorCode(-32000), error.to_string(), data)
+        }
+        CoreErrorCode::InternalError => ErrorData::internal_error(error.to_string(), data),
+        CoreErrorCode::InvalidInput
+        | CoreErrorCode::UnsafePath
+        | CoreErrorCode::UnsupportedEdit
+        | CoreErrorCode::UnsupportedMediaType
+        | CoreErrorCode::InvalidBounds
+        | CoreErrorCode::StalePatch
+        | CoreErrorCode::SelectorNotFound
+        | CoreErrorCode::SelectorAmbiguous
+        | CoreErrorCode::SelectorGuardFailed
+        | CoreErrorCode::MissingMediaRef
+        | CoreErrorCode::MediaChecksumMismatch
+        | CoreErrorCode::PermissionDenied => ErrorData::invalid_params(error.to_string(), data),
+    }
 }
 
 fn mcp_resource(descriptor: resources::ResourceDescriptor) -> Resource {
@@ -1179,6 +1202,46 @@ mod tests {
     use super::*;
 
     const ONE_BY_ONE_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+
+    #[test]
+    fn mcp_error_attaches_error_envelope_to_invalid_params() {
+        let error = CoreError::new(ErrorCode::InvalidInput, "Bad resource URI.");
+        let mapped = mcp_error(error);
+        let data = mapped.data.expect("error envelope is attached");
+
+        assert_eq!(mapped.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(data["schema"], "pptx-compose.error.v1");
+        assert_eq!(data["status"], "error");
+        assert_eq!(data["error"]["code"], "invalid_input");
+        assert_eq!(data["error"]["category"], "input");
+    }
+
+    #[test]
+    fn mcp_error_maps_resource_limit_to_server_error_with_envelope() {
+        let error = CoreError::resource_limit_exceeded("Slide page limit exceeded.");
+        let mapped = mcp_error(error);
+        let data = mapped.data.expect("error envelope is attached");
+
+        assert_eq!(mapped.code, rmcp::model::ErrorCode(-32000));
+        assert_eq!(data["schema"], "pptx-compose.error.v1");
+        assert_eq!(data["error"]["code"], "resource_limit_exceeded");
+        assert_eq!(data["error"]["retryable"], false);
+    }
+
+    #[test]
+    fn mcp_error_maps_internal_error_to_json_rpc_internal_error() {
+        let error = CoreError::new(
+            ErrorCode::InternalError,
+            "Could not serialize resource JSON.",
+        );
+        let mapped = mcp_error(error);
+        let data = mapped.data.expect("error envelope is attached");
+
+        assert_eq!(mapped.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+        assert_eq!(data["schema"], "pptx-compose.error.v1");
+        assert_eq!(data["error"]["code"], "internal_error");
+        assert_eq!(data["error"]["category"], "internal");
+    }
 
     #[test]
     fn list_elements_input_requires_slide_id() {
