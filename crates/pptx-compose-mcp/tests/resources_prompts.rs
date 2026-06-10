@@ -7,6 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use pptx_compose::capabilities::SCHEMA_CAPABILITIES;
 use pptx_compose_mcp::{
     PptxServer,
     prompts::PromptRegistry,
@@ -39,10 +40,12 @@ async fn resources_and_prompts_match_072_contract() {
         .map(|resource| resource.uri.as_str())
         .collect::<Vec<_>>();
 
-    assert!(resource_uris.contains(&"pptx://schemas/agent-view/v1"));
-    assert!(resource_uris.contains(&"pptx://schemas/patch/v1"));
-    assert!(resource_uris.contains(&"pptx://schemas/patch-report/v1"));
-    assert!(resource_uris.contains(&"pptx://schemas/error/v1"));
+    for uri in advertised_schema_resource_uris() {
+        assert!(
+            resource_uris.contains(&uri.as_str()),
+            "missing resource {uri}"
+        );
+    }
     assert!(resources.iter().all(|resource| resource.read_only));
 
     let templates = registry.list_resource_templates();
@@ -151,15 +154,13 @@ async fn mcp_client_can_enumerate_and_read_072_resources_and_prompts() {
         .iter()
         .map(|resource| resource.raw.uri.as_str())
         .collect::<Vec<_>>();
-    for uri in [
-        "pptx://schemas/agent-view/v1",
-        "pptx://schemas/patch/v1",
-        "pptx://schemas/patch-report/v1",
-        "pptx://schemas/error/v1",
-    ] {
-        assert!(resource_uris.contains(&uri), "missing resource {uri}");
+    for uri in advertised_schema_resource_uris() {
+        assert!(
+            resource_uris.contains(&uri.as_str()),
+            "missing resource {uri}"
+        );
         let content = client
-            .read_resource(rmcp::model::ReadResourceRequestParams::new(uri))
+            .read_resource(rmcp::model::ReadResourceRequestParams::new(uri.as_str()))
             .await
             .unwrap_or_else(|error| panic!("resource {uri} reads: {error}"));
         assert_eq!(content.contents.len(), 1);
@@ -211,6 +212,20 @@ async fn mcp_client_can_enumerate_and_read_072_resources_and_prompts() {
 
     drop(client);
     server_handle.await.expect("server task joins");
+}
+
+fn advertised_schema_resource_uris() -> Vec<String> {
+    SCHEMA_CAPABILITIES
+        .iter()
+        .map(|capability| {
+            let name = capability
+                .name
+                .rsplit_once("-v")
+                .map(|(name, _version)| name)
+                .expect("schema capability name has version suffix");
+            format!("pptx://schemas/{name}/v{}", capability.version)
+        })
+        .collect()
 }
 
 #[tokio::test]

@@ -2,19 +2,23 @@ use std::{fmt, str::FromStr};
 
 use pptx_compose::{
     AgentViewOptions,
-    capabilities::{CapabilitiesOptions, capabilities, capabilities_json_schema},
+    capabilities::{
+        CapabilitiesOptions, SCHEMA_CAPABILITIES, capabilities, capabilities_json_schema,
+    },
     core::error::{Error, ErrorCode},
-    edit::patch::{PATCH_SCHEMA, PATCH_VERSION, patch_json_schema},
+    edit::{
+        media_inputs::media_manifest_json_schema,
+        patch::{PATCH_VERSION, patch_json_schema},
+    },
     json::{
         agent_view::views::ViewMode,
         schema_versions::{
-            AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION, CAPABILITIES_SCHEMA, CAPABILITIES_VERSION,
-            ERROR_SCHEMA, ERROR_VERSION, FIND_TEXT_SCHEMA, FIND_TEXT_VERSION, PATCH_REPORT_SCHEMA,
-            PATCH_REPORT_VERSION,
+            AGENT_VIEW_VERSION, CAPABILITIES_VERSION, ERROR_VERSION, FIND_TEXT_VERSION,
+            PATCH_REPORT_VERSION, RESULT_VERSION, VALIDATION_REPORT_VERSION,
         },
         schemas::{
             JsonError, agent_view_json_schema, error_json_schema, find_text_json_schema,
-            patch_report_json_schema,
+            patch_report_json_schema, result_json_schema, validation_report_json_schema,
         },
     },
 };
@@ -437,9 +441,22 @@ fn schema_resource(name: &str, version: &str) -> Result<Value, Error> {
             require_schema_version(name, version, PATCH_VERSION)?;
             patch_json_schema()
         }
+        "media-manifest" => {
+            let expected = advertised_schema_version(name)?;
+            require_schema_version(name, version, expected)?;
+            media_manifest_json_schema()
+        }
         "patch-report" => {
             require_schema_version(name, version, PATCH_REPORT_VERSION)?;
             patch_report_json_schema().map_err(json_error)
+        }
+        "validation-report" => {
+            require_schema_version(name, version, VALIDATION_REPORT_VERSION)?;
+            validation_report_json_schema().map_err(json_error)
+        }
+        "result" => {
+            require_schema_version(name, version, RESULT_VERSION)?;
+            result_json_schema().map_err(json_error)
         }
         "error" => {
             require_schema_version(name, version, ERROR_VERSION)?;
@@ -447,6 +464,17 @@ fn schema_resource(name: &str, version: &str) -> Result<Value, Error> {
         }
         _ => Err(invalid_uri(name, "Unknown schema resource name.")),
     }
+}
+
+fn advertised_schema_version(name: &str) -> Result<u32, Error> {
+    SCHEMA_CAPABILITIES
+        .iter()
+        .find_map(|capability| {
+            schema_resource_name(capability.name)
+                .filter(|resource_name| *resource_name == name)
+                .map(|_| capability.version)
+        })
+        .ok_or_else(|| invalid_uri(name, "Unknown schema resource name."))
 }
 
 fn require_schema_version(name: &str, version: &str, expected: u32) -> Result<(), Error> {
@@ -462,28 +490,31 @@ fn require_schema_version(name: &str, version: &str, expected: u32) -> Result<()
 }
 
 fn schema_resource_descriptors() -> Vec<ResourceDescriptor> {
-    [
-        ("capabilities", CAPABILITIES_SCHEMA, CAPABILITIES_VERSION),
-        ("agent-view", AGENT_VIEW_SCHEMA, AGENT_VIEW_VERSION),
-        ("find-text", FIND_TEXT_SCHEMA, FIND_TEXT_VERSION),
-        ("patch", PATCH_SCHEMA, PATCH_VERSION),
-        ("patch-report", PATCH_REPORT_SCHEMA, PATCH_REPORT_VERSION),
-        ("error", ERROR_SCHEMA, ERROR_VERSION),
-    ]
-    .into_iter()
-    .map(|(name, schema, version)| ResourceDescriptor {
-        uri: ResourceUri::Schema {
-            name: name.to_owned(),
-            version: schema_version(version),
-        }
-        .to_string(),
-        name: format!("{name}-schema"),
-        title: format!("{name} v{version} schema"),
-        description: format!("Draft 2020-12 JSON schema for {schema}."),
-        mime_type: "application/schema+json".to_owned(),
-        read_only: true,
-    })
-    .collect()
+    SCHEMA_CAPABILITIES
+        .iter()
+        .filter_map(|capability| {
+            schema_resource_name(capability.name)
+                .map(|name| (name, capability.schema, capability.version))
+        })
+        .map(|(name, schema, version)| ResourceDescriptor {
+            uri: ResourceUri::Schema {
+                name: name.to_owned(),
+                version: schema_version(version),
+            }
+            .to_string(),
+            name: format!("{name}-schema"),
+            title: format!("{name} v{version} schema"),
+            description: format!("Draft 2020-12 JSON schema for {schema}."),
+            mime_type: "application/schema+json".to_owned(),
+            read_only: true,
+        })
+        .collect()
+}
+
+fn schema_resource_name(capability_name: &str) -> Option<&str> {
+    let (name, version) = capability_name.rsplit_once("-v")?;
+    version.parse::<u32>().ok()?;
+    Some(name)
 }
 
 fn schema_version(version: u32) -> String {
@@ -681,46 +712,37 @@ mod tests {
     #[test]
     fn schema_descriptors_use_independent_schema_versions() {
         let resources = schema_resource_descriptors();
-        let expected = [
-            ("capabilities-schema", CAPABILITIES_VERSION),
-            ("agent-view-schema", AGENT_VIEW_VERSION),
-            ("find-text-schema", FIND_TEXT_VERSION),
-            ("patch-schema", PATCH_VERSION),
-            ("patch-report-schema", PATCH_REPORT_VERSION),
-            ("error-schema", ERROR_VERSION),
-        ];
+        assert_eq!(resources.len(), SCHEMA_CAPABILITIES.len());
 
-        for (name, version) in expected {
+        for capability in SCHEMA_CAPABILITIES {
+            let schema_name =
+                schema_resource_name(capability.name).expect("capability name has version suffix");
+            let name = format!("{schema_name}-schema");
             let resource = resources
                 .iter()
                 .find(|resource| resource.name == name)
                 .unwrap_or_else(|| panic!("missing schema resource {name}"));
             assert!(
-                resource.uri.ends_with(&format!("/v{version}")),
+                resource.uri.ends_with(&format!("/v{}", capability.version)),
                 "{name} URI does not use its own version: {}",
                 resource.uri
             );
             assert_eq!(
                 resource.title,
-                format!("{} v{version} schema", name.trim_end_matches("-schema"))
+                format!("{schema_name} v{} schema", capability.version)
             );
         }
     }
 
     #[test]
-    fn schema_resources_check_versions_per_schema() {
-        schema_resource("capabilities", &schema_version(CAPABILITIES_VERSION))
-            .expect("capabilities schema reads at its own version");
-        schema_resource("agent-view", &schema_version(AGENT_VIEW_VERSION))
-            .expect("agent-view schema reads at its own version");
-        schema_resource("find-text", &schema_version(FIND_TEXT_VERSION))
-            .expect("find-text schema reads at its own version");
-        schema_resource("patch", &schema_version(PATCH_VERSION))
-            .expect("patch schema reads at its own version");
-        schema_resource("patch-report", &schema_version(PATCH_REPORT_VERSION))
-            .expect("patch-report schema reads at its own version");
-        schema_resource("error", &schema_version(ERROR_VERSION))
-            .expect("error schema reads at its own version");
+    fn all_advertised_schema_resources_read_at_their_own_versions() {
+        for capability in SCHEMA_CAPABILITIES {
+            let name =
+                schema_resource_name(capability.name).expect("capability name has version suffix");
+            let schema = schema_resource(name, &schema_version(capability.version))
+                .unwrap_or_else(|error| panic!("{name} schema reads: {error}"));
+            assert_eq!(schema["$id"], capability.schema);
+        }
 
         let unavailable = schema_resource("agent-view", "v999")
             .expect_err("wrong agent-view version is rejected");
