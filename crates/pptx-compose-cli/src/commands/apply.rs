@@ -1141,7 +1141,8 @@ mod test_support {
             .expect("operation reports is an array");
         assert_eq!(operation_reports.len(), 2);
         assert_eq!(operation_reports[0]["operation_id"], "good-1");
-        assert_eq!(operation_reports[0]["status"], "applied");
+        assert_eq!(operation_reports[0]["status"], "skipped");
+        assert_eq!(operation_reports[0]["changed_parts"], serde_json::json!([]));
         assert_eq!(operation_reports[1]["operation_id"], "bad-2");
         assert_eq!(operation_reports[1]["status"], "failed");
         assert_eq!(operation_reports[1]["error"]["code"], "selector_not_found");

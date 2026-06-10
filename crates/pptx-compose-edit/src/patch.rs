@@ -1008,6 +1008,10 @@ where
     changed_parts.sort();
     changed_parts.dedup();
 
+    if failed && !dry_run {
+        mark_uncommitted_operations_skipped(&mut operation_reports);
+    }
+
     let report_changed_parts = if failed { Vec::new() } else { changed_parts };
     let wrote_part = !report_changed_parts.is_empty();
     let report_revision = if failed || dry_run || !wrote_part {
@@ -1086,6 +1090,17 @@ fn failed_operation_report(operation: &Operation, error: &Error) -> Result<Opera
         warnings: Vec::new(),
         error: Some(error_view(error)?),
     })
+}
+
+fn mark_uncommitted_operations_skipped(operation_reports: &mut [OperationReport]) {
+    for report in operation_reports
+        .iter_mut()
+        .filter(|report| report.status != OperationStatus::Failed)
+    {
+        report.status = OperationStatus::Skipped;
+        report.changed_parts.clear();
+        report.created_element_ids.clear();
+    }
 }
 
 fn target_from_error(error: &Error) -> OperationTarget {
@@ -1644,7 +1659,7 @@ mod test_support {
         assert_eq!(report.new_revision, report.base_revision);
         assert_eq!(report.operation_reports.len(), 2);
         assert_eq!(report.operation_reports[0].operation_id, "op-1");
-        assert_eq!(report.operation_reports[0].status, OperationStatus::Applied);
+        assert_eq!(report.operation_reports[0].status, OperationStatus::Skipped);
         assert_eq!(report.operation_reports[1].operation_id, "op-2");
         assert_eq!(report.operation_reports[1].status, OperationStatus::Failed);
         assert_eq!(

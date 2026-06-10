@@ -2806,13 +2806,20 @@ fn failed_multi_operation_patch_leaves_package_byte_identical() {
         ],
     );
 
-    let report = document
-        .apply_patch(patch, MediaInputs::default())
+    let output = document
+        .apply_patch_with_diff(patch, MediaInputs::default(), ApplyPatchOptions::default())
         .expect("multi-operation patch returns a failed report");
+    let report = output.report;
     assert_eq!(report.status, PatchStatus::Failed);
     assert_eq!(report.changed_parts, Vec::<String>::new());
-    assert_eq!(report.operation_reports[0].status, OperationStatus::Applied);
+    assert_eq!(report.operation_reports[0].status, OperationStatus::Skipped);
+    assert_eq!(
+        report.operation_reports[0].changed_parts,
+        Vec::<String>::new()
+    );
     assert_eq!(report.operation_reports[1].status, OperationStatus::Failed);
+    assert_eq!(output.diff.changes, Vec::new());
+    assert_eq!(output.diff.changed_parts, Vec::new());
     assert_eq!(
         report.operation_reports[1]
             .error

@@ -13,7 +13,7 @@ use pptx_compose::{
         media_inputs::{MediaBinding, MediaInputs, MediaLimits, MediaSource},
         patch::Patch,
     },
-    json::schemas::{PatchReport, PatchStatus, ValidationReport},
+    json::schemas::{ErrorView, PatchReport, PatchStatus, ValidationReport},
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -460,6 +460,12 @@ impl SessionStore {
                 validate: true,
             },
         )?;
+        if matches!(
+            report.status,
+            PatchStatus::Failed | PatchStatus::DryRunFailed
+        ) {
+            return Err(output_operation_error(&report, dry_run));
+        }
 
         let mut sessions = self.lock_sessions()?;
         remove_expired(&mut sessions, SystemTime::now());
@@ -554,6 +560,98 @@ impl SessionStore {
 pub struct ApplyResult {
     pub revision: u64,
     pub report: PatchReport,
+}
+
+fn output_operation_error(report: &PatchReport, dry_run: bool) -> Error {
+    report
+        .operation_reports
+        .iter()
+        .filter_map(|operation| operation.error.as_ref())
+        .next()
+        .map(operation_error)
+        .unwrap_or_else(|| {
+            Error::new(
+                ErrorCode::ValidationFailed,
+                if dry_run {
+                    "Dry-run patch validation failed; inspect the patch report for per-operation errors."
+                } else {
+                    "Patch application failed; inspect the patch report for per-operation errors."
+                },
+            )
+        })
+}
+
+fn operation_error(error: &ErrorView) -> Error {
+    Error::new(core_error_code(error.code), error.message.clone())
+        .with_location(error_location(&error.location))
+}
+
+const fn core_error_code(code: pptx_compose::json::schemas::ErrorCode) -> ErrorCode {
+    match code {
+        pptx_compose::json::schemas::ErrorCode::InvalidInput => ErrorCode::InvalidInput,
+        pptx_compose::json::schemas::ErrorCode::UnsafePath => ErrorCode::UnsafePath,
+        pptx_compose::json::schemas::ErrorCode::ResourceLimitExceeded => {
+            ErrorCode::ResourceLimitExceeded
+        }
+        pptx_compose::json::schemas::ErrorCode::UnsupportedPackage => ErrorCode::UnsupportedPackage,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedEdit => ErrorCode::UnsupportedEdit,
+        pptx_compose::json::schemas::ErrorCode::UnsupportedMediaType => {
+            ErrorCode::UnsupportedMediaType
+        }
+        pptx_compose::json::schemas::ErrorCode::InvalidBounds => ErrorCode::InvalidBounds,
+        pptx_compose::json::schemas::ErrorCode::ParseError => ErrorCode::ParseError,
+        pptx_compose::json::schemas::ErrorCode::MalformedXml => ErrorCode::MalformedXml,
+        pptx_compose::json::schemas::ErrorCode::ValidationFailed => ErrorCode::ValidationFailed,
+        pptx_compose::json::schemas::ErrorCode::StalePatch => ErrorCode::StalePatch,
+        pptx_compose::json::schemas::ErrorCode::SelectorNotFound => ErrorCode::SelectorNotFound,
+        pptx_compose::json::schemas::ErrorCode::SelectorAmbiguous => ErrorCode::SelectorAmbiguous,
+        pptx_compose::json::schemas::ErrorCode::SelectorGuardFailed => {
+            ErrorCode::SelectorGuardFailed
+        }
+        pptx_compose::json::schemas::ErrorCode::MissingMediaRef => ErrorCode::MissingMediaRef,
+        pptx_compose::json::schemas::ErrorCode::MediaChecksumMismatch => {
+            ErrorCode::MediaChecksumMismatch
+        }
+        pptx_compose::json::schemas::ErrorCode::PermissionDenied => ErrorCode::PermissionDenied,
+        pptx_compose::json::schemas::ErrorCode::WriteFailed => ErrorCode::WriteFailed,
+        pptx_compose::json::schemas::ErrorCode::InternalError => ErrorCode::InternalError,
+    }
+}
+
+fn error_location(location: &serde_json::Value) -> ErrorLocation {
+    ErrorLocation {
+        current_revision: location
+            .get("current_revision")
+            .and_then(serde_json::Value::as_u64),
+        io_path: location_string(location, "io_path"),
+        zip_entry: location_string(location, "zip_entry"),
+        part: location_string(location, "part"),
+        relationship_id: location_string(location, "relationship_id"),
+        slide_id: location_string(location, "slide_id"),
+        element_id: location_string(location, "element_id"),
+        operation_id: location_string(location, "operation_id"),
+        operation: location_string(location, "operation"),
+        expected: location_string(location, "expected"),
+        actual: location_string(location, "actual"),
+        candidates: location
+            .get("candidates")
+            .and_then(serde_json::Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn location_string(location: &serde_json::Value, key: &str) -> Option<String> {
+    location
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
 }
 
 fn media_inputs_from_session(session: &Session) -> MediaInputs {

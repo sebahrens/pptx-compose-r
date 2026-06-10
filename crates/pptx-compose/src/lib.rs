@@ -75,7 +75,7 @@ use pptx_compose_edit::{
 };
 use pptx_compose_json::{
     agent_view::views::{FindTextRequest, ViewRequest},
-    schemas::{PatchReport, PatchStatus, ValidationReport},
+    schemas::{OperationStatus, PatchReport, PatchStatus, ValidationReport},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -785,14 +785,24 @@ fn change_kind_for_part(part: &str) -> PartChangeKind {
 }
 
 fn semantic_changes(operations: &[Operation], report: &PatchReport) -> Vec<DiffChange> {
+    if !matches!(
+        report.status,
+        PatchStatus::Applied | PatchStatus::DryRunSuccess
+    ) {
+        return Vec::new();
+    }
+
     operations
         .iter()
         .filter_map(|operation| match operation {
             Operation::ReplaceText(operation) => {
-                let operation_report = report
-                    .operation_reports
-                    .iter()
-                    .find(|report| report.operation_id == operation.operation_id)?;
+                let operation_report = report.operation_reports.iter().find(|report| {
+                    report.operation_id == operation.operation_id
+                        && matches!(
+                            report.status,
+                            OperationStatus::Applied | OperationStatus::Validated
+                        )
+                })?;
                 Some(DiffChange::TextReplaced {
                     operation_id: operation.operation_id.clone(),
                     element_id: operation_report.target.element_id.clone(),

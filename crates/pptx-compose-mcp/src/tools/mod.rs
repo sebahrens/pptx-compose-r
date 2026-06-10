@@ -124,6 +124,40 @@ async fn apply_rejects_stale_revision() {
 }
 
 #[tokio::test]
+async fn apply_rejects_failed_atomic_patch_without_advancing_revision() {
+    let server = PptxServer::default();
+    let opened = open_text_fixture(&server);
+
+    let result = server
+        .pptx_apply_patch(rmcp::handler::server::wrapper::Parameters(
+            crate::ApplyPatchInput {
+                session_id: opened.session_id.clone(),
+                client_request_id: None,
+                patch: failed_atomic_patch(&opened.document_id, opened.revision),
+                dry_run: false,
+            },
+        ))
+        .await;
+    let Err(error) = result else {
+        panic!("failed atomic patch is returned as a tool error");
+    };
+    let envelope = error
+        .structured_content
+        .expect("failed patch error has structured content");
+
+    assert_eq!(error.is_error, Some(true));
+    assert_eq!(envelope["error"]["code"], "invalid_input");
+    assert_eq!(
+        server
+            .sessions()
+            .get(&opened.session_id)
+            .expect("session remains open")
+            .revision,
+        opened.revision
+    );
+}
+
+#[tokio::test]
 async fn tools_read_apply_and_export_mutated_deck() {
     let server = PptxServer::default();
     let opened = open_text_fixture(&server);
@@ -363,6 +397,31 @@ fn replace_text_patch(document_id: &str, base_revision: u64) -> pptx_compose::ed
             "element_id": "slide-1:shape-3",
             "text": "Updated title"
         }]
+    });
+    serde_json::from_value(value).expect("test patch deserializes")
+}
+
+#[cfg(test)]
+fn failed_atomic_patch(document_id: &str, base_revision: u64) -> pptx_compose::edit::patch::Patch {
+    let value = serde_json::json!({
+        "schema": pptx_compose::edit::patch::PATCH_SCHEMA,
+        "version": pptx_compose::edit::patch::PATCH_VERSION,
+        "document_id": document_id,
+        "base_revision": u32::try_from(base_revision).expect("test fixture revision fits u32"),
+        "client_request_id": "test-request",
+        "operations": [
+            {
+                "operation_id": "replace-before-failure",
+                "op": "replace_text",
+                "element_id": "slide-1:shape-3",
+                "text": "This must not persist"
+            },
+            {
+                "operation_id": "invalid-alt-text",
+                "op": "set_alt_text",
+                "element_id": "slide-1:shape-3"
+            }
+        ]
     });
     serde_json::from_value(value).expect("test patch deserializes")
 }
