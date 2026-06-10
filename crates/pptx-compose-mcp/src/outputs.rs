@@ -1,10 +1,6 @@
-use std::{
-    borrow::Cow,
-    sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::borrow::Cow;
 
-use pptx_compose::core::error::{Error as CoreError, ErrorCategory, ErrorSeverity};
+use pptx_compose::core::error::{Error as CoreError, ErrorCategory, ErrorCode, ErrorSeverity};
 use pptx_compose::json::{
     schema_versions::{ERROR_SCHEMA, ERROR_VERSION, RESULT_SCHEMA, RESULT_VERSION},
     schemas::{PatchReport, ResultEnvelope, ResultStatus},
@@ -255,6 +251,29 @@ mod tests {
         assert!(envelope.error.state_changed);
         assert_eq!(envelope.error.code, ErrorCode::WriteFailed.as_str());
     }
+
+    #[test]
+    fn transaction_ids_use_128_bit_random_hex_payloads() {
+        let first = super::transaction_id().expect("secure transaction id is generated");
+        let second = super::transaction_id().expect("secure transaction id is generated");
+
+        assert_secure_prefixed_id(&first, "txn");
+        assert_secure_prefixed_id(&second, "txn");
+        assert_ne!(first, second);
+    }
+
+    fn assert_secure_prefixed_id(id: &str, prefix: &str) {
+        let payload = id
+            .strip_prefix(prefix)
+            .and_then(|remaining| remaining.strip_prefix('_'))
+            .expect("id has expected prefix");
+        assert_eq!(payload.len(), 32);
+        assert!(
+            payload
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        );
+    }
 }
 
 fn result_or_error_schema(generator: &mut SchemaGenerator) -> Schema {
@@ -269,15 +288,25 @@ fn result_or_error_schema(generator: &mut SchemaGenerator) -> Schema {
     .expect("object schema is valid")
 }
 
-#[must_use]
-pub fn transaction_id() -> String {
-    static COUNTER: AtomicU64 = AtomicU64::new(1);
-    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    format!("txn_{nanos:x}_{counter:x}")
+pub fn transaction_id() -> Result<String, CoreError> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(|error| {
+        CoreError::new(
+            ErrorCode::InternalError,
+            format!("Could not generate secure MCP transaction id: {error}."),
+        )
+    })?;
+    Ok(format!("txn_{}", hex_bytes(&bytes)))
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 const fn severity(severity: ErrorSeverity) -> &'static str {

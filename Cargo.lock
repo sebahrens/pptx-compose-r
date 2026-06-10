@@ -1322,6 +1322,7 @@ name = "pptx-compose-mcp"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "getrandom 0.3.4",
  "jsonschema",
  "pptx-compose",
  "rmcp",

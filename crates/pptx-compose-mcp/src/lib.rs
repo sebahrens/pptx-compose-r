@@ -917,7 +917,7 @@ impl PptxServer {
             .client_request_id
             .clone()
             .unwrap_or_else(|| input.patch.client_request_id.clone());
-        let transaction_id = outputs::transaction_id();
+        let transaction_id = outputs::transaction_id().map_err(outputs::map_error)?;
         let result = self
             .sessions
             .apply_patch(&input.session_id, input.patch, input.dry_run)
@@ -972,7 +972,7 @@ impl PptxServer {
         input: rmcp::handler::server::wrapper::Parameters<ExportInput>,
     ) -> Result<Json<outputs::ExportOutput>, rmcp::model::CallToolResult> {
         let input = input.0;
-        let transaction_id = outputs::transaction_id();
+        let transaction_id = outputs::transaction_id().map_err(outputs::map_error)?;
         if input.output_path.is_some() && input.inline {
             return Err(outputs::map_error(
                 pptx_compose::core::error::Error::new(

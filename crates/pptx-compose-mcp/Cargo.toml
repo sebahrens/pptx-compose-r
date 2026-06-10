@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+getrandom.workspace = true
 pptx-compose = { path = "../pptx-compose" }
 rmcp = { workspace = true, features = ["client", "schemars", "transport-io"] }
 schemars.workspace = true

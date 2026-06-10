@@ -173,7 +173,7 @@ impl SessionStore {
                 "Session TTL overflowed system time.",
             )
         })?;
-        let session_id = unique_prefixed_id("sess");
+        let session_id = unique_prefixed_id("sess")?;
         let revision = package.revision();
         let session = Session {
             session_id: session_id.clone(),
@@ -746,16 +746,25 @@ fn stale_document_error(session_id: &str, current_revision: u64) -> Error {
     })
 }
 
-fn unique_prefixed_id(prefix: &str) -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
+fn unique_prefixed_id(prefix: &str) -> Result<String> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(|error| {
+        Error::new(
+            ErrorCode::InternalError,
+            format!("Could not generate secure MCP session id: {error}."),
+        )
+    })?;
+    Ok(format!("{prefix}_{}", hex_bytes(&bytes)))
+}
 
-    static COUNTER: AtomicU64 = AtomicU64::new(1);
-    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    format!("{prefix}_{nanos:x}_{counter:x}")
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 fn system_time_json(time: SystemTime) -> String {
@@ -890,6 +899,31 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         write!(&mut output, "{byte:02x}").expect("writing to String succeeds");
     }
     output
+}
+
+#[cfg(test)]
+#[test]
+fn session_ids_use_128_bit_random_hex_payloads() {
+    let first = unique_prefixed_id("sess").expect("secure session id is generated");
+    let second = unique_prefixed_id("sess").expect("secure session id is generated");
+
+    assert_secure_prefixed_id(&first, "sess");
+    assert_secure_prefixed_id(&second, "sess");
+    assert_ne!(first, second);
+}
+
+#[cfg(test)]
+fn assert_secure_prefixed_id(id: &str, prefix: &str) {
+    let payload = id
+        .strip_prefix(prefix)
+        .and_then(|remaining| remaining.strip_prefix('_'))
+        .expect("id has expected prefix");
+    assert_eq!(payload.len(), 32);
+    assert!(
+        payload
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    );
 }
 
 #[cfg(test)]
