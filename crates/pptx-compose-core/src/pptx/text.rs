@@ -187,12 +187,38 @@ fn collect_text_nodes(element: &XmlElement, text: &mut String) {
         match child {
             XmlNode::Text(value) | XmlNode::CData(value) => text.push_str(value),
             XmlNode::Element(element) => collect_text_nodes(element, text),
-            XmlNode::Comment(_)
-            | XmlNode::ProcessingInstruction(_)
-            | XmlNode::DocType(_)
-            | XmlNode::GeneralRef(_) => {}
+            XmlNode::GeneralRef(reference) => {
+                if let Some(decoded) = decode_text_reference(reference) {
+                    text.push(decoded);
+                }
+            }
+            XmlNode::Comment(_) | XmlNode::ProcessingInstruction(_) | XmlNode::DocType(_) => {}
         }
     }
+}
+
+fn decode_text_reference(reference: &str) -> Option<char> {
+    match reference {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        _ => decode_numeric_reference(reference),
+    }
+}
+
+fn decode_numeric_reference(reference: &str) -> Option<char> {
+    let codepoint = if let Some(hex) = reference
+        .strip_prefix("#x")
+        .or_else(|| reference.strip_prefix("#X"))
+    {
+        u32::from_str_radix(hex, 16).ok()?
+    } else {
+        reference.strip_prefix('#')?.parse::<u32>().ok()?
+    };
+
+    char::from_u32(codepoint)
 }
 
 fn plain_projection(segments: &[ProjectionSegment]) -> String {
@@ -291,4 +317,32 @@ Q1
         "  Cafe\u{301}\t results  \n\nQ1\n        next   line  "
     );
     assert_eq!(text_body.normalized, "Caf\u{e9} results\nQ1 next line");
+}
+
+#[cfg(test)]
+#[test]
+fn text_projection_decodes_xml_references() {
+    let raw = br##"
+<a:txBody xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <a:p>
+    <a:r>
+      <a:t>Profit &amp; Loss &lt;2026&gt; &#8364;5 &#x1F4C8; &unknown;</a:t>
+    </a:r>
+  </a:p>
+</a:txBody>
+"##;
+    let document = crate::xml::parser::parse_document(raw).expect("txBody parses");
+    let txbody = document.root_element().expect("txBody root exists");
+
+    let text_body = read_text_body(txbody);
+
+    assert_eq!(text_body.plain, "Profit & Loss <2026> \u{20ac}5 \u{1f4c8} ");
+    assert_eq!(
+        text_body.paragraphs[0].runs[0].text,
+        "Profit & Loss <2026> \u{20ac}5 \u{1f4c8} "
+    );
+    assert_eq!(
+        text_body.normalized,
+        "Profit & Loss <2026> \u{20ac}5 \u{1f4c8}"
+    );
 }
