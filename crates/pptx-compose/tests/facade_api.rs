@@ -2078,6 +2078,26 @@ fn chart_text_is_honest_unsupported_while_diagram_text_remains_editable() {
         .expect("find_text succeeds");
     assert_eq!(title_matches.matches.len(), 1);
     assert_eq!(title_matches.matches[0].element_id, "slide-1:graphic-7");
+    assert!(
+        title_matches.matches[0].selector.run.is_some(),
+        "chart text matches must include the run selector required by replace_text"
+    );
+
+    for (query, label) in [("Revenue", "chart"), ("SmartArt", "diagram")] {
+        let matches = PresentationDocument::from_bytes(&bytes)
+            .expect("fixture opens")
+            .find_text(FindTextRequest {
+                query: query.to_owned(),
+                scope: FindTextScope::Deck,
+                cursor: None,
+                limit: None,
+            })
+            .expect("find_text succeeds");
+        assert!(
+            matches.matches.is_empty(),
+            "{label} partial-run matches must not produce non-patchable selectors"
+        );
+    }
 
     for hidden_chart_text in [
         "North Category",

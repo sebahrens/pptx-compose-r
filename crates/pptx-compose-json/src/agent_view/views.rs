@@ -527,6 +527,14 @@ fn collect_element_text_matches(
                 let Some(text) = &cell.text else {
                     continue;
                 };
+                if !cell
+                    .editable
+                    .text
+                    .as_ref()
+                    .is_some_and(|support| support.supported)
+                {
+                    continue;
+                }
                 collect_text_view_matches(
                     element,
                     slide,
@@ -579,6 +587,10 @@ fn collect_text_view_matches(
         .as_ref()
         .map_or_else(|| text.text_hash.clone(), |text| text.text_hash.clone());
     for span in find_query_spans(&text.plain, query)? {
+        let run = run_selector_for_span(text, span);
+        if related_text_requires_run_selector(element.kind) && run.is_none() {
+            continue;
+        }
         if *seen < start {
             *seen = seen.saturating_add(1);
             continue;
@@ -606,13 +618,17 @@ fn collect_text_view_matches(
                     text_hash: guard_text_hash.clone(),
                     fingerprint: element.fingerprint.clone(),
                 },
-                run: run_selector_for_span(text, span),
+                run,
             },
             cell,
         });
         *seen = seen.saturating_add(1);
     }
     Ok(())
+}
+
+fn related_text_requires_run_selector(kind: ElementKind) -> bool {
+    matches!(kind, ElementKind::Chart | ElementKind::Diagram)
 }
 
 fn match_page(
@@ -2559,6 +2575,21 @@ fn table_cells_are_exposed_as_addressable_text() {
         Some(TableCellRef { row: 1, col: 1 })
     );
     assert_eq!(matches.matches[0].matched_text, "Strategic");
+
+    let merged_matches = find_text(
+        &pkg,
+        FindTextRequest {
+            query: "Merged Label".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        },
+    )
+    .expect("find_text searches patch-ready table cells");
+    assert!(
+        merged_matches.matches.is_empty(),
+        "merged or spanned cells must not produce patch-ready selectors"
+    );
 }
 
 #[cfg(test)]
