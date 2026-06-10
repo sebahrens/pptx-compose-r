@@ -229,6 +229,12 @@ pub struct EditableSupport {
 pub struct TextView {
     pub plain: String,
     pub normalized: String,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub full_plain: String,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub full_normalized: String,
     pub paragraphs: Vec<Paragraph>,
     pub text_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -262,6 +268,9 @@ pub struct TableCell {
 #[serde(deny_unknown_fields)]
 pub struct Paragraph {
     pub text: String,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub full_text: String,
     pub runs: Vec<Run>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncation: Option<TruncationMarker>,
@@ -271,6 +280,9 @@ pub struct Paragraph {
 #[serde(deny_unknown_fields)]
 pub struct Run {
     pub text: String,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub full_text: String,
     pub style_summary: StyleSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncation: Option<TruncationMarker>,

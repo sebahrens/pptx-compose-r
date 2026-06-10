@@ -588,7 +588,7 @@ fn collect_text_view_matches(
         .text
         .as_ref()
         .map_or_else(|| text.text_hash.clone(), |text| text.text_hash.clone());
-    for span in find_query_spans(&text.plain, query)? {
+    for span in find_query_spans(search_plain_text(text), query)? {
         let run = run_selector_for_span(text, span);
         if related_text_requires_run_selector(element.kind) && run.is_none() {
             continue;
@@ -609,7 +609,7 @@ fn collect_text_view_matches(
             fingerprint: element.fingerprint.clone(),
             text_hash: text.text_hash.clone(),
             span,
-            matched_text: substring_by_char_span(&text.plain, span),
+            matched_text: substring_by_char_span(search_plain_text(text), span),
             selector: ElementSelector {
                 selector_type: if is_notes_element(element) {
                     "slide_id".to_owned()
@@ -701,6 +701,30 @@ fn substring_by_char_span(text: &str, span: TextSpan) -> String {
         .collect()
 }
 
+fn search_plain_text(text: &TextView) -> &str {
+    if text.full_plain.is_empty() {
+        &text.plain
+    } else {
+        &text.full_plain
+    }
+}
+
+fn search_paragraph_text(paragraph: &Paragraph) -> &str {
+    if paragraph.full_text.is_empty() {
+        &paragraph.text
+    } else {
+        &paragraph.full_text
+    }
+}
+
+fn search_run_text(run: &Run) -> &str {
+    if run.full_text.is_empty() {
+        &run.text
+    } else {
+        &run.full_text
+    }
+}
+
 fn run_selector_for_span(text: &TextView, span: TextSpan) -> Option<FindTextRunSelector> {
     if span.start >= span.end {
         return None;
@@ -709,22 +733,24 @@ fn run_selector_for_span(text: &TextView, span: TextSpan) -> Option<FindTextRunS
     let mut paragraph_start = 0_u32;
     for (paragraph_offset, paragraph) in text.paragraphs.iter().enumerate() {
         let paragraph_index = u32::try_from(paragraph_offset).ok()?;
+        let paragraph_text = search_paragraph_text(paragraph);
         let mut run_ranges = Vec::new();
         let mut search_start = 0_usize;
         for (run_index, run) in paragraph.runs.iter().enumerate() {
             let run_index = u32::try_from(run_index).ok()?;
-            let relative_start = paragraph.text[search_start..].find(&run.text)?;
+            let run_text = search_run_text(run);
+            let relative_start = paragraph_text[search_start..].find(run_text)?;
             let byte_start = search_start + relative_start;
-            let byte_end = byte_start + run.text.len();
+            let byte_end = byte_start + run_text.len();
             let run_start = paragraph_start
-                .checked_add(u32::try_from(paragraph.text[..byte_start].chars().count()).ok()?)?;
+                .checked_add(u32::try_from(paragraph_text[..byte_start].chars().count()).ok()?)?;
             let run_end = paragraph_start
-                .checked_add(u32::try_from(paragraph.text[..byte_end].chars().count()).ok()?)?;
-            run_ranges.push((run_index, run_start, run_end, run.text.as_str()));
+                .checked_add(u32::try_from(paragraph_text[..byte_end].chars().count()).ok()?)?;
+            run_ranges.push((run_index, run_start, run_end, run_text));
             search_start = byte_end;
         }
         let paragraph_end =
-            paragraph_start.checked_add(u32::try_from(paragraph.text.chars().count()).ok()?)?;
+            paragraph_start.checked_add(u32::try_from(paragraph_text.chars().count()).ok()?)?;
         if span.start >= paragraph_start && span.end <= paragraph_end {
             let start = run_ranges
                 .iter()
@@ -736,7 +762,7 @@ fn run_selector_for_span(text: &TextView, span: TextSpan) -> Option<FindTextRunS
                 return None;
             }
             let selected = substring_by_char_span(
-                &paragraph.text,
+                paragraph_text,
                 TextSpan {
                     start: span.start.saturating_sub(paragraph_start),
                     end: span.end.saturating_sub(paragraph_start),
@@ -1402,6 +1428,8 @@ fn project_text(tx_body: &XmlElement) -> TextView {
 
 fn project_text_body(body: pptx_compose_core::pptx::text::TextBody) -> TextView {
     let text_hash = text_hash::text_hash(&body.normalized);
+    let full_plain = body.plain.clone();
+    let full_normalized = body.normalized.clone();
     let plain = truncate_text(
         body.plain,
         TEXT_PREVIEW_CHARS,
@@ -1417,6 +1445,7 @@ fn project_text_body(body: pptx_compose_core::pptx::text::TextBody) -> TextView 
         .paragraphs
         .into_iter()
         .map(|paragraph| {
+            let full_paragraph_text = paragraph.text.clone();
             let paragraph_text = truncate_text(
                 paragraph.text,
                 PARAGRAPH_PREVIEW_CHARS,
@@ -1424,10 +1453,12 @@ fn project_text_body(body: pptx_compose_core::pptx::text::TextBody) -> TextView 
             );
             Paragraph {
                 text: paragraph_text.0,
+                full_text: full_paragraph_text,
                 runs: paragraph
                     .runs
                     .into_iter()
                     .map(|run| {
+                        let full_run_text = run.text.clone();
                         let run_text = truncate_text(
                             run.text,
                             RUN_PREVIEW_CHARS,
@@ -1435,6 +1466,7 @@ fn project_text_body(body: pptx_compose_core::pptx::text::TextBody) -> TextView 
                         );
                         Run {
                             text: run_text.0,
+                            full_text: full_run_text,
                             style_summary: StyleSummary {
                                 font_size_pt: run.style_summary.font_size_pt,
                                 bold: run.style_summary.bold,
@@ -1455,6 +1487,8 @@ fn project_text_body(body: pptx_compose_core::pptx::text::TextBody) -> TextView 
     TextView {
         plain: plain.0,
         normalized: normalized.0,
+        full_plain,
+        full_normalized,
         paragraphs,
         text_hash,
         truncation,
@@ -3268,17 +3302,54 @@ fn run_selector_for_span_does_not_shift_to_later_run_after_newline() {
 }
 
 #[cfg(test)]
+#[test]
+fn find_text_searches_full_text_beyond_preview_truncation() {
+    let prefix = "x".repeat(TEXT_PREVIEW_CHARS + 25);
+    let query = "needle";
+    let suffix = "y".repeat(32);
+    let xml = format!(
+        "<txBody><p><r><t>{prefix}</t></r><r><t>{query}</t></r><r><t>{suffix}</t></r></p></txBody>"
+    );
+    let document = parse_document(xml.as_bytes()).expect("text body XML parses");
+    let text = project_text(document.root_element().expect("txBody root"));
+
+    assert!(text.truncation.is_some());
+    assert!(!text.plain.contains(query));
+
+    let spans = find_query_spans(search_plain_text(&text), query).expect("query search succeeds");
+    assert_eq!(
+        spans,
+        vec![TextSpan {
+            start: 4121,
+            end: 4127
+        }]
+    );
+    assert_eq!(
+        substring_by_char_span(search_plain_text(&text), spans[0]),
+        query
+    );
+
+    let selector = run_selector_for_span(&text, spans[0]).expect("full run selector resolves");
+    assert_eq!(selector.paragraph_index, 0);
+    assert_eq!(selector.run_index, 1);
+    assert_eq!(selector.run_end_index, None);
+    assert_eq!(selector.text_hash, Some(text_hash::text_hash(query)));
+}
+
+#[cfg(test)]
 fn test_text_view(paragraph_runs: Vec<Vec<&str>>) -> TextView {
     let paragraphs = paragraph_runs
         .into_iter()
         .map(|runs| {
             let text = runs.concat();
             Paragraph {
+                full_text: text.clone(),
                 text,
                 runs: runs
                     .into_iter()
                     .map(|text| Run {
                         text: text.to_owned(),
+                        full_text: text.to_owned(),
                         style_summary: empty_style_summary(),
                         truncation: None,
                     })
@@ -3294,6 +3365,8 @@ fn test_text_view(paragraph_runs: Vec<Vec<&str>>) -> TextView {
         .join("\n");
     TextView {
         normalized: plain.clone(),
+        full_plain: plain.clone(),
+        full_normalized: plain.clone(),
         text_hash: text_hash::text_hash(&plain),
         plain,
         paragraphs,
