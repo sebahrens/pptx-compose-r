@@ -707,8 +707,8 @@ fn run_selector_for_span(text: &TextView, span: TextSpan) -> Option<FindTextRunS
     }
 
     let mut paragraph_start = 0_u32;
-    for (paragraph_index, paragraph) in text.paragraphs.iter().enumerate() {
-        let paragraph_index = u32::try_from(paragraph_index).ok()?;
+    for (paragraph_offset, paragraph) in text.paragraphs.iter().enumerate() {
+        let paragraph_index = u32::try_from(paragraph_offset).ok()?;
         let mut run_ranges = Vec::new();
         let mut search_start = 0_usize;
         for (run_index, run) in paragraph.runs.iter().enumerate() {
@@ -749,7 +749,11 @@ fn run_selector_for_span(text: &TextView, span: TextSpan) -> Option<FindTextRunS
                 text_hash: Some(text_hash::text_hash(&selected)),
             });
         }
-        paragraph_start = paragraph_end;
+        paragraph_start = if paragraph_offset + 1 < text.paragraphs.len() {
+            paragraph_end.checked_add(1)?
+        } else {
+            paragraph_end
+        };
     }
     None
 }
@@ -3224,6 +3228,90 @@ fn paragraph_text_preserves_intra_paragraph_soft_breaks() {
         text.paragraphs[0].runs[1].text,
         "Association between High Public Debt and Low Growth"
     );
+}
+
+#[cfg(test)]
+#[test]
+fn run_selector_for_span_accounts_for_inter_paragraph_separators() {
+    let text = test_text_view(vec![
+        vec!["Intro"],
+        vec!["Second paragraph", " suffix"],
+        vec!["Tail"],
+    ]);
+    assert_eq!(text.plain, "Intro\nSecond paragraph suffix\nTail");
+
+    let selector = run_selector_for_span(&text, TextSpan { start: 6, end: 22 })
+        .expect("second paragraph run resolves");
+
+    assert_eq!(selector.paragraph_index, 1);
+    assert_eq!(selector.run_index, 0);
+    assert_eq!(selector.run_end_index, None);
+    assert_eq!(
+        selector.text_hash,
+        Some(text_hash::text_hash("Second paragraph"))
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn run_selector_for_span_does_not_shift_to_later_run_after_newline() {
+    let text = test_text_view(vec![vec!["X"], vec!["A", "B"]]);
+    assert_eq!(text.plain, "X\nAB");
+
+    let selector = run_selector_for_span(&text, TextSpan { start: 2, end: 3 })
+        .expect("first run after separator resolves");
+
+    assert_eq!(selector.paragraph_index, 1);
+    assert_eq!(selector.run_index, 0);
+    assert_eq!(selector.run_end_index, None);
+    assert_eq!(selector.text_hash, Some(text_hash::text_hash("A")));
+}
+
+#[cfg(test)]
+fn test_text_view(paragraph_runs: Vec<Vec<&str>>) -> TextView {
+    let paragraphs = paragraph_runs
+        .into_iter()
+        .map(|runs| {
+            let text = runs.concat();
+            Paragraph {
+                text,
+                runs: runs
+                    .into_iter()
+                    .map(|text| Run {
+                        text: text.to_owned(),
+                        style_summary: empty_style_summary(),
+                        truncation: None,
+                    })
+                    .collect(),
+                truncation: None,
+            }
+        })
+        .collect::<Vec<_>>();
+    let plain = paragraphs
+        .iter()
+        .map(|paragraph| paragraph.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    TextView {
+        normalized: plain.clone(),
+        text_hash: text_hash::text_hash(&plain),
+        plain,
+        paragraphs,
+        truncation: None,
+    }
+}
+
+#[cfg(test)]
+fn empty_style_summary() -> StyleSummary {
+    StyleSummary {
+        font_size_pt: None,
+        bold: None,
+        italic: None,
+        underline: None,
+        font_color_rgb: None,
+        latin_typeface: None,
+        language: None,
+    }
 }
 
 #[cfg(test)]
