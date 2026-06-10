@@ -731,6 +731,29 @@ fn inspect_emits_placeholder_and_text_layout_metadata() {
 }
 
 #[test]
+fn inspect_does_not_project_child_placeholder_onto_group() {
+    let bytes = text_deck_with_slide(&group_with_placeholder_child_slide());
+    let document = PresentationDocument::from_bytes(&bytes).expect("group placeholder deck opens");
+    let view = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlideDetail,
+            include_elements: false,
+            slide_id: Some("slide-1".to_owned()),
+            slide_ids: Vec::new(),
+            element_id: None,
+            cursor: None,
+            limit: None,
+        })
+        .expect("group placeholder deck inspects");
+    let group = inspect_element(&view, "slide-1:group-4");
+    let child = inspect_element(&view, "slide-1:shape-6");
+
+    assert!(group["placeholder"].is_null());
+    assert_eq!(child["placeholder"]["type"], "title");
+    assert_eq!(child["placeholder"]["idx"], 1);
+}
+
+#[test]
 fn set_document_metadata_round_trips_and_preserves_clean_parts() {
     let bytes = metadata_deck();
     let original_entries = from_bytes(&bytes).expect("original entries read");
@@ -4045,6 +4068,28 @@ fn nested_group_text_slide() -> String {
             <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Nested title</a:t></a:r></a:p></p:txBody>
           </p:sp>
         </p:grpSp>
+      </p:grpSp>
+    </p:spTree>
+  </p:cSld>
+</p:sld>"#
+        .to_owned()
+}
+
+fn group_with_placeholder_child_slide() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:cSld>
+    <p:spTree>
+      <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+      <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
+      <p:grpSp>
+        <p:nvGrpSpPr><p:cNvPr id="4" name="Placeholder Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+        <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5000000" cy="5000000"/><a:chOff x="0" y="0"/><a:chExt cx="5000000" cy="5000000"/></a:xfrm></p:grpSpPr>
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="6" name="Child Placeholder"/><p:cNvSpPr txBox="1"/><p:nvPr><p:ph type="title" idx="1"/></p:nvPr></p:nvSpPr>
+          <p:spPr><a:xfrm><a:off x="914400" y="457200"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+          <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Grouped title</a:t></a:r></a:p></p:txBody>
+        </p:sp>
       </p:grpSp>
     </p:spTree>
   </p:cSld>

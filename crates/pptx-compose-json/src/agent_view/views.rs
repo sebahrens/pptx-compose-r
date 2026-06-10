@@ -1343,7 +1343,7 @@ fn diagram_text_coverage_warning_detail(reason: &str) -> &'static str {
 }
 
 fn project_placeholder(element: &XmlElement, layout_part: Option<&str>) -> Option<PlaceholderView> {
-    let placeholder = first_descendant(element, "ph")?;
+    let placeholder = own_placeholder(element)?;
     let placeholder_type = optional_attr(placeholder, "type").unwrap_or("body");
     Some(PlaceholderView {
         r#type: placeholder_type.to_owned(),
@@ -1351,6 +1351,20 @@ fn project_placeholder(element: &XmlElement, layout_part: Option<&str>) -> Optio
         source: "slide".to_owned(),
         layout_part: layout_part.map(str::to_owned),
     })
+}
+
+fn own_placeholder(element: &XmlElement) -> Option<&XmlElement> {
+    let non_visual_properties = element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .find(|child| {
+            matches!(
+                child.name.local_name.as_str(),
+                "nvSpPr" | "nvPicPr" | "nvGraphicFramePr" | "nvGrpSpPr" | "nvCxnSpPr"
+            )
+        })?;
+    child_element(non_visual_properties, "nvPr").and_then(|nv_pr| child_element(nv_pr, "ph"))
 }
 
 fn project_text_layout(element: &XmlElement) -> Option<TextLayoutView> {
