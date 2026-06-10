@@ -1662,6 +1662,19 @@ mod tests {
     #[test]
     fn tools_expose_output_schemas_and_contract_annotations() {
         let tools = crate::tools::exposed_tools(&PptxServer::default());
+        let success_output = serde_json::json!({
+            "schema": "pptx-compose.result.v1",
+            "version": 1,
+            "status": "success",
+            "result": {},
+            "warnings": [],
+            "next_cursor": null
+        });
+        let error_output = serde_json::to_value(outputs::error_envelope(&CoreError::new(
+            ErrorCode::InvalidInput,
+            "Invalid tool input.",
+        )))
+        .expect("error envelope serializes");
         for tool_name in crate::tools::DEFAULT_TOOL_NAMES {
             let tool = tools
                 .iter()
@@ -1675,6 +1688,23 @@ mod tests {
                 schema.get("type"),
                 Some(&serde_json::Value::String("object".to_owned())),
                 "tool {tool_name} output schema is object-rooted"
+            );
+            assert!(
+                schema.get("anyOf").is_some_and(serde_json::Value::is_array),
+                "tool {tool_name} output schema is a result/error union"
+            );
+            let validator =
+                jsonschema::validator_for(&serde_json::Value::Object(schema.as_ref().clone()))
+                    .unwrap_or_else(|error| {
+                        panic!("tool {tool_name} output schema compiles: {error}")
+                    });
+            assert!(
+                validator.is_valid(&success_output),
+                "tool {tool_name} output schema accepts success envelopes"
+            );
+            assert!(
+                validator.is_valid(&error_output),
+                "tool {tool_name} output schema accepts error envelopes"
             );
         }
 

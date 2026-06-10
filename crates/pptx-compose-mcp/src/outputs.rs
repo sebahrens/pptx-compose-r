@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -9,15 +10,29 @@ use pptx_compose::json::{
     schemas::{PatchReport, ResultEnvelope, ResultStatus},
 };
 use rmcp::model::CallToolResult;
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Serialize;
 use serde_json::{Value, json};
 
 macro_rules! result_output {
     ($name:ident) => {
-        #[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
+        #[derive(Clone, Debug, PartialEq, Serialize)]
         #[serde(transparent)]
         pub struct $name(pub ResultEnvelope);
+
+        impl JsonSchema for $name {
+            fn schema_name() -> Cow<'static, str> {
+                stringify!($name).into()
+            }
+
+            fn schema_id() -> Cow<'static, str> {
+                concat!(module_path!(), "::", stringify!($name)).into()
+            }
+
+            fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+                result_or_error_schema(generator)
+            }
+        }
     };
 }
 
@@ -221,6 +236,18 @@ fn success_envelope(result: Value) -> ResultEnvelope {
         warnings: Vec::new(),
         next_cursor: None,
     }
+}
+
+fn result_or_error_schema(generator: &mut SchemaGenerator) -> Schema {
+    json!({
+        "type": "object",
+        "anyOf": [
+            generator.subschema_for::<ResultEnvelope>().to_value(),
+            generator.subschema_for::<ErrorEnvelope>().to_value()
+        ]
+    })
+    .try_into()
+    .expect("object schema is valid")
 }
 
 #[must_use]
