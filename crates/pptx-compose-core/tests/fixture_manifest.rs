@@ -26,11 +26,20 @@ const MANIFEST_FIXTURE_FAMILIES: &[&str] = &[
     "real-world/",
 ];
 
+const KNOWN_CONSUMING_TESTS: &[&str] = &[
+    "fixture_manifest::corpus::malformed_fixture_is_rejected_when_slide_xml_is_parsed",
+    "fixture_manifest::corpus::manifest_covers_required_fixture_families",
+    "fixture_manifest::persistence::manifest_pptx_fixtures_no_edit_round_trip_as_clean_entries",
+    "negative_cases::invalid_inputs_fail_before_mutation",
+    "roundtrip_golden::edits::add_image_runs_against_corpus_media_fixture",
+    "roundtrip_golden::roundtrip::no_edit_byte_identity",
+];
+
 mod manifest {
     use std::path::Path;
 
-    use super::REQUIRED_FIXTURE_FAMILIES;
     use super::fixtures::{fixture_path, load_manifest};
+    use super::{KNOWN_CONSUMING_TESTS, REQUIRED_FIXTURE_FAMILIES};
 
     #[test]
     fn every_entry_file_exists() {
@@ -45,6 +54,12 @@ mod manifest {
             assert!(
                 !entry.consuming_test.trim().is_empty(),
                 "fixture entry has an empty consuming_test: {}",
+                entry.path
+            );
+            assert!(
+                KNOWN_CONSUMING_TESTS.contains(&entry.consuming_test.as_str()),
+                "fixture entry references an unknown consuming_test `{}`: {}",
+                entry.consuming_test,
                 entry.path
             );
         }

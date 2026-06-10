@@ -4,7 +4,7 @@ source_app = "synthetic"
 features = ["minimal-package", "text"]
 expected_warnings = []
 invariants = ["contains-presentation-part", "roundtrip"]
-consuming_test = "roundtrip::no_edit_byte_identity"
+consuming_test = "roundtrip_golden::roundtrip::no_edit_byte_identity"
 
 [[entries]]
 path = "legacy/sample.pptx"
@@ -221,4 +221,4 @@ source_app = "synthetic"
 features = ["malformed", "unsafe-path"]
 expected_warnings = ["unsafe_path"]
 invariants = ["malformed", "unsafe-path"]
-consuming_test = "negative_cases::malformed_inputs_return_structured_errors"
+consuming_test = "negative_cases::invalid_inputs_fail_before_mutation"
