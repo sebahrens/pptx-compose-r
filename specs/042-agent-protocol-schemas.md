@@ -100,6 +100,25 @@ Element entries must include enough provenance for agents to target and recover 
     "bounds": { "supported": true },
     "alt_text": { "supported": true }
   },
+  "placeholder": {
+    "type": "title",
+    "idx": 1,
+    "source": "slide",
+    "layout_part": "ppt/slideLayouts/slideLayout1.xml"
+  },
+  "text_layout": {
+    "body_pr": {
+      "wrap": "square",
+      "anchor": "ctr",
+      "inset_l": 91440,
+      "inset_r": 91440,
+      "inset_t": 45720,
+      "inset_b": 45720,
+      "autofit": "no_autofit"
+    },
+    "paragraph_defaults": { "align": "ctr" },
+    "style_confidence": "direct_only"
+  },
   "fingerprint": "sha256:..."
 }
 ```
@@ -138,6 +157,15 @@ selectors that keep required companion parts consistent. It does not edit chart
 data/workbook authoring targets, SmartArt structure/layout/cache authoring
 targets, or OLE payload content. The detailed editability rationale is normative in
 [048. Editability Catalogue](048-editability-catalogue.md).
+
+`placeholder` and `text_layout` are optional. When present, `placeholder` MUST
+include `type` and `source`, and MAY include `idx` and `layout_part`.
+`text_layout.body_pr.autofit` uses one of `no_autofit`, `norm_auto_fit`,
+`shape_auto_fit`, or `unknown`; `body_pr` MAY also include direct OOXML body
+properties `wrap`, `anchor`, `inset_l`, `inset_r`, `inset_t`, and `inset_b`.
+`text_layout.paragraph_defaults.align` is the direct paragraph default when
+available. Current V1 `style_confidence` values are `direct_only` and
+`unknown`.
 
 ## Text Element View
 
@@ -231,6 +259,27 @@ The supported `run_style` key set is exactly `font_size_pt`, `bold`, `italic`,
 `align` value is paragraph-level and uses the same enum as
 `add_text_box.style.align`: `left`, `center`, or `right`. On `whole_element`
 mode, `run_style` fails validation.
+
+`replace_text` may include a conservative `fit_policy`:
+
+```json
+{
+  "operation_id": "op-title-fit",
+  "op": "replace_text",
+  "element_id": "slide-1:shape-4",
+  "text": "Long translated title",
+  "fit_policy": {
+    "mode": "preserve",
+    "min_font_size_pt": 14
+  }
+}
+```
+
+`fit_policy.mode` is one of `preserve`, `fail_if_overflow`, or `shrink_text`.
+Omitted policy behaves as `preserve` and may emit `text_overflow_risk`.
+`fail_if_overflow` rejects likely overflow. `shrink_text` is schema-valid for V1
+but only succeeds when no shrink is required; V1 does not mutate run sizes to
+make overflow fit.
 
 Operations appear in `capabilities.operations` only after their implementation
 ships. `set_document_metadata` is a current V1 operation:

@@ -81,9 +81,12 @@ These are editable in principle but explicitly out of V1. Each is scheduled in a
 
 - **Table structural edits** (rows/cols, merge/unmerge, widths, borders, fills) — needs a merge-semantics spec first.
 - **Slide lifecycle** (add/delete/duplicate/reorder) — needs rels + content-type + layout wiring, unique `p:cNvPr` re-id, media clone/share decisions, position-based agent-ID invalidation handling, and the GC validation prerequisite.
-- **Template population and text fitting** — placeholder metadata, fit estimation,
-  fit policies, and alignment rules are specified in [082](082-template-population-and-text-fitting.md)
-  but not yet implemented.
+- **Template population as a first-class operation** — placeholder metadata in
+  agent views and conservative `replace_text.fit_policy` handling are in V1;
+  fit estimation remains advisory and deliberately shallow. A first-class
+  `populate_placeholders` operation, richer style inheritance, and alignment
+  policies are specified in [082](082-template-population-and-text-fitting.md)
+  but remain post-V1.
 - **Orphaned-relationship / dangling-comment-author-ref / unreferenced-media GC validation** — harmless in V1 (no delete ops) but a hard prerequisite for lifecycle; build before any delete op.
 
 ## Preserve-Only Areas in V1

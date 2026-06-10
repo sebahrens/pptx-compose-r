@@ -96,6 +96,9 @@ Optional fields:
 - `run_style`: accepted only with `mode: run_scoped`; supported fields are
   `font_size_pt`, `bold`, `italic`, `color_hex`, `font_family`, and paragraph
   `align` (`left`, `center`, `right`).
+- `fit_policy`: conservative text-fit policy for the replacement. Supported
+  modes are `preserve`, `fail_if_overflow`, and `shrink_text`; optional
+  `min_font_size_pt` is accepted for policy compatibility.
 
 `replace_text` has two shipped text-body modes. `whole_element` is a plain-text,
 potentially lossy rewrite of the selected text body. The implementation filters
@@ -130,6 +133,15 @@ with `cell: { "row": N, "col": N }`, supported slide speaker-notes text, and
 existing visible chart/SmartArt text addressed by their text-specific selectors.
 Chart data/workbook authoring, SmartArt structure/layout/cache authoring, OLE
 payloads, groups, and connectors remain unsupported for `replace_text`.
+
+`fit_policy` is a V1 advisory/guard, not a renderer. With omitted policy or
+`mode: preserve`, replacement keeps text and geometry unchanged and may emit
+`text_overflow_risk` when the conservative estimate predicts likely overflow.
+`mode: fail_if_overflow` rejects likely overflow with `invalid_bounds`.
+`mode: shrink_text` is accepted only when no shrink is required in V1; if the
+estimate predicts overflow, it rejects rather than rewriting run sizes. A later
+schema may define actual uniform run-size shrinking, but V1 must not imply that
+text was shrunk when no run-size mutation occurred.
 
 ### `add_text_box`
 

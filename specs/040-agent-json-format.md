@@ -80,6 +80,27 @@ Full-deck export is not the primary agent read path for large decks. Agent-facin
             "bounds": { "supported": true },
             "alt_text": { "supported": true }
           },
+          "placeholder": {
+            "type": "title",
+            "idx": 1,
+            "source": "slide",
+            "layout_part": "ppt/slideLayouts/slideLayout1.xml"
+          },
+          "text_layout": {
+            "body_pr": {
+              "wrap": "square",
+              "anchor": "ctr",
+              "inset_l": 91440,
+              "inset_r": 91440,
+              "inset_t": 45720,
+              "inset_b": 45720,
+              "autofit": "no_autofit"
+            },
+            "paragraph_defaults": {
+              "align": "ctr"
+            },
+            "style_confidence": "direct_only"
+          },
           "fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
           "text": {
             "plain": "Quarterly Results",
@@ -201,6 +222,23 @@ when stable provenance is available. Chart data/workbook authoring, SmartArt
 structure/layout/cache authoring, and embedded OLE payloads follow the
 editability boundaries in
 [048. Editability Catalogue](048-editability-catalogue.md).
+
+## Placeholder and Text Layout Metadata
+
+Text-capable shape elements may expose optional template metadata:
+
+- `placeholder`: present when the element has a `p:nvPr/p:ph` placeholder. It
+  includes the OOXML placeholder `type`, optional `idx`, the metadata `source`,
+  and the resolved `layout_part` when known.
+- `text_layout`: present when direct text-body layout metadata is available. It
+  may include `body_pr` (`wrap`, `anchor`, body inset EMUs, and `autofit`),
+  `paragraph_defaults.align`, and `style_confidence`.
+
+`body_pr.autofit` uses `no_autofit`, `norm_auto_fit`, `shape_auto_fit`, or
+`unknown`. Current V1 `style_confidence` values are `direct_only` and
+`unknown`; richer inherited/theme confidence values require a schema update
+before use. Missing placeholder or layout fields mean the metadata is not
+available, not that the element is non-editable.
 
 ## Binary Handling
 

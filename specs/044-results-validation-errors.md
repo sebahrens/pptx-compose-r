@@ -68,19 +68,23 @@ warning is contractual, not cosmetic: it MUST be present whenever the original
 `a:hlinkMouseOver`, `a:br`, `a:pPr`, or literal line-break characters inside
 `a:t`. The rewrite collapses multi-run formatting to the first run's `a:rPr`
 when preserving formatting and drops those rich constructs while resynthesizing
-`a:p`/`a:r`/`a:t` from replacement plain text. V1 has no
-non-destructive run-scoped replacement mode, and WholeElement operations MUST
-NOT accept run-property override fields; those belong to the future run-scoped
-primitive described in [041](041-agent-edit-operations.md#phase-2--replace_text-run-scoped-mode-the-gate)
-and tracked by the deferred run-scoped primitive task.
+`a:p`/`a:r`/`a:t` from replacement plain text. Whole-element operations MUST
+NOT accept run-property override fields; those belong to `mode: run_scoped`.
 
-After the run-scoped primitive is implemented, `formatting_simplified` becomes a
+Because run-scoped replacement is available, `formatting_simplified` is a
 refuse-or-confirm condition for `mode: whole_element`. If the operation would
 drop multi-run formatting or rich constructs (`a:fld`, `a:hlinkClick`,
 `a:hlinkMouseOver`, `a:br`, `a:pPr`, or literal line-break characters inside
 `a:t`), validation MUST fail with `unsupported_edit` unless the patch explicitly
 sets `allow_formatting_simplification: true`. A confirmed lossy rewrite still
 MUST emit `formatting_simplified`; confirmation is not a waiver of the warning.
+
+`text_overflow_risk` is emitted by `replace_text` when the omitted/default
+policy or `fit_policy.mode: preserve` keeps text and geometry unchanged while
+the conservative fit estimate predicts likely overflow. The warning SHOULD
+include a `fit` object with at least `status: "overflow"` and the estimator
+details available to that surface. It is advisory for `preserve`; callers that
+need rejection use `fit_policy.mode: fail_if_overflow`.
 
 ## Validation Report
 
