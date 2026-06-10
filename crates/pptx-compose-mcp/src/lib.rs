@@ -973,6 +973,17 @@ impl PptxServer {
     ) -> Result<Json<outputs::ExportOutput>, rmcp::model::CallToolResult> {
         let input = input.0;
         let transaction_id = outputs::transaction_id();
+        if input.output_path.is_some() && input.inline {
+            return Err(outputs::map_error(
+                pptx_compose::core::error::Error::new(
+                    pptx_compose::core::error::ErrorCode::InvalidInput,
+                    "pptx_export accepts either output_path or inline=true, not both.",
+                )
+                .with_suggestion(
+                    "Set output_path for file export, or omit output_path and set inline=true for a size-limited JSON export.",
+                ),
+            ));
+        }
         if input.output_path.is_none() && !input.inline {
             return Err(outputs::map_error(
                 pptx_compose::core::error::Error::new(
@@ -1568,6 +1579,109 @@ mod tests {
         assert_eq!(error.is_error, Some(true));
         assert_eq!(envelope["error"]["code"], ErrorCode::StalePatch.as_str());
         assert_eq!(envelope["error"]["location"]["current_revision"], 2);
+    }
+
+    #[tokio::test]
+    async fn export_returns_inline_bytes_when_inline_only() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+
+        let exported = server
+            .pptx_export(rmcp::handler::server::wrapper::Parameters(ExportInput {
+                session_id: opened.session_id,
+                client_request_id: None,
+                expected_revision: opened.revision,
+                output_path: None,
+                inline: true,
+                overwrite: false,
+            }))
+            .await
+            .expect("inline export succeeds");
+
+        assert_eq!(exported.0.0.result["output_path"], serde_json::Value::Null);
+        assert_eq!(exported.0.0.result["inline"]["encoding"], "base64");
+        assert!(
+            exported.0.0.result["inline"]["data"]
+                .as_str()
+                .is_some_and(|data| !data.is_empty())
+        );
+    }
+
+    #[tokio::test]
+    async fn export_writes_output_path_when_path_only() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+        let output_path = std::env::temp_dir().join(format!(
+            "pptx-compose-mcp-path-export-{}-{}.pptx",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+
+        let exported = server
+            .pptx_export(rmcp::handler::server::wrapper::Parameters(ExportInput {
+                session_id: opened.session_id,
+                client_request_id: None,
+                expected_revision: opened.revision,
+                output_path: Some(output_path.to_string_lossy().into_owned()),
+                inline: false,
+                overwrite: false,
+            }))
+            .await
+            .expect("path export succeeds");
+
+        let metadata = fs::metadata(&output_path).expect("path export writes file");
+        let canonical_output_path =
+            fs::canonicalize(&output_path).expect("path export canonicalizes");
+        fs::remove_file(&output_path).expect("remove path export fixture");
+        assert_eq!(
+            exported.0.0.result["output_path"],
+            canonical_output_path.to_string_lossy().as_ref()
+        );
+        assert_eq!(exported.0.0.result["byte_length"], metadata.len());
+        assert_eq!(exported.0.0.result["inline"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn export_rejects_output_path_with_inline() {
+        let server = PptxServer::default();
+        let opened = open_fixture_session(&server);
+        let output_path = std::env::temp_dir().join(format!(
+            "pptx-compose-mcp-combined-export-{}-{}.pptx",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        ));
+
+        let result = server
+            .pptx_export(rmcp::handler::server::wrapper::Parameters(ExportInput {
+                session_id: opened.session_id,
+                client_request_id: None,
+                expected_revision: opened.revision,
+                output_path: Some(output_path.to_string_lossy().into_owned()),
+                inline: true,
+                overwrite: false,
+            }))
+            .await;
+
+        let Err(error) = result else {
+            panic!("combined path and inline export is rejected");
+        };
+        let envelope = error
+            .structured_content
+            .expect("combined export error has structured content");
+        assert_eq!(error.is_error, Some(true));
+        assert_eq!(envelope["error"]["code"], ErrorCode::InvalidInput.as_str());
+        assert!(
+            envelope["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("output_path or inline"))
+        );
+        assert!(!output_path.exists());
     }
 
     #[tokio::test]
