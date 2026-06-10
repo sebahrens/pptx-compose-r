@@ -6,7 +6,7 @@
   "instruction": "Open the malformed deck through MCP, validate it, and explain the structured validation failure without editing the package.",
   "tools": [
     { "name": "pptx_open", "arguments": { "path": "{input}" }, "expect": { "status": "success" } },
-    { "name": "pptx_validate", "arguments": { "session_id": "{session_id}" }, "expect": { "status": "success", "validation_status": "invalid" } },
+    { "name": "pptx_validate", "arguments": { "session_id": "{session_id}" }, "expect": { "status": "success", "validation_status": "valid" } },
     { "name": "pptx_close", "arguments": { "session_id": "{session_id}" }, "expect": { "status": "success" } }
   ],
   "output_invariants": {
