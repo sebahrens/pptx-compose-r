@@ -666,6 +666,55 @@ fn agent_view_rejects_huge_page_limit() {
 }
 
 #[test]
+fn slide_page_cursor_is_scoped_to_slide_ids_selection() {
+    let document = PresentationDocument::from_bytes(include_bytes!(
+        "../../../fixtures/real-world/rsm-technology-strategy.pptx"
+    ))
+    .expect("fixture opens");
+    let first = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlidePage,
+            include_elements: false,
+            slide_id: None,
+            slide_ids: vec!["slide-1".to_owned(), "slide-2".to_owned()],
+            element_id: None,
+            cursor: None,
+            limit: Some(1),
+        })
+        .expect("first selected slide page builds");
+    let cursor = first["view"]["next_cursor"]
+        .as_str()
+        .expect("truncated selected slide page has cursor")
+        .to_owned();
+
+    let second = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlidePage,
+            include_elements: false,
+            slide_id: None,
+            slide_ids: vec!["slide-1".to_owned(), "slide-2".to_owned()],
+            element_id: None,
+            cursor: Some(cursor.clone()),
+            limit: Some(1),
+        })
+        .expect("same selected slide page cursor is accepted");
+    assert_eq!(second["slides"][0]["id"], "slide-2");
+
+    let error = document
+        .to_agent_json_with_options(AgentViewOptions {
+            mode: ViewMode::SlidePage,
+            include_elements: false,
+            slide_id: None,
+            slide_ids: vec!["slide-1".to_owned(), "slide-3".to_owned()],
+            element_id: None,
+            cursor: Some(cursor),
+            limit: Some(1),
+        })
+        .expect_err("cursor from another slide_ids selection is rejected");
+    assert_eq!(error.code(), ErrorCode::InvalidInput);
+}
+
+#[test]
 fn agent_view_advertises_image_content_types_accepted_by_image_edits() {
     let document = PresentationDocument::from_bytes(text_deck()).expect("text deck opens");
     let view = document.to_agent_json().expect("agent view builds");

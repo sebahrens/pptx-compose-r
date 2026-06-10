@@ -159,6 +159,11 @@ pub fn build_view_with_revision(
             ViewPayload::default(),
         ))?),
         ViewMode::SlidePage => {
+            let slide_collection = slide_page_cursor_collection(&req.slide_ids);
+            let scope = CursorScope {
+                collection: Some(&slide_collection),
+                ..scope
+            };
             let (slides, meta, omitted_count) = page_slide_summaries(
                 &context,
                 &req.slide_ids,
@@ -432,6 +437,21 @@ fn find_text_cursor_collection(query: &str, scope: &FindTextScope) -> String {
         FindTextScope::Slide { slide_id } => format!("slide:{slide_id}"),
     };
     format!("query:{}:{query}\0scope:{scope_key}", query.len())
+}
+
+fn slide_page_cursor_collection(slide_ids: &[String]) -> String {
+    if slide_ids.is_empty() {
+        return "slide_ids:*".to_owned();
+    }
+
+    let mut collection = format!("slide_ids:{}", slide_ids.len());
+    for slide_id in slide_ids {
+        collection.push('\0');
+        collection.push_str(&slide_id.len().to_string());
+        collection.push(':');
+        collection.push_str(slide_id);
+    }
+    collection
 }
 
 fn collect_text_matches(
