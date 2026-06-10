@@ -352,7 +352,7 @@ impl PresentationDocument {
         options: ApplyPatchOptions,
     ) -> Result<ApplyPatchOutput> {
         if options.validate {
-            let _report = self.validate()?;
+            self.ensure_pre_apply_validation_passes()?;
         }
 
         let document_id = document_id_from_entries(&self.entries)?;
@@ -598,6 +598,19 @@ impl PresentationDocument {
             return Err(Error::with_source(
                 ErrorCode::ValidationFailed,
                 "Package failed validation and was not written.",
+                ValidationFailedReport { report },
+            )
+            .with_suggestion("Inspect the validation report, fix blocking findings, and retry."));
+        }
+        Ok(())
+    }
+
+    fn ensure_pre_apply_validation_passes(&self) -> Result<()> {
+        let report = self.validate()?;
+        if has_blocking_findings(&report) {
+            return Err(Error::with_source(
+                ErrorCode::ValidationFailed,
+                "Package failed validation and the patch was not applied.",
                 ValidationFailedReport { report },
             )
             .with_suggestion("Inspect the validation report, fix blocking findings, and retry."));
@@ -1682,9 +1695,9 @@ mod tests {
     use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
     use super::{
-        PresentationDocument, WriteOptions,
+        ApplyPatchOptions, MediaInputs, Patch, PresentationDocument, WriteOptions,
         capabilities::{CapabilitiesOptions, capabilities},
-        cross_device_publish_error, package_from_entries_with_limits,
+        cross_device_publish_error, document_id_from_entries, package_from_entries_with_limits,
     };
     use crate::edit::patch::ALL_OP_NAMES;
 
@@ -1836,6 +1849,111 @@ mod tests {
         assert_eq!(error.code(), ErrorCode::ValidationFailed);
     }
 
+    #[test]
+    fn apply_patch_validate_option_gates_input_but_not_staged_output() {
+        let bytes = zip_entries([
+            ("[Content_Types].xml", CONTENT_TYPES_WITH_SLIDE.as_bytes()),
+            ("_rels/.rels", ROOT_RELS.as_bytes()),
+            ("ppt/presentation.xml", PRESENTATION_WITH_SLIDE.as_bytes()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                PRESENTATION_RELS.as_bytes(),
+            ),
+            (
+                "ppt/slides/slide1.xml",
+                br#"<p:sld xmlns:p="urn:p"><p:cSld></p:sld>"#,
+            ),
+        ]);
+        let mut document =
+            PresentationDocument::from_bytes(&bytes).expect("malformed slide deck opens");
+        document.dirty_parts.insert(
+            PartName::from_zip_entry("ppt/slides/slide1.xml").expect("slide part name is valid"),
+        );
+
+        let validation = document.validate().expect("validation report builds");
+        assert!(
+            validation.findings.iter().any(|finding| finding.blocking),
+            "malformed current-state slide emits a blocking finding"
+        );
+
+        let error = document
+            .apply_patch_with_options(
+                noop_patch(&bytes),
+                MediaInputs::default(),
+                ApplyPatchOptions {
+                    dry_run: true,
+                    validate: true,
+                },
+            )
+            .expect_err("validate=true rejects blocking pre-apply findings");
+        assert_eq!(error.code(), ErrorCode::ValidationFailed);
+
+        let duplicate_id_bytes = zip_entries([
+            ("[Content_Types].xml", CONTENT_TYPES_WITH_SLIDE.as_bytes()),
+            ("_rels/.rels", ROOT_RELS.as_bytes()),
+            (
+                "ppt/presentation.xml",
+                PRESENTATION_WITH_DUPLICATE_SLIDE_ID.as_bytes(),
+            ),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                PRESENTATION_RELS.as_bytes(),
+            ),
+            ("ppt/slides/slide1.xml", SLIDE.as_bytes()),
+        ]);
+        let mut duplicate_id_document =
+            PresentationDocument::from_bytes(&duplicate_id_bytes).expect("duplicate-id deck opens");
+        let error = duplicate_id_document
+            .apply_patch_with_options(
+                add_text_box_patch(&duplicate_id_bytes),
+                MediaInputs::default(),
+                ApplyPatchOptions {
+                    dry_run: true,
+                    validate: false,
+                },
+            )
+            .expect_err("validate=false still runs staged-output validation for edits");
+        assert_eq!(error.code(), ErrorCode::ValidationFailed);
+    }
+
+    fn noop_patch(bytes: &[u8]) -> Patch {
+        serde_json::from_value(serde_json::json!({
+            "schema": "pptx-compose.patch.v1",
+            "version": 1,
+            "document_id": document_id_from_entries(
+                &from_bytes_with_options(bytes, &CoreOpenOptions::default())
+                    .expect("package entries read")
+            )
+            .expect("document id builds"),
+            "base_revision": 1,
+            "client_request_id": "facade-validate-option-noop",
+            "operations": []
+        }))
+        .expect("noop patch parses")
+    }
+
+    fn add_text_box_patch(bytes: &[u8]) -> Patch {
+        serde_json::from_value(serde_json::json!({
+            "schema": "pptx-compose.patch.v1",
+            "version": 1,
+            "document_id": document_id_from_entries(
+                &from_bytes_with_options(bytes, &CoreOpenOptions::default())
+                    .expect("package entries read")
+            )
+            .expect("document id builds"),
+            "base_revision": 1,
+            "client_request_id": "facade-validate-option-add-text-box",
+            "operations": [{
+                "operation_id": "add-caption",
+                "op": "add_text_box",
+                "slide_id": "slide-1",
+                "text": "New caption",
+                "bounds": { "x": 1828800, "y": 1828800, "cx": 1828800, "cy": 457200 }
+            }]
+        }))
+        .expect("add_text_box patch parses")
+    }
+
     fn zip_entries<const N: usize>(entries: [(&str, &[u8]); N]) -> Vec<u8> {
         let mut bytes = Vec::new();
         {
@@ -1877,6 +1995,11 @@ mod tests {
     const PRESENTATION_WITH_SLIDE: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>"#;
+
+    const PRESENTATION_WITH_DUPLICATE_SLIDE_ID: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
 </p:presentation>"#;
 
     const PRESENTATION_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
