@@ -107,6 +107,87 @@ fn json_errors_parse_failures_emit_one_error_envelope() {
 }
 
 #[test]
+fn cli_boundary_attribution_uses_contract_exit_buckets() {
+    let root = unique_dir();
+    let deck = root.join("three-slides.pptx");
+    fs::write(&deck, slide_deck(3)).expect("deck fixture writes");
+
+    assert_error(
+        &run_cli_raw_owned(vec![
+            "--json-errors".to_owned(),
+            "inspect".to_owned(),
+            root.join("missing.pptx").to_string_lossy().into_owned(),
+        ]),
+        2,
+        "invalid_input",
+    );
+
+    for command in ["inspect", "find-text"] {
+        let mut args = vec![
+            "--json-errors".to_owned(),
+            command.to_owned(),
+            deck.to_string_lossy().into_owned(),
+        ];
+        if command == "find-text" {
+            args.push("Slide".to_owned());
+        }
+        args.extend(["--limit".to_owned(), "0".to_owned()]);
+        assert_error(&run_cli_raw_owned(args), 1, "invalid_input");
+
+        let mut args = vec![
+            "--json-errors".to_owned(),
+            command.to_owned(),
+            deck.to_string_lossy().into_owned(),
+        ];
+        if command == "find-text" {
+            args.push("Slide".to_owned());
+        }
+        args.extend(["--limit".to_owned(), "101".to_owned()]);
+        assert_error(&run_cli_raw_owned(args), 1, "invalid_input");
+
+        let mut args = vec![
+            "--json-errors".to_owned(),
+            command.to_owned(),
+            deck.to_string_lossy().into_owned(),
+        ];
+        if command == "find-text" {
+            args.push("Slide".to_owned());
+        } else {
+            args.extend(["--detail".to_owned(), "full".to_owned()]);
+        }
+        args.extend(["--cursor".to_owned(), "not-a-cursor".to_owned()]);
+        assert_error(&run_cli_raw_owned(args), 1, "invalid_input");
+
+        let mut args = vec![
+            "--json-errors".to_owned(),
+            command.to_owned(),
+            deck.to_string_lossy().into_owned(),
+        ];
+        if command == "find-text" {
+            args.push("Slide".to_owned());
+        }
+        args.extend(["--slides".to_owned(), "slide-99".to_owned()]);
+        assert_error(&run_cli_raw_owned(args), 1, "invalid_input");
+    }
+
+    assert_error(
+        &run_cli_raw_owned(vec![
+            "--json-errors".to_owned(),
+            "media".to_owned(),
+            "get".to_owned(),
+            deck.to_string_lossy().into_owned(),
+            "ppt/media/missing.png".to_owned(),
+            "--output".to_owned(),
+            root.join("missing.png").to_string_lossy().into_owned(),
+        ]),
+        1,
+        "invalid_input",
+    );
+
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
 fn inspect_full_malformed_slide_xml_preserves_core_error_code() {
     let fixture = repo_root().join("fixtures/malformed/broken-slide-xml.pptx");
     let output = run_cli_raw([
@@ -527,7 +608,22 @@ fn parse_stdout(output: &std::process::Output) -> serde_json::Value {
 }
 
 fn assert_invalid_input_error(output: &std::process::Output) {
-    assert!(!output.status.success());
+    let envelope = assert_error(output, 1, "invalid_input");
+    assert_eq!(envelope["error"]["code"], "invalid_input");
+}
+
+fn assert_error(
+    output: &std::process::Output,
+    expected_exit: i32,
+    expected_code: &str,
+) -> serde_json::Value {
+    assert_eq!(
+        output.status.code(),
+        Some(expected_exit),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stdout.is_empty());
     let stderr_text = String::from_utf8(output.stderr.clone()).expect("stderr is UTF-8");
     assert_eq!(stderr_text.lines().count(), 1);
@@ -535,7 +631,8 @@ fn assert_invalid_input_error(output: &std::process::Output) {
         serde_json::from_str(&stderr_text).expect("stderr is one JSON document");
     assert_eq!(envelope["schema"], "pptx-compose.error.v1");
     assert_eq!(envelope["status"], "error");
-    assert_eq!(envelope["error"]["code"], "invalid_input");
+    assert_eq!(envelope["error"]["code"], expected_code);
+    envelope
 }
 
 fn assert_slide_ids(value: &serde_json::Value, expected: &[&str]) {

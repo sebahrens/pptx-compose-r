@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    fs, io,
     path::{Component, Path, PathBuf},
 };
 
@@ -53,13 +53,8 @@ impl PermissionContext {
         intent: PathIntent,
     ) -> Result<PathBuf, CliError> {
         let candidate = self.anchor_path(path)?;
-        let resolved = fs::canonicalize(&candidate).map_err(|source| {
-            path_error_with_source(
-                ErrorCode::PermissionDenied,
-                format!("Could not resolve readable {} path.", intent.label()),
-                source,
-            )
-        })?;
+        let resolved =
+            fs::canonicalize(&candidate).map_err(|source| read_path_error(intent, source))?;
 
         if self.is_allowed(&resolved) {
             Ok(resolved)
@@ -242,6 +237,20 @@ fn path_error_with_source(
     source: impl std::error::Error + Send + Sync + 'static,
 ) -> CliError {
     CliError::with_source(code, message, source)
+}
+
+fn read_path_error(intent: PathIntent, source: io::Error) -> CliError {
+    let message = format!("Could not resolve readable {} path.", intent.label());
+    if intent == PathIntent::InputPptx
+        && matches!(
+            source.kind(),
+            io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+        )
+    {
+        CliError::invalid_input_with_source(InvalidInputCause::InputPath, message, source)
+    } else {
+        path_error_with_source(ErrorCode::PermissionDenied, message, source)
+    }
 }
 
 #[cfg(test)]

@@ -129,18 +129,14 @@ fn find_text(
     sink: OutputSink,
     open_options: OpenOptions,
 ) -> Result<(), CliError> {
-    permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
+    validate_page_limit(args.limit)?;
+    let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
     if let Some(output) = &args.output {
         permissions.authorize_write(output, PathIntent::ReportOutput)?;
     }
 
-    let document = PresentationDocument::open_path_with_options(&args.input, open_options)
-        .map_err(|error| {
-            CliError::from_error(error.with_location(ErrorLocation {
-                part: Some(args.input.display().to_string()),
-                ..ErrorLocation::default()
-            }))
-        })?;
+    let document = PresentationDocument::open_path_with_options(&input, open_options)
+        .map_err(|error| open_input_error(error, &input))?;
     let scope = match args.slides {
         Some(slides) => {
             let slide_ids = parse_slide_scope(&slides)?;
@@ -161,6 +157,7 @@ fn find_text(
         }
         None => FindTextScope::Deck,
     };
+    validate_find_text_scope(&document, &scope)?;
     let result = document
         .find_text(FindTextRequest {
             query: args.query,
@@ -168,7 +165,7 @@ fn find_text(
             cursor: args.cursor,
             limit: args.limit,
         })
-        .map_err(CliError::from_error)?;
+        .map_err(read_scope_error)?;
     sink.emit_json_overwrite(
         &result,
         output::OutputDest::from(args.output),
@@ -193,10 +190,12 @@ fn inspect(
     }
 
     let document = PresentationDocument::open_path_with_options(&input, open_options)
-        .map_err(CliError::from_error)?;
+        .map_err(|error| open_input_error(error, &input))?;
+    let view_options = inspect_view_options(&args)?;
+    validate_agent_view_scope(&document, &view_options)?;
     let view = document
-        .to_agent_json_with_options(inspect_view_options(&args)?)
-        .map_err(CliError::from_error)?;
+        .to_agent_json_with_options(view_options)
+        .map_err(read_scope_error)?;
     sink.emit_json_overwrite(&view, OutputDest::from(args.output), args.overwrite)?;
     if args.report.is_some() {
         let report = document
@@ -286,7 +285,7 @@ fn media_get(
         .map_err(CliError::from_error)?;
     let bytes = document
         .media_part_bytes(&args.package_path)
-        .map_err(CliError::from_error)?;
+        .map_err(cli_argument_error)?;
     output::write_bytes_atomic(
         &output,
         &bytes,
@@ -404,9 +403,106 @@ fn inspect_view_options(args: &cli::InspectArgs) -> Result<AgentViewOptions, Cli
     }
     options.cursor.clone_from(&args.cursor);
     if let Some(limit) = args.limit {
+        validate_page_limit(Some(limit))?;
         options.limit = Some(limit);
     }
     Ok(options)
+}
+
+fn validate_find_text_scope(
+    document: &PresentationDocument,
+    scope: &FindTextScope,
+) -> Result<(), CliError> {
+    if let FindTextScope::Slide { slide_id } = scope {
+        validate_slide_id_exists(document, slide_id)?;
+    }
+    Ok(())
+}
+
+fn validate_agent_view_scope(
+    document: &PresentationDocument,
+    options: &AgentViewOptions,
+) -> Result<(), CliError> {
+    if let Some(slide_id) = &options.slide_id {
+        validate_slide_id_exists(document, slide_id)?;
+    }
+    for slide_id in &options.slide_ids {
+        validate_slide_id_exists(document, slide_id)?;
+    }
+    Ok(())
+}
+
+fn validate_slide_id_exists(
+    document: &PresentationDocument,
+    slide_id: &str,
+) -> Result<(), CliError> {
+    let slide_number = parse_slide_id_token(slide_id)?;
+    let slide_count = document.slide_count();
+    if slide_number > slide_count {
+        return Err(CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            format!("Slide `{slide_id}` was not found."),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_page_limit(limit: Option<u32>) -> Result<(), CliError> {
+    if let Some(limit) = limit
+        && (limit == 0 || limit > MAX_PAGE_LIMIT)
+    {
+        return Err(CliError::invalid_input(
+            InvalidInputCause::CliArgument,
+            format!("--limit must be between 1 and {MAX_PAGE_LIMIT}."),
+        ));
+    }
+    Ok(())
+}
+
+fn open_input_error(error: Error, input: &std::path::Path) -> CliError {
+    let error = error.with_location(ErrorLocation {
+        part: Some(input.display().to_string()),
+        ..ErrorLocation::default()
+    });
+    if error.code() == ErrorCode::InvalidInput
+        && error.message().starts_with("Could not read PPTX input")
+    {
+        CliError::invalid_input_with_source(
+            InvalidInputCause::InputPath,
+            error.message().to_owned(),
+            error,
+        )
+    } else {
+        CliError::from_error(error)
+    }
+}
+
+fn read_scope_error(error: Error) -> CliError {
+    match error.code() {
+        ErrorCode::InvalidInput => CliError::invalid_input_with_source(
+            InvalidInputCause::CliArgument,
+            error.message().to_owned(),
+            error,
+        ),
+        ErrorCode::SelectorNotFound => CliError::invalid_input_with_source(
+            InvalidInputCause::CliArgument,
+            error.message().to_owned(),
+            error,
+        ),
+        _ => CliError::from_error(error),
+    }
+}
+
+fn cli_argument_error(error: Error) -> CliError {
+    if error.code() == ErrorCode::InvalidInput {
+        CliError::invalid_input_with_source(
+            InvalidInputCause::CliArgument,
+            error.message().to_owned(),
+            error,
+        )
+    } else {
+        CliError::from_error(error)
+    }
 }
 
 fn parse_slide_scope(slides: &str) -> Result<Vec<String>, CliError> {
