@@ -131,9 +131,11 @@ fn find_text(
 ) -> Result<(), CliError> {
     validate_page_limit(args.limit)?;
     let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
-    if let Some(output) = &args.output {
-        permissions.authorize_write(output, PathIntent::ReportOutput)?;
-    }
+    let output = args
+        .output
+        .as_deref()
+        .map(|output| permissions.authorize_write(output, PathIntent::ReportOutput))
+        .transpose()?;
 
     let document = PresentationDocument::open_path_with_options(&input, open_options)
         .map_err(|error| open_input_error(error, &input))?;
@@ -166,11 +168,7 @@ fn find_text(
             limit: args.limit,
         })
         .map_err(read_scope_error)?;
-    sink.emit_json_overwrite(
-        &result,
-        output::OutputDest::from(args.output),
-        args.overwrite,
-    )
+    sink.emit_json_overwrite(&result, output::OutputDest::from(output), args.overwrite)
 }
 
 fn inspect(
@@ -182,12 +180,16 @@ fn inspect(
     reject_inspect_stdout_collision(&args)?;
 
     let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
-    if let Some(output) = &args.output {
-        permissions.authorize_write(output, PathIntent::ReportOutput)?;
-    }
-    if let Some(report) = &args.report {
-        permissions.authorize_write(report, PathIntent::ReportOutput)?;
-    }
+    let output = args
+        .output
+        .as_deref()
+        .map(|output| permissions.authorize_write(output, PathIntent::ReportOutput))
+        .transpose()?;
+    let report_output = args
+        .report
+        .as_deref()
+        .map(|report| permissions.authorize_write(report, PathIntent::ReportOutput))
+        .transpose()?;
 
     let document = PresentationDocument::open_path_with_options(&input, open_options)
         .map_err(|error| open_input_error(error, &input))?;
@@ -196,12 +198,12 @@ fn inspect(
     let view = document
         .to_agent_json_with_options(view_options)
         .map_err(read_scope_error)?;
-    sink.emit_json_overwrite(&view, OutputDest::from(args.output), args.overwrite)?;
-    if args.report.is_some() {
+    sink.emit_json_overwrite(&view, OutputDest::from(output), args.overwrite)?;
+    if report_output.is_some() {
         let report = document
             .validate_with_mode(ValidationMode::NoEdit)
             .map_err(CliError::from_error)?;
-        sink.emit_json_overwrite(&report, OutputDest::from(args.report), args.overwrite)?;
+        sink.emit_json_overwrite(&report, OutputDest::from(report_output), args.overwrite)?;
     }
     Ok(())
 }
@@ -233,15 +235,17 @@ fn validate(
     open_options: OpenOptions,
 ) -> Result<(), CliError> {
     let input = permissions.authorize_read(&args.input, PathIntent::InputPptx)?;
-    if let Some(report) = &args.report {
-        permissions.authorize_write(report, PathIntent::ReportOutput)?;
-    }
+    let report_output = args
+        .report
+        .as_deref()
+        .map(|report| permissions.authorize_write(report, PathIntent::ReportOutput))
+        .transpose()?;
     let document = PresentationDocument::open_path_with_options(&input, open_options)
         .map_err(CliError::from_error)?;
     let report = document
         .validate_with_mode(ValidationMode::NoEdit)
         .map_err(CliError::from_error)?;
-    sink.emit_json_overwrite(&report, OutputDest::from(args.report), args.overwrite)?;
+    sink.emit_json_overwrite(&report, OutputDest::from(report_output), args.overwrite)?;
     if validation_report_has_blocking_findings(&report) {
         return Err(CliError::new(
             ErrorCode::ValidationFailed,

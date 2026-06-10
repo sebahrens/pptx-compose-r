@@ -417,6 +417,117 @@ fn find_text_output_requires_overwrite_for_existing_file() {
 }
 
 #[test]
+fn workspace_relative_read_and_write_paths_use_authorized_paths() {
+    let root = unique_dir();
+    let cwd = root.join("cwd");
+    let workspace = root.join("workspace");
+    fs::create_dir_all(&cwd).expect("cwd dir creates");
+    fs::create_dir_all(&workspace).expect("workspace dir creates");
+
+    fs::write(
+        cwd.join("deck.pptx"),
+        deck_with_single_slide_text("Cwd Decoy"),
+    )
+    .expect("cwd deck writes");
+    fs::write(
+        workspace.join("deck.pptx"),
+        deck_with_single_slide_text("Workspace Needle"),
+    )
+    .expect("workspace deck writes");
+
+    for name in [
+        "inspect.view.json",
+        "inspect.report.json",
+        "matches.json",
+        "validation.json",
+    ] {
+        fs::write(cwd.join(name), b"cwd sentinel").expect("cwd sentinel writes");
+        fs::write(workspace.join(name), b"workspace sentinel").expect("workspace sentinel writes");
+    }
+
+    let inspect = run_cli_raw_owned_in_dir(
+        vec![
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+            "inspect".to_owned(),
+            "deck.pptx".to_owned(),
+            "--output".to_owned(),
+            "inspect.view.json".to_owned(),
+            "--report".to_owned(),
+            "inspect.report.json".to_owned(),
+            "--overwrite".to_owned(),
+        ],
+        &cwd,
+    );
+    assert_success(&inspect);
+    assert_eq!(
+        fs::read(cwd.join("inspect.view.json")).expect("cwd inspect view reads"),
+        b"cwd sentinel"
+    );
+    assert_eq!(
+        fs::read(cwd.join("inspect.report.json")).expect("cwd inspect report reads"),
+        b"cwd sentinel"
+    );
+    let inspect_view = json_file(workspace.join("inspect.view.json"));
+    assert_eq!(inspect_view["schema"], "pptx-compose.agent_view.v1");
+    let inspect_report = json_file(workspace.join("inspect.report.json"));
+    assert_eq!(
+        inspect_report["schema"],
+        "pptx-compose.validation_report.v1"
+    );
+
+    let find_text = run_cli_raw_owned_in_dir(
+        vec![
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+            "find-text".to_owned(),
+            "deck.pptx".to_owned(),
+            "Needle".to_owned(),
+            "--output".to_owned(),
+            "matches.json".to_owned(),
+            "--overwrite".to_owned(),
+        ],
+        &cwd,
+    );
+    assert_success(&find_text);
+    assert_eq!(
+        fs::read(cwd.join("matches.json")).expect("cwd matches reads"),
+        b"cwd sentinel"
+    );
+    let matches = json_file(workspace.join("matches.json"));
+    assert_eq!(matches["schema"], "pptx-compose.find_text.v1");
+    assert_eq!(
+        matches["matches"]
+            .as_array()
+            .expect("matches is an array")
+            .len(),
+        1
+    );
+
+    let validate = run_cli_raw_owned_in_dir(
+        vec![
+            "--workspace".to_owned(),
+            workspace.to_string_lossy().into_owned(),
+            "validate".to_owned(),
+            "deck.pptx".to_owned(),
+            "--report".to_owned(),
+            "validation.json".to_owned(),
+            "--overwrite".to_owned(),
+        ],
+        &cwd,
+    );
+    assert_success(&validate);
+    assert_eq!(
+        fs::read(cwd.join("validation.json")).expect("cwd validation reads"),
+        b"cwd sentinel"
+    );
+    let validation = json_file(workspace.join("validation.json"));
+    assert_eq!(validation["schema"], "pptx-compose.validation_report.v1");
+
+    fs::remove_dir_all(root).expect("test dir removes");
+}
+
+#[test]
 fn schema_prints_published_schema() {
     let output = run_cli(["schema", "media-manifest-v1"]);
     let schema = parse_stdout(&output);
@@ -654,6 +765,10 @@ fn media_bytes(path: &Path, package_path: &str) -> Vec<u8> {
     bytes
 }
 
+fn json_file(path: PathBuf) -> serde_json::Value {
+    serde_json::from_slice(&fs::read(path).expect("JSON file reads")).expect("JSON file parses")
+}
+
 fn valid_noop_patch() -> &'static [u8] {
     br#"{
         "schema": "pptx-compose.patch.v1",
@@ -701,6 +816,30 @@ fn slide_deck(slide_count: usize) -> Vec<u8> {
 
 fn duplicate_slide_id_deck() -> Vec<u8> {
     deck_with_presentation(1, presentation_with_duplicate_slide_ids())
+}
+
+fn deck_with_single_slide_text(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut bytes));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, data) in [
+            ("[Content_Types].xml".to_owned(), content_types(1)),
+            ("_rels/.rels".to_owned(), root_rels()),
+            ("ppt/presentation.xml".to_owned(), presentation(1)),
+            (
+                "ppt/_rels/presentation.xml.rels".to_owned(),
+                presentation_rels(1),
+            ),
+            ("ppt/slides/slide1.xml".to_owned(), text_slide(text)),
+        ] {
+            writer.start_file(name, options).expect("start ZIP entry");
+            writer.write_all(data.as_bytes()).expect("write ZIP entry");
+        }
+        writer.finish().expect("finish ZIP");
+    }
+    bytes
 }
 
 fn deck_with_presentation(slide_count: usize, presentation_xml: String) -> Vec<u8> {
