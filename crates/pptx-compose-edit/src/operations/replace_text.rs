@@ -1758,6 +1758,7 @@ fn selected_run_text(
     let last_index = *indices
         .last()
         .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run range is empty."))?;
+    reject_unsupported_run_span_children(paragraph, first_index, last_index, operation, target)?;
     for node in &paragraph.children[first_index..=last_index] {
         let Some(element) = node.as_element() else {
             continue;
@@ -1799,6 +1800,7 @@ fn replace_run_scoped_text(
         .last()
         .ok_or_else(|| Error::new(ErrorCode::InternalError, "Run range is empty."))?;
     let paragraph = paragraph_at_mut(tx_body, run.paragraph_index, operation, target)?;
+    reject_unsupported_run_span_children(paragraph, first_index, last_index, operation, target)?;
     let mut remove_indices = indices.iter().skip(1).copied().collect::<Vec<_>>();
     remove_indices.extend((first_index + 1..last_index).filter(|index| {
         paragraph.children[*index]
@@ -1875,6 +1877,31 @@ fn run_indices(
         .with_location(operation.location(Some(target))));
     }
     Ok(run_child_indices[start..=end].to_vec())
+}
+
+fn reject_unsupported_run_span_children(
+    paragraph: &XmlElement,
+    first_index: usize,
+    last_index: usize,
+    operation: &impl RunScopedTextOperation,
+    target: &ResolvedElement,
+) -> Result<()> {
+    if last_index <= first_index + 1 {
+        return Ok(());
+    }
+    for node in &paragraph.children[first_index + 1..last_index] {
+        let Some(child) = node.as_element() else {
+            continue;
+        };
+        if !matches!(child.name.local_name.as_str(), "r" | "br") {
+            return Err(Error::new(
+                ErrorCode::UnsupportedEdit,
+                "run_scoped replace_text cannot replace across fields or unsupported paragraph children.",
+            )
+            .with_location(operation.location(Some(target))));
+        }
+    }
+    Ok(())
 }
 
 fn paragraph_at<'a>(

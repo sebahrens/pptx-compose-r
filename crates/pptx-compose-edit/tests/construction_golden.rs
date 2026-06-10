@@ -550,6 +550,36 @@ mod construction_golden {
     }
 
     #[test]
+    fn replace_text_run_scoped_rejects_field_inside_selected_range() -> Result<()> {
+        let package = package_with_slide(FIELD_BETWEEN_RUNS_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Folie 7 von 30".to_owned(),
+            current_text_match: Some("Slide 7 of 30".to_owned()),
+            mode: ReplaceTextMode::RunScoped,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            allow_formatting_simplification: false,
+            run: Some(RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: Some(1),
+                text_hash: None,
+            }),
+            run_style: None,
+            fit_policy: None,
+        };
+
+        let error = operation
+            .validate(&package, &target)
+            .expect_err("field inside the selected span must not be silently preserved");
+
+        assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+        Ok(())
+    }
+
+    #[test]
     fn replace_text_run_scoped_rejects_carriage_return() -> Result<()> {
         let mut package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
         let target = target(ElementKind::TextBox);
@@ -984,6 +1014,8 @@ mod construction_golden {
     const RUN_STYLE_ORDER_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"><a:latin typeface="Calibri"/><a:hlinkClick r:id="rId2"/></a:rPr><a:t>First</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
 
     const RICH_TEXT_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:fld id="{00000000-0000-0000-0000-000000000000}" type="slidenum"><a:rPr lang="en-US"/><a:t>Field</a:t></a:fld><a:r><a:rPr lang="en-US"><a:hlinkClick r:id="rId2"/></a:rPr><a:t>Linked</a:t></a:r><a:br/><a:r><a:t>Break</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
+
+    const FIELD_BETWEEN_RUNS_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Slide </a:t></a:r><a:fld id="{00000000-0000-0000-0000-000000000000}" type="slidenum"><a:t>7</a:t></a:fld><a:r><a:t> of 30</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
 
     const NUMBERED_PARAGRAPH_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:buAutoNum type="romanUcPeriod"/></a:pPr><a:r><a:t>Numbered item</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
 

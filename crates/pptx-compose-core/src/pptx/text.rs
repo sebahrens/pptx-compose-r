@@ -89,6 +89,11 @@ pub fn read_text_body(txbody: &XmlElement) -> TextBody {
                         style_summary: run_style_summary(child),
                     });
                 }
+                "fld" => {
+                    let text = run_text(child);
+                    projection.push(ProjectionSegment::Text(text.clone()));
+                    paragraph_projection.push(ProjectionSegment::Text(text));
+                }
                 "br" => {
                     projection.push(ProjectionSegment::SoftBreak);
                     paragraph_projection.push(ProjectionSegment::SoftBreak);
@@ -675,7 +680,7 @@ fn normalized_projection() {
     </a:r>
     <a:br/>
     <a:fld id="{{field}}" type="slidenum">
-      <a:t>ignored</a:t>
+      <a:t>Field</a:t>
     </a:fld>
     <a:r>
       <a:t>
@@ -702,9 +707,12 @@ Q1
     assert_eq!(text_body.paragraphs[1].index, 1);
     assert_eq!(
         text_body.paragraphs[0].text,
-        "  Cafe\u{301}\t results  \n\nQ1\n      "
+        "  Cafe\u{301}\t results  \nField\nQ1\n      "
     );
-    assert_eq!(text_body.paragraphs[0].normalized, "Caf\u{e9} results\nQ1");
+    assert_eq!(
+        text_body.paragraphs[0].normalized,
+        "Caf\u{e9} results\nField Q1"
+    );
     assert_eq!(text_body.paragraphs[1].text, "  next   line  ");
     assert_eq!(text_body.paragraphs[1].normalized, "next line");
     assert_eq!(text_body.paragraphs[0].runs.len(), 2);
@@ -730,9 +738,12 @@ Q1
     assert_eq!(text_body.paragraphs[0].runs[1].text, "\nQ1\n      ");
     assert_eq!(
         text_body.plain,
-        "  Cafe\u{301}\t results  \n\nQ1\n        next   line  "
+        "  Cafe\u{301}\t results  \nField\nQ1\n        next   line  "
     );
-    assert_eq!(text_body.normalized, "Caf\u{e9} results\nQ1 next line");
+    assert_eq!(
+        text_body.normalized,
+        "Caf\u{e9} results\nField Q1 next line"
+    );
 }
 
 #[cfg(test)]
