@@ -177,7 +177,7 @@ impl RelationshipSet {
             .max_by(|left, right| compare_decimal(left, right))
             .unwrap_or("0");
 
-        let mut candidate_suffix = increment_decimal(max_suffix);
+        let mut candidate_suffix = increment_decimal(normalize_decimal(max_suffix));
         loop {
             let candidate = format!("rId{candidate_suffix}");
             if !existing.contains(candidate.as_str()) {
@@ -644,5 +644,12 @@ mod allocate_id {
         let set = relationship_set(&["rId1", "rId03", "rId4"]);
 
         assert_eq!(set.allocate_id(), "rId5");
+    }
+
+    #[test]
+    fn allocates_canonical_id_after_zero_padded_suffix() {
+        let set = relationship_set(&["rId03"]);
+
+        assert_eq!(set.allocate_id(), "rId4");
     }
 }
