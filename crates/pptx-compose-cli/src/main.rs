@@ -52,9 +52,7 @@ fn main() {
                 std::process::exit(exit::USAGE);
             }
             let exit_code = match error.kind() {
-                ErrorKind::DisplayHelp
-                | ErrorKind::DisplayVersion
-                | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => exit::SUCCESS,
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => exit::SUCCESS,
                 _ => exit::USAGE,
             };
             let _ = error.print();

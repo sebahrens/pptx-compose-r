@@ -27,6 +27,53 @@ fn help_and_version_exit_successfully() {
 }
 
 #[test]
+fn missing_subcommand_exits_usage_failure() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
+        .output()
+        .expect("pptx-compose should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "bare pptx-compose should exit usage failure\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Usage:"),
+        "stderr should include usage text: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn missing_subcommand_with_json_errors_emits_invalid_input() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
+        .arg("--json-errors")
+        .output()
+        .expect("pptx-compose --json-errors should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "missing subcommand with --json-errors should exit usage failure\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+
+    let stderr_text = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+    assert_eq!(stderr_text.lines().count(), 1);
+    assert!(!stderr_text.contains("Usage:"));
+
+    let envelope: serde_json::Value =
+        serde_json::from_str(&stderr_text).expect("stderr is one JSON document");
+    assert_eq!(envelope["schema"], "pptx-compose.error.v1");
+    assert_eq!(envelope["status"], "error");
+    assert_eq!(envelope["error"]["code"], "invalid_input");
+}
+
+#[test]
 fn inspect_help_documents_slide_scope_forms() {
     let output = Command::new(env!("CARGO_BIN_EXE_pptx-compose"))
         .args(["inspect", "--help"])
