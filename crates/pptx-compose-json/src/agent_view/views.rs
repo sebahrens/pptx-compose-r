@@ -9,7 +9,7 @@ use pptx_compose_core::{
     opc::{
         package::Package,
         part_name::PartName,
-        relationships::{RelationshipSet, RelationshipSource},
+        relationships::{RelationshipSet, RelationshipSource, TargetMode},
     },
     pptx::presentation as core_presentation,
     pptx::{
@@ -66,6 +66,8 @@ const PARAGRAPH_PREVIEW_CHARS: usize = 1_024;
 const RUN_PREVIEW_CHARS: usize = 1_024;
 const ACCESSIBILITY_PREVIEW_CHARS: usize = 1_024;
 const EMBEDDED_SLIDE_ELEMENT_LIMIT: u32 = 50;
+const NOTES_SLIDE_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
 const ALL_OP_NAMES: [&str; 7] = [
     "replace_text",
     "add_text_box",
@@ -609,8 +611,16 @@ fn collect_text_view_matches(
             span,
             matched_text: substring_by_char_span(&text.plain, span),
             selector: ElementSelector {
-                selector_type: "element_id".to_owned(),
-                id: element.id.clone(),
+                selector_type: if is_notes_element(element) {
+                    "slide_id".to_owned()
+                } else {
+                    "element_id".to_owned()
+                },
+                id: if is_notes_element(element) {
+                    slide.detail.id.clone()
+                } else {
+                    element.id.clone()
+                },
                 guards: SelectorGuards {
                     slide_id: slide.detail.id.clone(),
                     kind: element.kind,
@@ -625,6 +635,10 @@ fn collect_text_view_matches(
         *seen = seen.saturating_add(1);
     }
     Ok(())
+}
+
+fn is_notes_element(element: &ElementView) -> bool {
+    element.id == format!("{}:notes", element.slide_id)
 }
 
 fn related_text_requires_run_selector(kind: ElementKind) -> bool {
@@ -860,10 +874,126 @@ fn project_slide(
         &mut elements,
         media,
     )?;
+    if let Some(notes) = project_notes_element(pkg, slide, &rels)? {
+        elements.push(notes);
+    }
     let summary = project_slide_summary(pkg, slide)?;
     let mut detail = summary.clone();
     detail.elements = elements;
     Ok(SlideProjection { summary, detail })
+}
+
+fn project_notes_element(
+    pkg: &PptxPackage,
+    slide: &Slide,
+    slide_rels: &RelationshipSet,
+) -> Result<Option<ElementView>, JsonError> {
+    let Some(notes_part) = resolve_notes_part(slide_rels)? else {
+        return Ok(None);
+    };
+    let Some(part) = pkg.package().parts().get(&notes_part) else {
+        return Ok(None);
+    };
+    let document = parse_document(part.bytes()).map_err(core_error)?;
+    let root = document.root_element().ok_or_else(|| {
+        JsonError::Projection(format!(
+            "Speaker-notes part {notes_part} has no root element."
+        ))
+    })?;
+    let Some((shape_element, tx_body)) = notes_body_shape_tx_body(root) else {
+        return Ok(None);
+    };
+
+    let slide_id = slide.agent_id();
+    let element_id = format!("{slide_id}:notes");
+    let text = project_text_body(read_text_body(tx_body));
+    let shape = read_shape(
+        shape_element,
+        SpTreePath {
+            sp_tree_path: Vec::new(),
+            group_path: Vec::new(),
+        },
+    );
+    let part = trim_part(notes_part.as_str());
+    let fingerprint = fingerprint(&FingerprintInput {
+        kind: CoreElementKind::Shape,
+        part: notes_part.clone(),
+        sp_tree_path: Vec::new(),
+        group_path: Vec::new(),
+        cnvpr_id: shape.cnvpr_id,
+        text_hash: Some(text.text_hash.clone()),
+    });
+
+    Ok(Some(ElementView {
+        id: element_id,
+        kind: ElementKind::Shape,
+        slide_id,
+        part,
+        xml_location: XmlLocation {
+            sp_tree_path: Vec::new(),
+            group_path: Vec::new(),
+            element_tag: shape_element.name.raw.clone(),
+            cnvpr_id: shape
+                .cnvpr_id
+                .and_then(|id| u32::try_from(id).ok())
+                .unwrap_or(0),
+            cnvpr_name: shape.name.unwrap_or_default(),
+        },
+        z_order: 0,
+        bounds: shape.bounds.as_ref().map_or(
+            Bounds {
+                x: 0,
+                y: 0,
+                cx: 0,
+                cy: 0,
+            },
+            |bounds| Bounds {
+                x: bounds.x,
+                y: bounds.y,
+                cx: bounds.cx,
+                cy: bounds.cy,
+            },
+        ),
+        editable: Editable {
+            text: Some(EditableSupport {
+                supported: true,
+                reason: None,
+            }),
+            bounds: None,
+            alt_text: None,
+            image: None,
+        },
+        fingerprint,
+        accessibility: None,
+        placeholder: project_placeholder(shape_element, None),
+        text_layout: None,
+        text: Some(text),
+        table: None,
+        image: None,
+        text_coverage_warnings: Vec::new(),
+    }))
+}
+
+fn resolve_notes_part(slide_rels: &RelationshipSet) -> Result<Option<PartName>, JsonError> {
+    let Some(relationship) = slide_rels
+        .rels
+        .iter()
+        .find(|relationship| relationship.rel_type == NOTES_SLIDE_REL_TYPE)
+    else {
+        return Ok(None);
+    };
+    if relationship.target_mode != TargetMode::Internal {
+        return Ok(None);
+    }
+    relationship
+        .resolved_target
+        .clone()
+        .map_or_else(
+            || resolve_internal_target(&relationship.source, &relationship.target),
+            Ok,
+        )
+        .map(Some)
+        .map_err(core_error)
 }
 
 fn project_slide_summary(pkg: &PptxPackage, slide: &Slide) -> Result<SlideView, JsonError> {
@@ -1872,6 +2002,25 @@ fn first_descendant<'a>(element: &'a XmlElement, local_name: &str) -> Option<&'a
     None
 }
 
+fn notes_body_shape_tx_body(element: &XmlElement) -> Option<(&XmlElement, &XmlElement)> {
+    for child in element.children.iter().filter_map(XmlNode::as_element) {
+        if child.name.local_name == "sp" {
+            let has_body_placeholder = first_descendant(child, "ph").is_some_and(|ph| {
+                ph.attributes.iter().any(|attribute| {
+                    attribute.name.local_name == "type" && attribute.value == "body"
+                })
+            });
+            if has_body_placeholder && let Some(tx_body) = child_element(child, "txBody") {
+                return Some((child, tx_body));
+            }
+        }
+        if let Some(descendant) = notes_body_shape_tx_body(child) {
+            return Some(descendant);
+        }
+    }
+    None
+}
+
 fn child_elements<'a>(
     element: &'a XmlElement,
     local_name: &'a str,
@@ -2441,6 +2590,91 @@ fn editable_maps_are_kind_appropriate_for_text_and_picture_elements() {
 
 #[cfg(test)]
 #[test]
+fn speaker_notes_are_projected_and_find_text_returns_slide_selector() {
+    use pptx_compose_core::{
+        opc::{
+            package::{OFFICE_DOCUMENT_REL_TYPE, Package},
+            part_name::PartName,
+            relationships::{Relationship, RelationshipSource},
+        },
+        pptx::presentation::PresentationDocument,
+    };
+
+    const SLIDE_REL_TYPE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+
+    let presentation_part = PartName::from_zip_entry("ppt/presentation.xml").expect("part name");
+    let slide_part = PartName::from_zip_entry("ppt/slides/slide1.xml").expect("part name");
+
+    let mut package = Package::new();
+    package
+        .insert_zip_entry("[Content_Types].xml", content_types_xml().to_vec())
+        .expect("content types part inserts");
+    package
+        .insert_zip_entry("ppt/presentation.xml", presentation_xml().to_vec())
+        .expect("presentation part inserts");
+    package
+        .insert_zip_entry("ppt/slides/slide1.xml", empty_slide_xml().to_vec())
+        .expect("slide part inserts");
+    package
+        .insert_zip_entry(
+            "ppt/notesSlides/notesSlide1.xml",
+            notes_slide_xml().to_vec(),
+        )
+        .expect("notes part inserts");
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Package,
+        "rOffice",
+        OFFICE_DOCUMENT_REL_TYPE,
+        "ppt/presentation.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(presentation_part),
+        "rSlide",
+        SLIDE_REL_TYPE,
+        "slides/slide1.xml",
+    ));
+    package.push_relationship(Relationship::internal(
+        RelationshipSource::Part(slide_part),
+        "rNotes",
+        NOTES_SLIDE_REL_TYPE,
+        "../notesSlides/notesSlide1.xml",
+    ));
+
+    let pkg = PresentationDocument::open(package).expect("presentation opens");
+    let value = build_view(&pkg, request_for(&pkg, ViewMode::SlideDetail, None))
+        .expect("slide detail builds");
+    let notes = value["slides"][0]["elements"]
+        .as_array()
+        .expect("elements array")
+        .iter()
+        .find(|element| element["id"] == "slide-1:notes")
+        .expect("speaker notes are projected");
+    assert_eq!(notes["part"], "ppt/notesSlides/notesSlide1.xml");
+    assert_eq!(notes["editable"]["text"]["supported"], true);
+    assert_eq!(notes["text"]["plain"], "Presenter cue");
+
+    let matches = find_text(
+        &pkg,
+        FindTextRequest {
+            query: "Presenter cue".to_owned(),
+            scope: FindTextScope::Deck,
+            cursor: None,
+            limit: None,
+        },
+    )
+    .expect("find-text searches speaker notes");
+    assert_eq!(matches.matches.len(), 1);
+    let note_match = &matches.matches[0];
+    assert_eq!(note_match.element_id, "slide-1:notes");
+    assert_eq!(note_match.part, "ppt/notesSlides/notesSlide1.xml");
+    assert_eq!(note_match.selector.selector_type, "slide_id");
+    assert_eq!(note_match.selector.id, "slide-1");
+    assert!(note_match.selector.run.is_some());
+}
+
+#[cfg(test)]
+#[test]
 fn graphic_frame_kinds_are_emitted_from_graphic_data_uri() {
     use pptx_compose_core::{
         opc::{
@@ -2841,6 +3075,16 @@ fn presentation_xml() -> &'static [u8] {
 #[cfg(test)]
 fn content_types_xml() -> &'static [u8] {
     br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="png" ContentType="image/png"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/></Types>"#
+}
+
+#[cfg(test)]
+fn empty_slide_xml() -> &'static [u8] {
+    br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld></p:sld>"#
+}
+
+#[cfg(test)]
+fn notes_slide_xml() -> &'static [u8] {
+    br#"<p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder"/><p:cNvSpPr/><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp><p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder"/><p:cNvSpPr txBox="1"/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Presenter cue</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>"#
 }
 
 #[cfg(test)]
