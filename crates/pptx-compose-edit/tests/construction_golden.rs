@@ -207,6 +207,45 @@ mod construction_golden {
     }
 
     #[test]
+    fn add_text_box_normalizes_carriage_returns_and_rejects_illegal_text() -> Result<()> {
+        let mut package = minimal_package()?;
+        let slide = minimal_slide()?;
+        let text_box = AddTextBox {
+            operation_id: "op-add-text-box".to_owned(),
+            slide_id: slide.slide_id.clone(),
+            text: "Line 1\r\nLine 2\rLine 3".to_owned(),
+            bounds: fixed_bounds(),
+            name: None,
+            alt_text: None,
+            style: None,
+            insert: None,
+        };
+
+        let effects = text_box.apply(&mut package, &slide)?;
+        let text_box_xml = inserted_element_xml(&package, &slide.part, "sp")?;
+
+        assert!(text_box_xml.contains("<a:t>Line 1</a:t>"));
+        assert!(text_box_xml.contains("<a:t>Line 2</a:t>"));
+        assert!(text_box_xml.contains("<a:t>Line 3</a:t>"));
+        assert!(!text_box_xml.contains('\r'));
+        assert!(effects.warnings.contains(&serde_json::json!({
+            "line_break_normalization": "crlf_cr_to_lf"
+        })));
+
+        let invalid = AddTextBox {
+            text: "bad\u{0001}text".to_owned(),
+            ..text_box
+        };
+        let error = invalid
+            .apply(&mut package, &slide)
+            .expect_err("illegal XML text is rejected before writing");
+
+        assert_eq!(error.code(), ErrorCode::InvalidInput);
+        assert!(error.message().contains("add_text_box text"));
+        Ok(())
+    }
+
+    #[test]
     fn add_image_honors_z_order_front_back_and_index() -> Result<()> {
         assert_image_insert_order(None, &["Back", "Front", "Inserted"], &[3])?;
         assert_image_insert_order(
@@ -257,6 +296,38 @@ mod construction_golden {
             element_xml_at_path(&package, &slide_part, &[1])?,
             golden(REPLACE_TEXT_EXPECTED)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn replace_text_whole_element_normalizes_carriage_returns_to_paragraphs() -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(TARGET_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Line 1\r\nLine 2\rLine 3".to_owned(),
+            current_text_match: Some("Old copy".to_owned()),
+            mode: ReplaceTextMode::WholeElement,
+            format_policy: FormatPolicy::PreserveFirstRun,
+            allow_formatting_simplification: false,
+            run: None,
+            run_style: None,
+            fit_policy: None,
+        };
+
+        let effects = operation.apply(&mut package, &target)?;
+        let output = element_xml_at_path(&package, &slide_part, &[1])?;
+
+        assert!(output.contains("<a:t>Line 1</a:t>"));
+        assert!(output.contains("<a:t>Line 2</a:t>"));
+        assert!(output.contains("<a:t>Line 3</a:t>"));
+        assert!(!output.contains('\r'));
+        assert!(effects.warnings.contains(&serde_json::json!({
+            "newline_mapping": "paragraph",
+            "line_break_normalization": "crlf_cr_to_lf"
+        })));
         Ok(())
     }
 

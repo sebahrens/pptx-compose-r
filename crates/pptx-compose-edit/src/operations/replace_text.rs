@@ -12,7 +12,6 @@ use pptx_compose_core::{
     },
     provenance::text_hash,
     xml::{
-        chars::is_xml_char,
         document::{QualifiedName, XmlAttribute, XmlDocument, XmlElement, XmlNode},
         parser::parse_document,
         writer::{WriteMode, WriteOptions, write_document},
@@ -25,7 +24,7 @@ use crate::{
     operations::{
         ResolvedElement, ResolvedNotesSlide, ResolvedTableCell,
         add_text_box::{font_size_hundredths, validate_run_style},
-        is_real_shape_tree_child,
+        is_real_shape_tree_child, normalize_paragraph_breaks, validate_xml_text,
     },
     patch::{
         FitPolicy, FitPolicyMode, FormatPolicy, PatchEffects, ReplaceTextMode,
@@ -214,7 +213,11 @@ impl ReplaceText {
 
         let mut warnings = Vec::new();
         if self.mode == ReplaceTextMode::WholeElement {
-            warnings.push(json!({ "newline_mapping": "paragraph" }));
+            let mut warning = json!({ "newline_mapping": "paragraph" });
+            if self.text.contains('\r') {
+                warning["line_break_normalization"] = json!("crlf_cr_to_lf");
+            }
+            warnings.push(warning);
         }
         if rewrite.formatting_simplified {
             warnings.push(json!({
@@ -324,7 +327,7 @@ impl ReplaceText {
         target: &ResolvedElement,
         tx_body: &XmlElement,
     ) -> Result<()> {
-        validate_xml_text(&self.text, false)
+        validate_xml_text("replace_text text", &self.text, false)
             .map_err(|error| error.with_location(self.location(Some(target))))?;
         if self.run.is_some() {
             return Err(Error::new(
@@ -1996,7 +1999,7 @@ fn validate_run_scoped_text_body(
                 .with_location(operation.location(Some(target))),
         );
     }
-    validate_xml_text(operation.text(), true)
+    validate_xml_text("replace_text text", operation.text(), true)
         .map_err(|error| error.with_location(operation.location(Some(target))))?;
     let default_run = RunSelector {
         paragraph_index: 0,
@@ -2033,21 +2036,6 @@ fn validate_run_scoped_text_body(
     }
     validate_run_style("replace_text.run_style", operation.run_style())
         .map_err(|error| error.with_location(operation.location(Some(target))))?;
-    Ok(())
-}
-
-fn validate_xml_text(text: &str, allow_soft_break: bool) -> Result<()> {
-    if let Some(character) = text.chars().find(|character| {
-        !(is_xml_char(*character) || allow_soft_break && *character == '\u{000B}')
-    }) {
-        return Err(Error::new(
-            ErrorCode::InvalidInput,
-            format!(
-                "replace_text text contains XML 1.0 illegal character U+{:04X}.",
-                u32::from(character)
-            ),
-        ));
-    }
     Ok(())
 }
 
@@ -2318,9 +2306,9 @@ fn replacement_text_body(existing: &XmlElement, operation: &ReplaceText) -> XmlE
         }
         FormatPolicy::SingleRunDefaultStyle => None,
     };
+    let normalized_text = normalize_paragraph_breaks(&operation.text);
     children.extend(
-        operation
-            .text
+        normalized_text
             .split('\n')
             .map(|paragraph_text| node(paragraph(paragraph_text, run_properties.as_ref()))),
     );

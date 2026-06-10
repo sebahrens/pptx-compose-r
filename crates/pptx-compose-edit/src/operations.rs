@@ -3,6 +3,7 @@ use pptx_compose_core::{
     opc::part_name::PartName,
     pptx::ids::ElementKind,
     xml::{
+        chars::is_xml_char,
         document::{XmlElement, XmlNode},
         namespaces::NamespaceBinding,
     },
@@ -18,6 +19,25 @@ pub mod replace_image;
 pub mod replace_text;
 pub mod set_alt_text;
 pub mod set_document_metadata;
+
+pub(crate) fn normalize_paragraph_breaks(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+pub(crate) fn validate_xml_text(label: &str, text: &str, allow_soft_break: bool) -> Result<()> {
+    if let Some(character) = text.chars().find(|character| {
+        !(is_xml_char(*character) || allow_soft_break && *character == '\u{000B}')
+    }) {
+        return Err(Error::new(
+            ErrorCode::InvalidInput,
+            format!(
+                "{label} contains XML 1.0 illegal character U+{:04X}.",
+                u32::from(character)
+            ),
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolvedTarget {

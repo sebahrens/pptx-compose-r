@@ -13,6 +13,7 @@ use pptx_compose_json::schemas::OperationTarget;
 use crate::{
     operations::{
         ResolvedSlide, bounds::validate_bounds, ensure_slide_namespaces, insert_shape_tree_child,
+        normalize_paragraph_breaks, validate_xml_text,
     },
     patch::{
         AddTextBoxOperation, Bounds, InsertOptions, PatchEffects, TextAlign, TextBoxAutofit,
@@ -50,6 +51,8 @@ impl From<&AddTextBoxOperation> for AddTextBox {
 impl AddTextBox {
     pub fn validate(&self) -> Result<()> {
         validate_bounds(&self.bounds).map_err(|error| error.with_location(self.location(None)))?;
+        validate_xml_text("add_text_box text", &self.text, false)
+            .map_err(|error| error.with_location(self.location(None)))?;
         validate_style("add_text_box.style", self.style.as_ref())
             .map_err(|error| error.with_location(self.location(None)))
     }
@@ -91,6 +94,12 @@ impl AddTextBox {
         )?;
         package.mark_dirty(part_name.clone());
 
+        let warnings = if self.text.contains('\r') {
+            vec![serde_json::json!({ "line_break_normalization": "crlf_cr_to_lf" })]
+        } else {
+            Vec::new()
+        };
+
         Ok(PatchEffects {
             changed_parts: vec![part_name.zip_entry_name().to_owned()],
             target: Some(OperationTarget {
@@ -99,7 +108,7 @@ impl AddTextBox {
                 part: part_name.zip_entry_name().to_owned(),
             }),
             created_element_ids: vec![element_id],
-            warnings: Vec::new(),
+            warnings,
         })
     }
 
@@ -266,7 +275,8 @@ fn cnv_pr(id: i64, name: &str, alt_text: Option<&str>) -> XmlElement {
 }
 
 fn text_body(text: &str, style: Option<&TextBoxStyle>) -> XmlElement {
-    let paragraphs: Vec<_> = text
+    let normalized_text = normalize_paragraph_breaks(text);
+    let paragraphs: Vec<_> = normalized_text
         .split('\n')
         .map(|paragraph_text| node(paragraph(paragraph_text, style)))
         .collect();
