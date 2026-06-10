@@ -130,7 +130,7 @@ fn xfrm_for_target_mut<'a>(
     target: &ResolvedElement,
 ) -> Result<&'a mut XmlElement> {
     if target.kind.is_graphic_frame() {
-        ensure_child_element(element, "xfrm", "p:xfrm");
+        ensure_child_element_before(element, "xfrm", "p:xfrm", &["graphic", "extLst"]);
         return child_element_mut(element, "xfrm").ok_or_else(|| {
             Error::new(
                 ErrorCode::UnsupportedEdit,
@@ -140,7 +140,7 @@ fn xfrm_for_target_mut<'a>(
         });
     }
 
-    ensure_child_element(element, "spPr", "p:spPr");
+    ensure_child_element_before(element, "spPr", "p:spPr", &["style", "txBody", "extLst"]);
     let sp_pr = child_element_mut(element, "spPr").ok_or_else(|| {
         Error::new(
             ErrorCode::UnsupportedEdit,
@@ -148,7 +148,7 @@ fn xfrm_for_target_mut<'a>(
         )
         .with_location(location(target))
     })?;
-    ensure_child_element(sp_pr, "xfrm", "a:xfrm");
+    ensure_child_element_before_first_element(sp_pr, "xfrm", "a:xfrm");
     child_element_mut(sp_pr, "xfrm").ok_or_else(|| {
         Error::new(
             ErrorCode::UnsupportedEdit,
@@ -208,7 +208,12 @@ fn child_element_mut<'a>(
         .find(|child| child.name.local_name == local_name)
 }
 
-fn ensure_child_element(element: &mut XmlElement, local_name: &str, raw_name: &str) {
+fn ensure_child_element_before(
+    element: &mut XmlElement,
+    local_name: &str,
+    raw_name: &str,
+    following: &[&str],
+) {
     if element
         .children
         .iter()
@@ -217,9 +222,44 @@ fn ensure_child_element(element: &mut XmlElement, local_name: &str, raw_name: &s
     {
         return;
     }
+
+    let insertion_index = element
+        .children
+        .iter()
+        .position(|node| {
+            node.as_element().is_some_and(|child| {
+                child.name.local_name != local_name
+                    && following.contains(&child.name.local_name.as_str())
+            })
+        })
+        .unwrap_or(element.children.len());
     element
         .children
-        .push(XmlNode::Element(empty_element(raw_name)));
+        .insert(insertion_index, XmlNode::Element(empty_element(raw_name)));
+}
+
+fn ensure_child_element_before_first_element(
+    element: &mut XmlElement,
+    local_name: &str,
+    raw_name: &str,
+) {
+    if element
+        .children
+        .iter()
+        .filter_map(XmlNode::as_element)
+        .any(|child| child.name.local_name == local_name)
+    {
+        return;
+    }
+
+    let insertion_index = element
+        .children
+        .iter()
+        .position(|node| node.as_element().is_some())
+        .unwrap_or(element.children.len());
+    element
+        .children
+        .insert(insertion_index, XmlNode::Element(empty_element(raw_name)));
 }
 
 fn set_child_empty_element(parent: &mut XmlElement, local_name: &str, attrs: &[(&str, i64)]) {
@@ -241,7 +281,39 @@ fn set_child_empty_element(parent: &mut XmlElement, local_name: &str, attrs: &[(
         .iter()
         .map(|(name, value)| attribute(name, *value))
         .collect();
-    parent.children.push(XmlNode::Element(child));
+    let insertion_index = ordered_insertion_index(parent, local_name, transform_order);
+    parent
+        .children
+        .insert(insertion_index, XmlNode::Element(child));
+}
+
+fn ordered_insertion_index(
+    parent: &XmlElement,
+    local_name: &str,
+    order: fn(&str) -> Option<usize>,
+) -> usize {
+    let Some(new_order) = order(local_name) else {
+        return parent.children.len();
+    };
+    parent
+        .children
+        .iter()
+        .position(|node| {
+            node.as_element()
+                .and_then(|child| order(&child.name.local_name))
+                .is_some_and(|existing_order| existing_order > new_order)
+        })
+        .unwrap_or(parent.children.len())
+}
+
+fn transform_order(local_name: &str) -> Option<usize> {
+    match local_name {
+        "xfrm" | "off" => Some(0),
+        "ext" => Some(1),
+        "chOff" => Some(2),
+        "chExt" => Some(3),
+        _ => None,
+    }
 }
 
 fn node_element_mut(node: &mut XmlNode) -> Option<&mut XmlElement> {
@@ -401,4 +473,104 @@ fn preserves_rot_flip() {
         .apply(&mut package, &non_bounded)
         .expect_err("non-bounded target is unsupported");
     assert_eq!(error.code(), ErrorCode::UnsupportedEdit);
+}
+
+#[cfg(test)]
+#[test]
+fn inserts_shape_transform_before_geometry_and_fill() {
+    let slide_part =
+        pptx_compose_core::opc::part_name::PartName::from_zip_entry("ppt/slides/slide1.xml")
+            .expect("valid slide part");
+    let mut package = Package::new();
+    package
+        .insert_zip_entry(
+            "ppt/slides/slide1.xml",
+            br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr/><p:spPr><a:prstGeom prst="rect"/><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></p:spPr></p:sp></p:spTree></p:cSld></p:sld>"#.to_vec(),
+        )
+        .expect("slide inserted");
+    let target = ResolvedElement {
+        slide_id: "slide-1".to_owned(),
+        element_id: "slide-1:shape-1".to_owned(),
+        kind: ElementKind::Shape,
+        part: slide_part.clone(),
+        sp_tree_path: vec![1],
+        group_path: Vec::new(),
+        cnvpr_id: None,
+        text_hash: None,
+        fingerprint: "fp".to_owned(),
+    };
+    let operation = MoveResize {
+        element_id: target.element_id.clone(),
+        bounds: Bounds {
+            x: 10,
+            y: 20,
+            cx: 300,
+            cy: 400,
+        },
+    };
+
+    operation
+        .apply(&mut package, &target)
+        .expect("move/resize applies");
+
+    let slide_xml = String::from_utf8(
+        package
+            .parts()
+            .get(&slide_part)
+            .expect("slide still exists")
+            .bytes()
+            .to_vec(),
+    )
+    .expect("slide XML is UTF-8");
+    assert!(slide_xml.contains(r#"<p:spPr><a:xfrm><a:off x="10" y="20"/><a:ext cx="300" cy="400"/></a:xfrm><a:prstGeom prst="rect"/><a:solidFill>"#));
+}
+
+#[cfg(test)]
+#[test]
+fn inserts_graphic_frame_transform_before_graphic() {
+    let slide_part =
+        pptx_compose_core::opc::part_name::PartName::from_zip_entry("ppt/slides/slide1.xml")
+            .expect("valid slide part");
+    let mut package = Package::new();
+    package
+        .insert_zip_entry(
+            "ppt/slides/slide1.xml",
+            br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:graphicFrame><p:nvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"/></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>"#.to_vec(),
+        )
+        .expect("slide inserted");
+    let target = ResolvedElement {
+        slide_id: "slide-1".to_owned(),
+        element_id: "slide-1:graphic-1".to_owned(),
+        kind: ElementKind::GraphicFrameTable,
+        part: slide_part.clone(),
+        sp_tree_path: vec![1],
+        group_path: Vec::new(),
+        cnvpr_id: None,
+        text_hash: None,
+        fingerprint: "fp".to_owned(),
+    };
+    let operation = MoveResize {
+        element_id: target.element_id.clone(),
+        bounds: Bounds {
+            x: 10,
+            y: 20,
+            cx: 300,
+            cy: 400,
+        },
+    };
+
+    operation
+        .apply(&mut package, &target)
+        .expect("move/resize applies");
+
+    let slide_xml = String::from_utf8(
+        package
+            .parts()
+            .get(&slide_part)
+            .expect("slide still exists")
+            .bytes()
+            .to_vec(),
+    )
+    .expect("slide XML is UTF-8");
+    assert!(slide_xml.contains(r#"<p:nvGraphicFramePr/><p:xfrm><a:off x="10" y="20"/><a:ext cx="300" cy="400"/></p:xfrm><a:graphic>"#));
 }

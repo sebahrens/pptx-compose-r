@@ -2738,15 +2738,43 @@ fn upsert_single_child(parent: &mut XmlElement, local_name: &str, replacement: X
         node.as_element()
             .is_none_or(|child| child.name.local_name != local_name)
     });
-    let insertion_index = parent
+    let insertion_index = text_character_property_insertion_index(parent, local_name);
+    parent.children.insert(insertion_index, node(replacement));
+}
+
+fn text_character_property_insertion_index(parent: &XmlElement, local_name: &str) -> usize {
+    let Some(new_order) = text_character_property_order(local_name) else {
+        return parent.children.len();
+    };
+    parent
         .children
         .iter()
         .position(|node| {
             node.as_element()
-                .is_some_and(|child| child.name.local_name == "t")
+                .and_then(|child| text_character_property_order(&child.name.local_name))
+                .is_some_and(|existing_order| existing_order > new_order)
         })
-        .unwrap_or(parent.children.len());
-    parent.children.insert(insertion_index, node(replacement));
+        .unwrap_or(parent.children.len())
+}
+
+fn text_character_property_order(local_name: &str) -> Option<usize> {
+    match local_name {
+        "ln" => Some(0),
+        "noFill" | "solidFill" | "gradFill" | "blipFill" | "pattFill" | "grpFill" => Some(1),
+        "effectLst" | "effectDag" => Some(2),
+        "highlight" => Some(3),
+        "uLnTx" | "uLn" => Some(4),
+        "uFillTx" | "uFill" => Some(5),
+        "latin" => Some(6),
+        "ea" => Some(7),
+        "cs" => Some(8),
+        "sym" => Some(9),
+        "hlinkClick" => Some(10),
+        "hlinkMouseOver" => Some(11),
+        "rtl" => Some(12),
+        "extLst" => Some(13),
+        _ => None,
+    }
 }
 
 fn align_value(align: TextAlign) -> &'static str {

@@ -551,6 +551,43 @@ mod construction_golden {
     }
 
     #[test]
+    fn replace_text_run_scoped_inserts_fill_before_existing_latin_font() -> Result<()> {
+        let slide_part = slide_part()?;
+        let mut package = package_with_slide(RUN_STYLE_ORDER_SLIDE_XML)?;
+        let target = target(ElementKind::TextBox);
+        let operation = ReplaceText {
+            operation_id: "op-replace-text".to_owned(),
+            element_id: target.element_id.clone(),
+            text: "Updated".to_owned(),
+            current_text_match: Some("First".to_owned()),
+            mode: ReplaceTextMode::RunScoped,
+            format_policy: FormatPolicy::PreserveExistingRuns,
+            allow_formatting_simplification: false,
+            run: Some(RunSelector {
+                paragraph_index: 0,
+                run_index: 0,
+                run_end_index: None,
+                text_hash: None,
+            }),
+            run_style: Some(TextRunStyle {
+                font_size_pt: None,
+                bold: None,
+                italic: None,
+                font_family: Some("Aptos".to_owned()),
+                color_hex: Some("112233".to_owned()),
+                align: None,
+            }),
+            fit_policy: None,
+        };
+
+        operation.apply(&mut package, &target)?;
+        let output = element_xml_at_path(&package, &slide_part, &[1])?;
+
+        assert!(output.contains(r#"<a:rPr lang="en-US"><a:solidFill><a:srgbClr val="112233"/></a:solidFill><a:latin typeface="Aptos"/><a:hlinkClick r:id="rId2"/></a:rPr>"#));
+        Ok(())
+    }
+
+    #[test]
     fn replace_text_run_scoped_rejects_invalid_font_size_points() -> Result<()> {
         let package = package_with_slide(MULTI_RUN_SLIDE_XML)?;
         let target = target(ElementKind::TextBox);
@@ -872,6 +909,8 @@ mod construction_golden {
     const TARGET_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body" descr="Original alt"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm rot="5400000" flipH="1"><a:off x="1" y="2"/><a:ext cx="3" cy="4"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" dirty="0" sz="1800" b="1"><a:solidFill><a:srgbClr val="112233"/></a:solidFill><a:latin typeface="Aptos"/></a:rPr><a:t>Old copy</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
 
     const MULTI_RUN_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="1800" b="1"/><a:t>First</a:t></a:r><a:r><a:rPr lang="en-US" sz="2400" i="1"/><a:t>Second</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
+
+    const RUN_STYLE_ORDER_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"><a:latin typeface="Calibri"/><a:hlinkClick r:id="rId2"/></a:rPr><a:t>First</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
 
     const RICH_TEXT_SLIDE_XML: &str = r#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree><p:nvGrpSpPr/><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="9" name="Body"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:fld id="{00000000-0000-0000-0000-000000000000}" type="slidenum"><a:rPr lang="en-US"/><a:t>Field</a:t></a:fld><a:r><a:rPr lang="en-US"><a:hlinkClick r:id="rId2"/></a:rPr><a:t>Linked</a:t></a:r><a:br/><a:r><a:t>Break</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
 
