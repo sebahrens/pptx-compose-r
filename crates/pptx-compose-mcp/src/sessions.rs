@@ -1,13 +1,14 @@
 use std::{
     collections::HashMap,
     fs,
+    io::Write,
     path::Path,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use pptx_compose::{
-    ApplyPatchOptions, PresentationDocument, WriteOptions,
+    ApplyPatchOptions, PresentationDocument,
     core::error::{Error, ErrorCode, ErrorLocation, Result},
     edit::{
         media_inputs::{MediaBinding, MediaInputs, MediaLimits, MediaSource},
@@ -55,6 +56,12 @@ pub struct MediaHandle {
     pub sha256: String,
     pub byte_length: u64,
     pub dimensions_px: Option<ImageDimensions>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExportMetadata {
+    pub byte_length: u64,
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
@@ -520,7 +527,7 @@ impl SessionStore {
         path: impl AsRef<Path>,
         overwrite: bool,
         temp_path: impl Into<std::path::PathBuf>,
-    ) -> Result<u64> {
+    ) -> Result<ExportMetadata> {
         let session = self.get(session_id)?;
         if session.revision != expected_revision {
             return Err(stale_revision_error(
@@ -529,26 +536,31 @@ impl SessionStore {
                 expected_revision,
             ));
         }
-        session.package.write_path_with_options(
-            path,
-            WriteOptions {
-                overwrite,
-                atomic_temp_path: Some(temp_path.into()),
-                ..WriteOptions::default()
-            },
-        )?;
-        let bytes = session
-            .package
-            .write_vec()
-            .map_err(|error| error.with_state_changed(true))?;
-        u64::try_from(bytes.len()).map_err(|source| {
+        let path = path.as_ref();
+        if path.exists() && !overwrite {
+            return Err(Error::new(
+                ErrorCode::WriteFailed,
+                format!(
+                    "Output path {} already exists; pass overwrite=true to replace it.",
+                    path.display()
+                ),
+            ));
+        }
+        let bytes = session.package.write_vec()?;
+        let byte_length = u64::try_from(bytes.len()).map_err(|source| {
             Error::with_source(
                 ErrorCode::InternalError,
                 "Exported PPTX length exceeds reportable range.",
                 source,
             )
-            .with_state_changed(true)
-        })
+        })?;
+        let metadata = ExportMetadata {
+            byte_length,
+            sha256: sha256_hex(&bytes),
+        };
+        publish_export_bytes(path, temp_path.into(), overwrite, &bytes)
+            .map_err(|error| error.with_state_changed(true))?;
+        Ok(metadata)
     }
 
     fn lock_sessions(&self) -> Result<MutexGuard<'_, HashMap<String, Session>>> {
@@ -899,6 +911,92 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         write!(&mut output, "{byte:02x}").expect("writing to String succeeds");
     }
     output
+}
+
+fn publish_export_bytes(
+    output_path: &Path,
+    temp_path: std::path::PathBuf,
+    overwrite: bool,
+    bytes: &[u8],
+) -> Result<()> {
+    let mut created_temp = false;
+    let write_result = (|| {
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .map_err(|source| {
+                Error::with_source(
+                    ErrorCode::WriteFailed,
+                    format!("Could not create temporary output {}.", temp_path.display()),
+                    source,
+                )
+            })?;
+        created_temp = true;
+        output.write_all(bytes).map_err(|source| {
+            Error::with_source(
+                ErrorCode::WriteFailed,
+                format!("Could not write temporary output {}.", temp_path.display()),
+                source,
+            )
+        })?;
+        output.sync_all().map_err(|source| {
+            Error::with_source(
+                ErrorCode::WriteFailed,
+                format!("Could not fsync temporary output {}.", temp_path.display()),
+                source,
+            )
+        })?;
+        drop(output);
+
+        if overwrite {
+            fs::rename(&temp_path, output_path).map_err(|source| {
+                Error::with_source(
+                    ErrorCode::WriteFailed,
+                    format!(
+                        "Could not atomically rename {} to {}.",
+                        temp_path.display(),
+                        output_path.display()
+                    ),
+                    source,
+                )
+            })
+        } else {
+            fs::hard_link(&temp_path, output_path).map_err(|source| {
+                if source.kind() == std::io::ErrorKind::AlreadyExists {
+                    Error::new(
+                        ErrorCode::WriteFailed,
+                        format!(
+                            "Output path {} already exists; pass overwrite=true to replace it.",
+                            output_path.display()
+                        ),
+                    )
+                } else {
+                    Error::with_source(
+                        ErrorCode::WriteFailed,
+                        format!(
+                            "Could not atomically publish {} to {} without replacing an existing file.",
+                            temp_path.display(),
+                            output_path.display()
+                        ),
+                        source,
+                    )
+                }
+            })?;
+            fs::remove_file(&temp_path).map_err(|source| {
+                Error::with_source(
+                    ErrorCode::WriteFailed,
+                    format!("Could not remove temporary output {}.", temp_path.display()),
+                    source,
+                )
+            })
+        }
+    })();
+
+    if write_result.is_err() && created_temp {
+        let _ = fs::remove_file(&temp_path);
+    }
+    write_result
 }
 
 #[cfg(test)]

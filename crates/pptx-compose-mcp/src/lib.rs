@@ -1014,7 +1014,7 @@ impl PptxServer {
                 .permission_policy
                 .check_write_with_overwrite(&temp_path, true)
                 .map_err(|error| outputs::map_error(error.into_core_error()))?;
-            let byte_length = self
+            let metadata = self
                 .sessions
                 .export_path(
                     &input.session_id,
@@ -1031,8 +1031,8 @@ impl PptxServer {
                 changed_parts,
                 serde_json::json!({
                     "output_path": output_path,
-                    "byte_length": byte_length,
-                    "sha256": null,
+                    "byte_length": metadata.byte_length,
+                    "sha256": metadata.sha256,
                     "inline": null
                 }),
             )));
@@ -1633,7 +1633,7 @@ mod tests {
             .await
             .expect("path export succeeds");
 
-        let metadata = fs::metadata(&output_path).expect("path export writes file");
+        let exported_bytes = fs::read(&output_path).expect("path export writes file");
         let canonical_output_path =
             fs::canonicalize(&output_path).expect("path export canonicalizes");
         fs::remove_file(&output_path).expect("remove path export fixture");
@@ -1641,7 +1641,11 @@ mod tests {
             exported.0.0.result["output_path"],
             canonical_output_path.to_string_lossy().as_ref()
         );
-        assert_eq!(exported.0.0.result["byte_length"], metadata.len());
+        assert_eq!(exported.0.0.result["byte_length"], exported_bytes.len());
+        assert_eq!(
+            exported.0.0.result["sha256"],
+            sessions::sha256_hex(&exported_bytes)
+        );
         assert_eq!(exported.0.0.result["inline"], serde_json::Value::Null);
     }
 
