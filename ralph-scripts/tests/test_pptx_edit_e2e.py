@@ -148,6 +148,7 @@ class PatchBuildingTest(unittest.TestCase):
         op = plan2.operations[0]
         self.assertEqual(op["op"], "add_image")
         self.assertEqual(plan2.media, {"e2e_added": "/tmp/x.png"})
+        self.assertTrue(plan2.allow_content_types_change)
         self.assertIn("ppt/slides/slide1.xml", plan2.expected_changed_parts)
         self.assertIn("ppt/slides/_rels/slide1.xml.rels", plan2.expected_changed_parts)
 
@@ -156,6 +157,7 @@ class PatchBuildingTest(unittest.TestCase):
         op = plan.operations[0]
         self.assertEqual(op["op"], "replace_image")
         self.assertEqual(op["element_id"], "slide-1:pic-3")
+        self.assertTrue(plan.allow_content_types_change)
         self.assertEqual(plan.expected_changed_parts, {"ppt/slides/_rels/slide1.xml.rels"})
 
     def test_rels_part_for(self):
@@ -258,6 +260,7 @@ class StructureAssertionTest(unittest.TestCase):
                     "ppt/slides/slide1.xml",
                     "ppt/slides/_rels/slide1.xml.rels",
                 },
+                allow_content_types_change=True,
             )
             report = {"changed_parts": [
                 "ppt/slides/slide1.xml",
@@ -267,6 +270,29 @@ class StructureAssertionTest(unittest.TestCase):
             ]}
             res = self.m.check_structure(inp, out, plan, report)
             self.assertEqual(res.status, "pass", res.details)
+
+    def test_content_types_change_without_media_allowance_fails(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as t:
+            tmp = pathlib.Path(t)
+            inp = self._write(tmp, "in.pptx", {
+                "ppt/slides/slide1.xml": b"<old/>",
+                "[Content_Types].xml": b"<ct/>",
+            })
+            out = self._write(tmp, "out.pptx", {
+                "ppt/slides/slide1.xml": b"<new>PPTX_COMPOSE_E2E_EDIT_MARKER</new>",
+                "[Content_Types].xml": b"<ct2/>",
+            })
+            plan = self.m.ScenarioPlan(
+                operations=[],
+                expected_changed_parts={"ppt/slides/slide1.xml"},
+                expected_markers={self.m.TEXT_MARKER: "ppt/slides/slide1.xml"},
+            )
+            report = {"changed_parts": ["ppt/slides/slide1.xml", "[Content_Types].xml"]}
+            res = self.m.check_structure(inp, out, plan, report)
+            self.assertEqual(res.status, "fail")
+            self.assertTrue(any("[Content_Types].xml" in d for d in res.details))
 
     def test_removed_part_fails(self):
         import tempfile
@@ -397,7 +423,6 @@ class NegativeAndDefectFilingTest(unittest.TestCase):
                     cli,
                     scenario,
                     {},
-                    visual_threshold=8.0,
                 )
 
         self.assertEqual(report.status, "pass")
@@ -438,7 +463,6 @@ class NegativeAndDefectFilingTest(unittest.TestCase):
                     cli,
                     scenario,
                     {},
-                    visual_threshold=8.0,
                 )
 
         self.assertEqual(report.status, "fail")
@@ -555,7 +579,7 @@ class EditRoundTripIntegrationTest(unittest.TestCase):
         scenario = next(s for s in self.m.DEFAULT_SCENARIOS if s.name == name)
         return self.m.run_scenario(
             REPO_ROOT, self.work_dir, self.log_dir, self.cli, scenario,
-            self.media_ctx, visual_threshold=8.0,
+            self.media_ctx,
         )
 
     def _assert_ok(self, report):

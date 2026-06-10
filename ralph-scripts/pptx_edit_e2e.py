@@ -101,6 +101,7 @@ class ScenarioPlan:
     operations: list[dict]
     media: dict[str, str] = field(default_factory=dict)
     expected_changed_parts: set[str] = field(default_factory=set)
+    allow_content_types_change: bool = False
     # Marker -> part it must appear in (verifies the edit reached the bytes).
     expected_markers: dict[str, str] = field(default_factory=dict)
     skip_reason: str | None = None
@@ -262,11 +263,11 @@ def check_structure(input_path: Path, output_path: Path, plan: ScenarioPlan,
                     report: dict) -> "rt.ComparisonResult":
     """Assert the targeted parts changed and unrelated parts are byte-identical.
 
-    The "allowed to change" set is: the scenario's predeclared parts, plus
-    ``[Content_Types].xml`` (media-introducing ops register a new default), plus
-    any *newly-added* part the engine allocated and declared in the report's
-    ``changed_parts`` (e.g. ``ppt/media/imageN.png`` whose name we cannot
-    predict). Everything else must be byte-for-byte preserved.
+    The "allowed to change" set is: the scenario's predeclared parts, optional
+    ``[Content_Types].xml`` for media-introducing ops that may register a new
+    default, plus any *newly-added* part the engine allocated and declared in
+    the report's ``changed_parts`` (e.g. ``ppt/media/imageN.png`` whose name we
+    cannot predict). Everything else must be byte-for-byte preserved.
     """
     details: list[str] = []
 
@@ -279,11 +280,9 @@ def check_structure(input_path: Path, output_path: Path, plan: ScenarioPlan,
     added = set(output_entries) - set(input_entries)
     removed = set(input_entries) - set(output_entries)
 
-    allowed = (
-        set(plan.expected_changed_parts)
-        | {"[Content_Types].xml"}
-        | (added & report_changed)
-    )
+    allowed = set(plan.expected_changed_parts) | (added & report_changed)
+    if plan.allow_content_types_change:
+        allowed.add("[Content_Types].xml")
 
     # 1. The report's declared changed set must stay within the allowed set and
     #    must include everything the scenario predeclared.
@@ -529,6 +528,7 @@ def build_add_image(view: dict, ctx: dict) -> ScenarioPlan:
         # so we only require the slide xml + rels to change and rely on the
         # report's changed_parts + "no removed parts" + validation for the rest.
         expected_changed_parts={slide_part, rels_part},
+        allow_content_types_change=True,
     )
 
 
@@ -552,6 +552,7 @@ def build_replace_image(view: dict, ctx: dict) -> ScenarioPlan:
         operations=[op],
         media={"e2e_replacement": str(media_path)},
         expected_changed_parts={rels_part},
+        allow_content_types_change=True,
     )
 
 
@@ -612,8 +613,7 @@ def prepare_media_context(work_dir: Path) -> dict:
 
 
 def run_scenario(project_dir: Path, work_dir: Path, log_dir: Path, cli: Path,
-                 scenario: EditScenario, media_ctx: dict,
-                 visual_threshold: float) -> EditReport:
+                 scenario: EditScenario, media_ctx: dict) -> EditReport:
     fixture_path = rt.resolve_fixture(project_dir, scenario.fixture)
     key = rt.safe_name(f"{scenario.name}-{scenario.fixture}")
     scenario_dir = work_dir / key
@@ -822,8 +822,7 @@ def main(argv: list[str] | None = None) -> int:
         wanted = set(args.scenario)
         scenarios = [s for s in scenarios if s.name in wanted]
 
-    reports = [run_scenario(project_dir, work_dir, log_dir, cli, s, media_ctx,
-                            args.visual_threshold) for s in scenarios]
+    reports = [run_scenario(project_dir, work_dir, log_dir, cli, s, media_ctx) for s in scenarios]
     opinion = form_opinion(reports)
 
     summary_path = work_dir / "edit-summary.json"
@@ -858,7 +857,6 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--scenario", action="append", default=[],
                         help="Run only the named scenario(s). May be repeated.")
     parser.add_argument("--file-beads", action="store_true")
-    parser.add_argument("--visual-threshold", type=float, default=8.0)
     return parser.parse_args(argv)
 
 
