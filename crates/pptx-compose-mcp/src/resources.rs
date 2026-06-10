@@ -210,8 +210,12 @@ impl FromStr for ResourceUri {
         let segments = path.split('/').collect::<Vec<_>>();
 
         match segments.as_slice() {
-            ["capabilities", "v1"] => Ok(Self::Capabilities),
+            ["capabilities", "v1"] => {
+                Query::reject(query)?;
+                Ok(Self::Capabilities)
+            }
             ["sessions", session_id, "summary"] if !session_id.is_empty() => {
+                Query::reject(query)?;
                 Ok(Self::SessionSummary {
                     session_id: (*session_id).to_owned(),
                 })
@@ -227,6 +231,7 @@ impl FromStr for ResourceUri {
             ["sessions", session_id, "slides", slide_id]
                 if !session_id.is_empty() && !slide_id.is_empty() =>
             {
+                Query::reject(query)?;
                 Ok(Self::SessionSlide {
                     session_id: (*session_id).to_owned(),
                     slide_id: (*slide_id).to_owned(),
@@ -235,6 +240,7 @@ impl FromStr for ResourceUri {
             ["sessions", session_id, "elements", element_id]
                 if !session_id.is_empty() && !element_id.is_empty() =>
             {
+                Query::reject(query)?;
                 Ok(Self::SessionElement {
                     session_id: (*session_id).to_owned(),
                     element_id: (*element_id).to_owned(),
@@ -243,17 +249,20 @@ impl FromStr for ResourceUri {
             ["sessions", session_id, "media", media_id, "metadata"]
                 if !session_id.is_empty() && !media_id.is_empty() =>
             {
+                Query::reject(query)?;
                 Ok(Self::SessionMediaMetadata {
                     session_id: (*session_id).to_owned(),
                     media_id: (*media_id).to_owned(),
                 })
             }
             ["sessions", session_id, "validation", "latest"] if !session_id.is_empty() => {
+                Query::reject(query)?;
                 Ok(Self::SessionLatestValidation {
                     session_id: (*session_id).to_owned(),
                 })
             }
             ["schemas", name, version] if !name.is_empty() && !version.is_empty() => {
+                Query::reject(query)?;
                 Ok(Self::Schema {
                     name: (*name).to_owned(),
                     version: (*version).to_owned(),
@@ -318,6 +327,14 @@ struct Query {
 
 impl Query {
     fn parse(query: Option<&str>) -> Result<Self, Error> {
+        Self::parse_with_mode(query, QueryMode::Slides)
+    }
+
+    fn reject(query: Option<&str>) -> Result<(), Error> {
+        Self::parse_with_mode(query, QueryMode::Unsupported).map(|_| ())
+    }
+
+    fn parse_with_mode(query: Option<&str>, mode: QueryMode) -> Result<Self, Error> {
         let mut output = Self::default();
         for pair in query.into_iter().flat_map(|query| query.split('&')) {
             if pair.is_empty() {
@@ -326,9 +343,11 @@ impl Query {
             let (key, value) = pair.split_once('=').ok_or_else(|| {
                 invalid_uri(pair, "Resource query parameters must use key=value syntax.")
             })?;
-            match key {
-                "cursor" if !value.is_empty() => output.cursor = Some(value.to_owned()),
-                "limit" if !value.is_empty() => {
+            match (mode, key) {
+                (QueryMode::Slides, "cursor") if !value.is_empty() => {
+                    output.cursor = Some(value.to_owned());
+                }
+                (QueryMode::Slides, "limit") if !value.is_empty() => {
                     output.limit = Some(value.parse::<u32>().map_err(|source| {
                         Error::with_source(
                             ErrorCode::InvalidInput,
@@ -347,6 +366,12 @@ impl Query {
         }
         Ok(output)
     }
+}
+
+#[derive(Clone, Copy)]
+enum QueryMode {
+    Slides,
+    Unsupported,
 }
 
 fn session_latest_validation(sessions: &SessionStore, session_id: &str) -> Result<Value, Error> {
@@ -615,6 +640,31 @@ mod tests {
 
         assert_eq!(uri, ResourceUri::Capabilities);
         assert_eq!(uri.to_string(), "pptx://capabilities/v1");
+    }
+
+    #[test]
+    fn rejects_query_parameters_on_non_paginated_resource_uris() {
+        let cases = [
+            "pptx://capabilities/v1?limit=1",
+            "pptx://sessions/session-1/summary?limit=1",
+            "pptx://sessions/session-1/slides/slide-1?cursor=abc",
+            "pptx://sessions/session-1/elements/element-1?limit=1",
+            "pptx://sessions/session-1/media/media-1/metadata?cursor=abc",
+            "pptx://sessions/session-1/validation/latest?limit=1",
+            "pptx://schemas/agent-view/v1?limit=1",
+        ];
+
+        for input in cases {
+            let error =
+                ResourceUri::from_str(input).expect_err("non-paginated resource rejects query");
+            assert_eq!(error.code(), ErrorCode::InvalidInput);
+            assert!(
+                error
+                    .to_string()
+                    .contains("Resource query parameter is not supported for this URI."),
+                "{input} returned unexpected error: {error}"
+            );
+        }
     }
 
     #[test]
