@@ -28,7 +28,7 @@ pub struct PermissionError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PermissionDeniedReason {
     HomeAlias,
-    ParentDir,
+    PlatformPrefix,
     EmptyPath,
     OutsideAllowedRoots,
     MissingParent,
@@ -203,7 +203,17 @@ impl PermissionError {
 
     #[must_use]
     pub fn into_core_error(self) -> CoreError {
-        CoreError::new(ErrorCode::PermissionDenied, self.to_string())
+        let code = match &self.reason {
+            PermissionDeniedReason::HomeAlias
+            | PermissionDeniedReason::PlatformPrefix
+            | PermissionDeniedReason::EmptyPath => ErrorCode::UnsafePath,
+            PermissionDeniedReason::OutsideAllowedRoots
+            | PermissionDeniedReason::MissingParent
+            | PermissionDeniedReason::SilentOverwrite
+            | PermissionDeniedReason::Io(_) => ErrorCode::PermissionDenied,
+        };
+
+        CoreError::new(code, self.to_string())
             .with_location(ErrorLocation {
                 io_path: Some(self.path.display().to_string()),
                 ..ErrorLocation::default()
@@ -224,8 +234,8 @@ impl fmt::Display for PermissionError {
             PermissionDeniedReason::HomeAlias => {
                 "home-directory aliases are not allowed in MCP file paths".to_owned()
             }
-            PermissionDeniedReason::ParentDir => {
-                "parent-directory segments are not allowed in MCP file paths".to_owned()
+            PermissionDeniedReason::PlatformPrefix => {
+                "platform path prefixes are not allowed in MCP file paths".to_owned()
             }
             PermissionDeniedReason::EmptyPath => "empty paths are not allowed".to_owned(),
             PermissionDeniedReason::OutsideAllowedRoots => {
@@ -278,25 +288,25 @@ fn reject_unsafe_syntax(
         ));
     }
 
-    if path
-        .components()
-        .any(|component| matches!(component, Component::ParentDir))
-    {
-        return Err(PermissionError::new(
-            operation,
-            path,
-            PermissionDeniedReason::ParentDir,
-        ));
-    }
-
-    if path.components().any(|component| {
-        matches!(component, Component::Normal(value) if value.to_string_lossy().starts_with('~'))
-    }) {
-        return Err(PermissionError::new(
-            operation,
-            path,
-            PermissionDeniedReason::HomeAlias,
-        ));
+    let mut components = path.components();
+    if let Some(component) = components.next() {
+        match component {
+            Component::Prefix(_) => {
+                return Err(PermissionError::new(
+                    operation,
+                    path,
+                    PermissionDeniedReason::PlatformPrefix,
+                ));
+            }
+            Component::Normal(value) if value.to_string_lossy().starts_with('~') => {
+                return Err(PermissionError::new(
+                    operation,
+                    path,
+                    PermissionDeniedReason::HomeAlias,
+                ));
+            }
+            _ => {}
+        }
     }
 
     Ok(())
@@ -331,19 +341,41 @@ mod tests {
     }
 
     #[test]
-    fn relative_paths_reject_parent_dir_escapes() {
-        let fixture = TestDirs::new("relative_paths_reject_parent_dir_escapes");
+    fn relative_paths_with_parent_dirs_are_resolved_before_policy_check() {
+        let fixture = TestDirs::new("relative_paths_with_parent_dirs_are_resolved");
+        let deck = fixture.workspace.join("deck.pptx");
+        let out_dir = fixture.workspace.join("out");
+        fs::write(&deck, b"pptx").expect("write deck fixture");
+        fs::create_dir_all(&out_dir).expect("create output dir");
+
         let policy = PermissionPolicy::new(fixture.workspace.clone(), fixture.temp.clone(), false);
 
+        assert_eq!(
+            policy
+                .check_read("out/../deck.pptx")
+                .expect("parent-dir read inside workspace is allowed"),
+            fs::canonicalize(&deck).expect("canonical deck")
+        );
+        assert_eq!(
+            policy
+                .check_write("out/../edited.pptx")
+                .expect("parent-dir write inside workspace is allowed"),
+            fs::canonicalize(&fixture.workspace)
+                .expect("canonical workspace")
+                .join("edited.pptx")
+        );
+
+        let outside = fixture.root.join("outside.pptx");
+        fs::write(&outside, b"outside").expect("write outside fixture");
         let read_error = policy
-            .check_read("../deck.pptx")
-            .expect_err("relative read escape is rejected");
-        let write_error = policy
-            .check_write("out/../deck.pptx")
-            .expect_err("relative write escape is rejected");
+            .check_read("../outside.pptx")
+            .expect_err("parent-dir read escape is rejected after canonicalization");
 
         assert_eq!(read_error.operation(), PermissionOperation::Read);
-        assert_eq!(write_error.operation(), PermissionOperation::Write);
+        assert_eq!(
+            read_error.clone().into_core_error().code(),
+            ErrorCode::PermissionDenied
+        );
     }
 
     #[test]
@@ -356,7 +388,7 @@ mod tests {
         let escaped = fixture.workspace.join("..").join("outside.pptx");
         let escaped_error = policy
             .check_write(&escaped)
-            .expect_err("parent-dir escape is rejected");
+            .expect_err("canonicalized escape is rejected");
 
         assert_eq!(escaped_error.operation(), PermissionOperation::Write);
 
@@ -411,6 +443,21 @@ mod tests {
                 .check_write_with_overwrite(&output, true)
                 .expect("explicit overwrite is allowed"),
             fs::canonicalize(output).expect("canonical output")
+        );
+    }
+
+    #[test]
+    fn syntactic_path_aliases_map_to_unsafe_path() {
+        let fixture = TestDirs::new("syntactic_path_aliases_map_to_unsafe_path");
+        let policy = PermissionPolicy::new(fixture.workspace.clone(), fixture.temp.clone(), false);
+
+        let error = policy
+            .check_read("~/deck.pptx")
+            .expect_err("home aliases are rejected before resolution");
+
+        assert_eq!(
+            error.clone().into_core_error().code(),
+            ErrorCode::UnsafePath
         );
     }
 
