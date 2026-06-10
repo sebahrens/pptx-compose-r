@@ -38,12 +38,17 @@ pub(crate) fn apply(
         .as_ref()
         .map(|manifest| permissions.authorize_read(manifest, PathIntent::MediaInput))
         .transpose()?;
-    if let Some(report) = &args.report {
-        permissions.authorize_write(report, PathIntent::ReportOutput)?;
-    }
-    if let Some(diff) = &args.diff {
-        permissions.authorize_write(diff, PathIntent::DiffOutput)?;
-    }
+    let report = args
+        .report
+        .as_ref()
+        .map(|report| permissions.authorize_write(report, PathIntent::ReportOutput))
+        .transpose()?;
+    let diff = args
+        .diff
+        .as_ref()
+        .map(|diff| permissions.authorize_write(diff, PathIntent::DiffOutput))
+        .transpose()?;
+    enforce_secondary_output_write_guards(report.as_deref(), diff.as_deref(), args.overwrite)?;
     let sink = OutputSink::default().with_atomic_temp_dir(permissions.temp_dir.clone(), false);
 
     let patch = read_patch(&patch)?;
@@ -69,8 +74,8 @@ pub(crate) fn apply(
                 },
             )
             .map_err(apply_error)?;
-        sink.emit_patch_report(&output.report, args.report, args.overwrite)?;
-        sink.emit_diff(&output.diff, args.diff, args.overwrite)?;
+        sink.emit_patch_report(&output.report, report, args.overwrite)?;
+        sink.emit_diff(&output.diff, diff, args.overwrite)?;
         if output.report.status == PatchStatus::DryRunFailed {
             let error = output_operation_error(&output.report, true);
             return Err(apply_error(error));
@@ -93,8 +98,8 @@ pub(crate) fn apply(
         )
         .map_err(apply_error)?;
     if apply_output.report.status == PatchStatus::Failed {
-        sink.emit_patch_report(&apply_output.report, args.report, args.overwrite)?;
-        sink.emit_diff(&apply_output.diff, args.diff, args.overwrite)?;
+        sink.emit_patch_report(&apply_output.report, report, args.overwrite)?;
+        sink.emit_diff(&apply_output.diff, diff, args.overwrite)?;
         let error = output_operation_error(&apply_output.report, false);
         return Err(apply_error(error));
     }
@@ -118,8 +123,8 @@ pub(crate) fn apply(
         }
         return Err(CliError::from_error(error));
     }
-    sink.emit_optional_patch_report(&apply_output.report, args.report, args.overwrite)?;
-    sink.emit_diff(&apply_output.diff, args.diff, args.overwrite)?;
+    sink.emit_optional_patch_report(&apply_output.report, report, args.overwrite)?;
+    sink.emit_diff(&apply_output.diff, diff, args.overwrite)?;
 
     Ok(())
 }
@@ -488,6 +493,30 @@ fn enforce_apply_write_guards(
     Ok(())
 }
 
+fn enforce_secondary_output_write_guards(
+    report: Option<&Path>,
+    diff: Option<&Path>,
+    overwrite: bool,
+) -> Result<(), CliError> {
+    if overwrite {
+        return Ok(());
+    }
+
+    for output in [report, diff].into_iter().flatten() {
+        if output != Path::new("-") && output.exists() {
+            return Err(CliError::new(
+                pptx_compose::core::error::ErrorCode::WriteFailed,
+                format!(
+                    "Output path {} already exists; pass --overwrite to replace it.",
+                    output.display()
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn same_path(left: &Path, right: &Path) -> bool {
     match (fs::canonicalize(left), fs::canonicalize(right)) {
         (Ok(left), Ok(right)) => left == right,
@@ -638,6 +667,12 @@ fn non_dry_run_writes_failed_report_without_output_pptx() {
 #[test]
 fn replace_text_writes_mutated_output() {
     test_support::replace_text_writes_mutated_output();
+}
+
+#[cfg(test)]
+#[test]
+fn apply_rejects_existing_secondary_outputs_before_writing_pptx() {
+    test_support::apply_rejects_existing_secondary_outputs_before_writing_pptx();
 }
 
 #[cfg(test)]
@@ -1213,6 +1248,49 @@ mod test_support {
         assert_eq!(diff_json["changes"].as_array().map(Vec::len), Some(1));
 
         fs::remove_dir_all(root).expect("test dir removes");
+    }
+
+    pub(super) fn apply_rejects_existing_secondary_outputs_before_writing_pptx() {
+        for secondary_output in ["report", "diff"] {
+            let root = unique_dir();
+            let input = root.join("input.pptx");
+            let patch = root.join("patch.json");
+            let output = root.join("output.pptx");
+            let existing = root.join(format!("{secondary_output}.json"));
+            fs::create_dir_all(&root).expect("test dir creates");
+            let input_bytes = text_deck();
+            fs::write(&input, &input_bytes).expect("input fixture writes");
+            fs::write(&patch, replace_text_patch(&input_bytes)).expect("patch fixture writes");
+            fs::write(&existing, b"existing-json").expect("existing secondary output writes");
+
+            let mut args = args(&input, &patch, &output, false);
+            match secondary_output {
+                "report" => args.report = Some(existing.clone()),
+                "diff" => args.diff = Some(existing.clone()),
+                _ => unreachable!("test cases are exhaustive"),
+            }
+
+            let err = apply(args, &permissions(&root), OpenOptions::default())
+                .expect_err("existing secondary output must fail before PPTX write");
+
+            assert_eq!(err.code(), ErrorCode::WriteFailed);
+            assert!(
+                err.details()
+                    .message
+                    .contains("already exists; pass --overwrite")
+            );
+            assert!(
+                !output.exists(),
+                "apply must not write PPTX output when {secondary_output} already exists"
+            );
+            assert_eq!(
+                fs::read(&existing).expect("existing secondary output reads"),
+                b"existing-json",
+                "apply must not replace existing {secondary_output}"
+            );
+
+            fs::remove_dir_all(root).expect("test dir removes");
+        }
     }
 
     pub(super) fn parse_patch_invalid_input_preserves_underlying_message() {
