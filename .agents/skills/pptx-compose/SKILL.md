@@ -46,6 +46,47 @@ Each `matches[].selector` is the selector to paste into a patch operation. It ha
 }
 ```
 
+Drop that selector into a `pptx-compose.patch.v1` envelope. A complete
+single-edit patch (a run-scoped text replacement) looks like this:
+
+```json
+{
+  "schema": "pptx-compose.patch.v1",
+  "version": 1,
+  "document_id": "sha256:7252a8...",
+  "base_revision": 1,
+  "client_request_id": "your-request-id",
+  "operations": [
+    {
+      "op": "replace_text",
+      "operation_id": "op-1",
+      "mode": "run_scoped",
+      "selector": {
+        "type": "element_id",
+        "id": "slide-1:shape-1",
+        "guards": {
+          "slide_id": "slide-1",
+          "kind": "shape",
+          "part": "ppt/slides/slide1.xml",
+          "text_hash": "sha256:...",
+          "fingerprint": "sha256:..."
+        },
+        "run": { "paragraph_index": 0, "run_index": 0 }
+      },
+      "text": "replacement text"
+    }
+  ]
+}
+```
+
+`document_id` and `base_revision` are revision guards: copy `document_id` and
+`revision` from the `inspect`/`find-text` output verbatim (a stale
+`base_revision` is rejected with `stale_patch`). `client_request_id` and each
+`operation_id` are caller-chosen idempotency keys. For `run_scoped` edits, add
+`selector.run` with the `paragraph_index`/`run_index` you read from `inspect
+--detail full`. The guards object is exactly the `find-text` selector's
+`guards` — paste it unchanged.
+
 Validate the patch without writing an output deck:
 
 ```bash
@@ -76,7 +117,7 @@ pptx-compose apply IN.pptx PATCH.json --in-place --report apply.report.json --js
 --slides 2-4
 ```
 
-`find-text --slides` is currently single-slide scoped. Use a 1-based number or canonical `slide-N` id; omit the flag for a deck-wide search.
+`find-text --slides` is currently single-slide scoped. Use a 1-based number or canonical `slide-N` id; omit the flag for a deck-wide search. A comma list or range is rejected with `invalid_input: find-text --slides currently accepts exactly one slide`. Like `inspect`, `find-text` paginates large result sets: if the output carries a non-null `next_cursor`, pass it back via `--cursor` until it is null.
 
 ## Patch Inputs
 
@@ -97,6 +138,18 @@ pptx-compose apply IN.pptx PATCH.json --media-manifest media.json --media-root a
 ```
 
 Never add an image by only adding a file to the ZIP. A valid image edit must update `[Content_Types].xml`, relationships, and slide XML together through a supported operation.
+
+To inspect what media a deck already contains (the read side, distinct from the
+`--media` staging flags above), use the `media` subcommands:
+
+```bash
+pptx-compose media list IN.pptx --json-errors
+pptx-compose media get IN.pptx ppt/media/image1.png --output extracted.png --json-errors
+```
+
+`media list` reports the media parts as JSON on stdout; `media get` extracts one
+part (by its package path) to `--output`, which is bound by the same workspace
+rules as other output paths.
 
 ## Error Handling
 
@@ -122,7 +175,7 @@ Stage media with `pptx_import_media`; use the returned session-scoped `media_ref
 
 Raw package/XML mutation is outside the V1 agent surface. Use bounded inspection tools, guarded selectors, patch validation, apply, export, and validate.
 
-## Field Notes (verified 2026-06-10 against the built CLI and specs)
+## Field Notes (verified 2026-06-11 against the built CLI and specs)
 
 These are non-obvious behaviors that bit real agents. Trust the built binary's
 `--help`/`schema` over older examples.
@@ -136,6 +189,12 @@ These are non-obvious behaviors that bit real agents. Trust the built binary's
   rejected with `permission_denied`. Write to a dir under the repo, or pass
   `--workspace`/`--temp-dir`. Re-running needs `--overwrite`; `inspect`,
   `find-text`, `apply`, and `validate` all expose it for existing output paths.
+- **The input deck is bound to the same workspace root**, which defaults to the
+  current directory. Pointing `--workspace` at a scratch dir that does not
+  contain the input fails with `invalid_input: Could not resolve readable input
+  PPTX path` even though the file plainly exists — the message reads like a
+  missing file but the real cause is the workspace boundary. Keep `--workspace`
+  at a directory that contains *both* the input deck and your output paths.
 - `inspect --limit` is a **slides-per-page** budget, range 1..100 (not element
   count). Big decks paginate: read `view.next_cursor` and pass it back via
   `--cursor` until it is null. `--detail full` gives per-run text.
